@@ -99,6 +99,39 @@ describe.skipIf(!enabled)('FirestoreBudgetStore (emulator)', () => {
     expect((await db.doc('budgets/task_t1').get()).get('reserved')).toBe(ok * eur(0.1));
   }, 60_000);
 
+  it('enforces the lifetime cap across months', async () => {
+    if (!db) return;
+    await db.doc('settings/global').set({ totalBudget: eur(1), monthlyBudget: eur(10) });
+    await db.doc('tasks/t1').set({ ai: { budget: eur(5) } });
+    const oct = Date.UTC(2026, 9, 25);
+    const nov = Date.UTC(2026, 10, 2);
+    const gateOct = new CostGate(
+      new FirestoreBudgetStore(db, defaultLimitFor(db)),
+      undefined,
+      () => oct,
+    );
+    const r = await gateOct.reserve({
+      scopes: scopesForTask('t1', undefined, oct),
+      category: 'tokens',
+      amount: eur(0.8),
+      description: 'a',
+    });
+    await gateOct.settle(r.id, eur(0.8));
+    const gateNov = new CostGate(
+      new FirestoreBudgetStore(db, defaultLimitFor(db)),
+      undefined,
+      () => nov,
+    );
+    await expect(
+      gateNov.reserve({
+        scopes: scopesForTask('t1', undefined, nov),
+        category: 'tokens',
+        amount: eur(0.3),
+        description: 'b',
+      }),
+    ).rejects.toMatchObject({ scopeKey: 'total' });
+  });
+
   it('refuses everything when halted', async () => {
     if (!db) return;
     await db.doc('settings/global').set({ halted: true });

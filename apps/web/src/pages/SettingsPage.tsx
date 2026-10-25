@@ -12,14 +12,16 @@ const toMicro = (v: string) => Math.round(Number(v) * 1e6);
 export function SettingsPage() {
   const { data: settings, loading } = useSettings();
   const [defaults, setDefaults] = useState<Partial<AiConfig>>(settings.defaults);
+  const [total, setTotal] = useState(toEur(settings.totalBudget));
   const [monthly, setMonthly] = useState(toEur(settings.monthlyBudget));
   const [perTask, setPerTask] = useState(toEur(settings.defaultTaskBudget));
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     setDefaults(settings.defaults);
+    setTotal(toEur(settings.totalBudget));
     setMonthly(toEur(settings.monthlyBudget));
     setPerTask(toEur(settings.defaultTaskBudget));
-  }, [settings.defaults, settings.monthlyBudget, settings.defaultTaskBudget]);
+  }, [settings.defaults, settings.totalBudget, settings.monthlyBudget, settings.defaultTaskBudget]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -27,6 +29,7 @@ export function SettingsPage() {
     const { enabled: _e, ...rest } = defaults;
     await saveSettings({
       defaults: rest,
+      totalBudget: toMicro(total),
       monthlyBudget: toMicro(monthly),
       defaultTaskBudget: toMicro(perTask),
     });
@@ -104,6 +107,16 @@ export function SettingsPage() {
         <CardHeader title="Budgets" />
         <CardBody className="grid gap-3 sm:grid-cols-2">
           <label>
+            <Label>Lifetime cap, all tasks (EUR)</Label>
+            <Input
+              type="number"
+              min={0}
+              step={1}
+              value={total}
+              onChange={(e) => setTotal(e.target.value)}
+            />
+          </label>
+          <label>
             <Label>Monthly cap, all tasks (EUR)</Label>
             <Input
               type="number"
@@ -124,8 +137,8 @@ export function SettingsPage() {
             />
           </label>
           <p className="col-span-full text-xs text-muted-foreground">
-            Keep the monthly cap below 40 EUR: the GCP backstop halts everything at 40 EUR of actual
-            GCP spend.
+            These caps are what stops spending. Keep the lifetime cap below 40 EUR: the GCP safety
+            net halts everything at 40 EUR of total GCP spend and detaches billing at 45 EUR.
           </p>
         </CardBody>
       </Card>

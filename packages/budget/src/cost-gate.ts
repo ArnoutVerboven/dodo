@@ -4,16 +4,19 @@ export type CostCategory = 'tokens' | 'infra' | 'action' | 'purchase';
 
 /** A budget scope. Keys are stable strings so they can be used as document ids. */
 export type Scope =
+  | { kind: 'total' }
   | { kind: 'global'; month: string }
   | { kind: 'project'; projectId: string; month: string }
   | { kind: 'task'; taskId: string };
 
 export const scopeKey = (s: Scope): string =>
-  s.kind === 'global'
-    ? `global_${s.month}`
-    : s.kind === 'project'
-      ? `project_${s.projectId}_${s.month}`
-      : `task_${s.taskId}`;
+  s.kind === 'total'
+    ? 'total'
+    : s.kind === 'global'
+      ? `global_${s.month}`
+      : s.kind === 'project'
+        ? `project_${s.projectId}_${s.month}`
+        : `task_${s.taskId}`;
 
 /** `2026-10` style month key in UTC. */
 export const monthKey = (now: number): string => new Date(now).toISOString().slice(0, 7);

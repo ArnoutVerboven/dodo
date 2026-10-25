@@ -178,8 +178,10 @@ export const GlobalSettings = z.object({
   defaults: AiConfig.omit({ enabled: true }).default({}),
   /** Default per-task cap when a task sets none. */
   defaultTaskBudget: MicroEur.default(eur(0.5)),
-  /** Internal monthly cap, kept below the GCP backstop. */
-  monthlyBudget: MicroEur.default(eur(35)),
+  /** Internal lifetime cap, mirroring the GCP lifetime budget and kept below its 40 EUR halt. */
+  totalBudget: MicroEur.default(eur(35)),
+  /** Internal monthly cap. */
+  monthlyBudget: MicroEur.default(eur(25)),
   /** Set by the kill switch or by hand. While true no cost can be reserved. */
   halted: z.boolean().default(false),
   haltReason: z.string().optional(),

@@ -42,10 +42,29 @@ export function BudgetPage() {
   const taskTitle = new Map(tasks.map((t) => [t.id, t.title]));
   const projectName = new Map(projects.map((p) => [p.id, p.name]));
   const cap = settings.monthlyBudget;
+  const total = budgets.find((b) => b.id === 'total') ?? { spent: 0, reserved: 0, limit: null };
 
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold">Budget</h1>
+      <Card>
+        <CardHeader title="Lifetime" />
+        <CardBody className="space-y-2">
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-semibold">{formatEur(total.spent)}</span>
+            <span className="text-sm text-muted-foreground">
+              of {formatEur(settings.totalBudget)} lifetime cap
+            </span>
+          </div>
+          <Meter value={total.spent + total.reserved} max={settings.totalBudget} />
+          <p className="text-xs text-muted-foreground">
+            The GCP safety net halts processing at 40 EUR and detaches billing at 45 EUR of total
+            GCP spend (lifetime budget 50 EUR). It reacts with a delay, so these caps are what stops
+            spending.
+          </p>
+        </CardBody>
+      </Card>
+
       <Card>
         <CardHeader title={`This month (${month})`} />
         <CardBody className="space-y-2">
@@ -55,9 +74,7 @@ export function BudgetPage() {
           </div>
           <Meter value={global.spent + global.reserved} max={cap} />
           <p className="text-xs text-muted-foreground">
-            {global.reserved > 0 && `${formatEur(global.reserved)} reserved by running steps. `}
-            The GCP backstop halts processing at 40 EUR and detaches billing at 45 EUR of actual GCP
-            spend (budget 50 EUR).
+            {global.reserved > 0 && `${formatEur(global.reserved)} reserved by running steps.`}
           </p>
         </CardBody>
       </Card>

@@ -72,16 +72,19 @@ function stripUndefined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
-const DEFAULT_MONTHLY = 35_000_000;
+const DEFAULT_TOTAL = 35_000_000;
+const DEFAULT_MONTHLY = 25_000_000;
 const DEFAULT_TASK = 500_000;
 
 /**
- * Standard limits: the global month cap from settings (35 EUR if unset, never unlimited),
+ * Standard limits: the lifetime and month caps from settings (35 and 25 EUR if unset, never
+ * unlimited),
  * the project's monthly budget, and the task's own budget or the default task budget.
  */
 export function defaultLimitFor(db: Firestore) {
   return async (scopeKey: string, t: Transaction): Promise<number | undefined> => {
     const settings = (await t.get(db.doc(paths.settings()))).data() ?? {};
+    if (scopeKey === 'total') return settings.totalBudget ?? DEFAULT_TOTAL;
     if (scopeKey.startsWith('global_')) return settings.monthlyBudget ?? DEFAULT_MONTHLY;
     if (scopeKey.startsWith('project_')) {
       const projectId = scopeKey.slice('project_'.length, scopeKey.lastIndexOf('_'));

@@ -124,7 +124,8 @@ await db.doc('tasks/energy/artifacts/a1').set({
 });
 
 const month = new Date().toISOString().slice(0, 7);
-await db.doc(`budgets/global_${month}`).set({ limit: 35 * M, reserved: 0, spent: 0.42 * M });
+await db.doc('budgets/total').set({ limit: 35 * M, reserved: 0, spent: 0.42 * M });
+await db.doc(`budgets/global_${month}`).set({ limit: 25 * M, reserved: 0, spent: 0.42 * M });
 await db.doc('budgets/task_energy').set({ limit: 0.8 * M, reserved: 0, spent: 0.31 * M });
 await db.doc('budgets/task_readme').set({ limit: 0.5 * M, reserved: 0.02 * M, spent: 0.11 * M });
 const ledger = db.collection('ledger');

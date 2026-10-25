@@ -28,6 +28,9 @@ importers:
       "@google-cloud/billing":
         specifier: ^6.2.0
         version: 6.2.0
+      "@google-cloud/run":
+        specifier: ^4.2.0
+        version: 4.2.0
       firebase-admin:
         specifier: ^13.5.0
         version: 13.10.0(@firebase/app-compat@0.5.20)(@firebase/app@0.16.4)
@@ -1336,6 +1339,13 @@ packages:
         integrity: sha512-xXAQBVVrFviWz8L8yDKEqv1ziVw/gMSpYHt3IxSYRSY0fTyjis+xOrKJILj8dd8PAUHGnGiAIYuTprflkE9jsQ==,
       }
     engines: { node: ">=18" }
+
+  "@google-cloud/run@4.2.0":
+    resolution:
+      {
+        integrity: sha512-idLdoweHOA4la4/46Vw0d1DwyRqjseWQkzDqfF6DzX7Zf18bzTNhWdGGAVAk41gdL50DRhAmOOtn2+0tUQpSAA==,
+      }
+    engines: { node: ">=22" }
 
   "@google-cloud/sql@0.25.0":
     resolution:
@@ -8084,6 +8094,12 @@ snapshots:
       lodash.snakecase: 4.1.1
       long: 5.3.2
       p-defer: 3.0.0
+    transitivePeerDependencies:
+      - supports-color
+
+  "@google-cloud/run@4.2.0":
+    dependencies:
+      google-gax: 6.13.0
     transitivePeerDependencies:
       - supports-color
 

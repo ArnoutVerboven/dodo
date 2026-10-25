@@ -1,12 +1,14 @@
 /**
- * GCP backstop for the 50 EUR cap. Cloud Billing budgets publish to Pub/Sub several
- * times a day; this logic decides what to do with each notification.
+ * GCP safety net for the 50 EUR lifetime cap. Two kinds of messages arrive on the
+ * `billing-alerts` topic:
  *
- *  - cost >= haltAt:   set settings/global.halted, so the CostGate refuses all new costs
- *                      and the dispatcher starts nothing new.
- *  - cost >= detachAt: unlink the billing account from the project. Every paid service stops.
+ *  - Cloud Billing budget notifications (lag: hours). cost >= haltAt halts; cost >= detachAt
+ *    also unlinks the billing account from the project, which stops every paid service.
+ *  - Cloud Monitoring alert incidents (lag: minutes), for example token usage per hour far
+ *    above what the internal budgets allow. An open incident halts.
  *
- * Billing data lags by hours, which is why both thresholds sit below the 50 EUR budget.
+ * Halting sets settings/global.halted (the CostGate then refuses every new cost and workers
+ * abort) and cancels running Cloud Run executions so nothing keeps spending until a timeout.
  */
 
 export interface BudgetNotification {
@@ -24,15 +26,36 @@ export interface KillSwitchConfig {
   currency: string;
 }
 
+export interface MonitoringIncident {
+  policy_name?: string;
+  state?: string;
+  summary?: string;
+}
+
+export type KillSwitchMessage =
+  | { kind: 'budget'; notification: BudgetNotification }
+  | { kind: 'alert'; incident: MonitoringIncident };
+
 export interface KillSwitchDeps {
   isHalted(): Promise<boolean>;
   halt(reason: string): Promise<void>;
+  /** Cancel every running worker execution. Must succeed when there are none. */
+  cancelRunningExecutions(): Promise<number>;
   isBillingEnabled(): Promise<boolean>;
   detachBilling(): Promise<void>;
   log(message: string, data?: object): void;
 }
 
 export type KillSwitchAction = 'none' | 'halted' | 'detached';
+
+export function parseMessage(data: unknown): KillSwitchMessage {
+  if (typeof data === 'object' && data !== null && 'incident' in data) {
+    const incident = (data as { incident: unknown }).incident;
+    if (typeof incident !== 'object' || incident === null) throw new Error('Alert has no incident');
+    return { kind: 'alert', incident: incident as MonitoringIncident };
+  }
+  return { kind: 'budget', notification: parseNotification(data) };
+}
 
 export function parseNotification(data: unknown): BudgetNotification {
   if (typeof data !== 'object' || data === null)
@@ -42,6 +65,27 @@ export function parseNotification(data: unknown): BudgetNotification {
     throw new Error('Budget notification has no numeric costAmount');
   }
   return data as BudgetNotification;
+}
+
+async function haltAndCancel(deps: KillSwitchDeps, reason: string): Promise<void> {
+  await deps.halt(reason);
+  const cancelled = await deps.cancelRunningExecutions();
+  deps.log('Processing halted', { reason, cancelledExecutions: cancelled });
+}
+
+export async function handleMessage(
+  m: KillSwitchMessage,
+  config: KillSwitchConfig,
+  deps: KillSwitchDeps,
+): Promise<KillSwitchAction> {
+  if (m.kind === 'budget') return handleBudgetNotification(m.notification, config, deps);
+  if (m.incident.state && m.incident.state !== 'open') return 'none';
+  if (await deps.isHalted()) {
+    await deps.cancelRunningExecutions();
+    return 'none';
+  }
+  await haltAndCancel(deps, `Usage alert: ${m.incident.policy_name ?? 'unknown policy'}`);
+  return 'halted';
 }
 
 export async function handleBudgetNotification(
@@ -55,18 +99,20 @@ export async function handleBudgetNotification(
       got: n.currencyCode,
       want: config.currency,
     });
-    await deps.halt(`Budget notification in ${n.currencyCode}, expected ${config.currency}`);
+    await haltAndCancel(
+      deps,
+      `Budget notification in ${n.currencyCode}, expected ${config.currency}`,
+    );
     return 'halted';
   }
   let action: KillSwitchAction = 'none';
   const cost = `${n.costAmount.toFixed(2)} ${config.currency}`;
   if (n.costAmount >= config.haltAt && !(await deps.isHalted())) {
-    await deps.halt(`GCP spend reached ${cost} (halt threshold ${config.haltAt})`);
-    deps.log('Processing halted', { cost: n.costAmount });
+    await haltAndCancel(deps, `GCP spend reached ${cost} (halt threshold ${config.haltAt})`);
     action = 'halted';
   }
   if (n.costAmount >= config.detachAt) {
-    if (!(await deps.isHalted())) await deps.halt(`GCP spend reached ${cost}`);
+    if (!(await deps.isHalted())) await haltAndCancel(deps, `GCP spend reached ${cost}`);
     if (await deps.isBillingEnabled()) {
       await deps.detachBilling();
       deps.log('Billing detached from project', { cost: n.costAmount });

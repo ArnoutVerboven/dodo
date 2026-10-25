@@ -8,6 +8,10 @@ PROJECT="${1:?usage: bootstrap.sh PROJECT_ID}"
 REPO="${DODO_GITHUB_REPO:-ArnoutVerboven/dodo}"
 REGION="${DODO_REGION:-europe-west1}"
 BUDGET_AMOUNT="${DODO_BUDGET:-50}"
+# The cap is a lifetime total: the budget covers one long custom period instead of
+# resetting every month.
+BUDGET_START="${DODO_BUDGET_START:-$(date -u +%Y-%m-01)}"
+BUDGET_END="${DODO_BUDGET_END:-2030-12-31}"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
@@ -42,9 +46,18 @@ fi
 say "Pub/Sub topic for budget alerts"
 gcloud pubsub topics describe billing-alerts >/dev/null 2>&1 || gcloud pubsub topics create billing-alerts
 
-say "Budget of ${BUDGET_AMOUNT} ${CURRENCY} on ${PROJECT}"
+say "Lifetime budget of ${BUDGET_AMOUNT} ${CURRENCY} on ${PROJECT} (${BUDGET_START} to ${BUDGET_END})"
 EXISTING_BUDGET="$(gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
   --filter="displayName='dodo hard cap'" --format='value(name)' || true)"
+if [[ -n "$EXISTING_BUDGET" ]]; then
+  PERIOD_START="$(gcloud billing budgets describe "$EXISTING_BUDGET" \
+    --format='value(budgetFilter.customPeriod.startDate.year)' || true)"
+  if [[ -z "$PERIOD_START" ]]; then
+    echo "Replacing the earlier monthly budget with a lifetime budget"
+    gcloud billing budgets delete "$EXISTING_BUDGET" --quiet
+    EXISTING_BUDGET=""
+  fi
+fi
 if [[ -z "$EXISTING_BUDGET" ]]; then
   # Credits are excluded so the budget tracks gross cost: it fires earlier, never later.
   gcloud billing budgets create \
@@ -53,7 +66,8 @@ if [[ -z "$EXISTING_BUDGET" ]]; then
     --budget-amount="${BUDGET_AMOUNT}${CURRENCY}" \
     --filter-projects="projects/${PROJECT}" \
     --credit-types-treatment=exclude-all-credits \
-    --calendar-period=month \
+    --start-date="$BUDGET_START" \
+    --end-date="$BUDGET_END" \
     --threshold-rule=percent=0.5 \
     --threshold-rule=percent=0.8 \
     --threshold-rule=percent=0.9 \
@@ -90,15 +104,26 @@ grant "$KILL_SA" roles/billing.projectManager   # unlink billing from this proje
 grant "$KILL_SA" roles/datastore.user           # set settings/global.halted
 grant "$KILL_SA" roles/eventarc.eventReceiver
 grant "$KILL_SA" roles/run.invoker
+grant "$KILL_SA" roles/run.developer            # cancel running worker executions
 
 say "Deployer service account for GitHub Actions"
 ensure_sa dodo-deployer "dodo deployer (GitHub Actions)"
 DEPLOY_SA="dodo-deployer@${PROJECT}.iam.gserviceaccount.com"
 for role in roles/firebase.admin roles/cloudfunctions.admin roles/run.admin \
-  roles/artifactregistry.admin roles/iam.serviceAccountUser roles/serviceusage.serviceUsageConsumer \
+  roles/artifactregistry.admin roles/serviceusage.serviceUsageConsumer \
   roles/cloudbuild.builds.editor roles/eventarc.admin roles/pubsub.editor roles/secretmanager.viewer; do
   grant "$DEPLOY_SA" "$role"
 done
+# The deployer may act only as the runtime accounts it deploys, not as any account in the
+# project (in particular not as itself or future accounts with billing rights).
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+for runtime_sa in "$KILL_SA" "$COMPUTE_SA"; do
+  gcloud iam service-accounts add-iam-policy-binding "$runtime_sa" \
+    --member="serviceAccount:${DEPLOY_SA}" --role=roles/iam.serviceAccountUser --quiet >/dev/null
+done
+# Remove the broader project-level binding an earlier version of this script created.
+gcloud projects remove-iam-policy-binding "$PROJECT" --member="serviceAccount:${DEPLOY_SA}" \
+  --role=roles/iam.serviceAccountUser --condition=None --quiet >/dev/null 2>&1 || true
 
 say "Workload Identity Federation (GitHub -> deployer, main branch of ${REPO} only)"
 gcloud iam workload-identity-pools describe github --location=global >/dev/null 2>&1 ||
