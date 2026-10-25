@@ -218,7 +218,17 @@ interface TaskConnector {
 - **linear** (`@linear/sdk`): Linear's agent API shows agent activity natively in the issue, which matches the live-trace idea well.
 - **github** (Octokit): issue body section for Summary/Status, comments (editable) for the thread, labels for tags.
 
-The web app keeps a one-time setting for which connector is active. Connectors only translate; the canonical model, queue, budget and policy live in dodo.
+The web app keeps a one-time setting for which connector is active.
+
+### 6.4 Task ingest API (programmatic task creation)
+
+Other pipelines can push tasks onto the board, for example "emails in Gmail that need action become tasks".
+
+- `POST /v1/tasks` on one HTTPS Cloud Function, authenticated with a personal access token per source (created in settings, stored hashed, revocable). Body is the same `NewTask` schema plus `source` (e.g. `gmail`) and an `idempotencyKey` (e.g. the Gmail message id) so a retried pipeline never creates duplicates.
+- Each source has its own defaults: tags, project, and whether AI starts automatically (off by default, so injected tasks wait for you).
+- Content from a source is **untrusted input**: it is stored and shown as quoted source material, and runs on such tasks get a stricter default policy, because an email can contain prompt-injection text.
+- Rate limited per token, and the function rejects anything without a valid token before doing work, so it cannot be used to run up costs.
+- Example pipeline for Gmail, at no cost: a Google Apps Script on your account that runs every 10 minutes, looks for a label like `dodo` (or a Gmail filter result), and posts each new email to the API. Connectors only translate; the canonical model, queue, budget and policy live in dodo.
 
 ### 6.2 AgentRuntime
 
@@ -263,7 +273,7 @@ Two independent layers. The internal layer is real time and is what normally sto
 | `killSwitch` function (Pub/Sub) | at **≥ 40 EUR** actual: set `settings/global.halted = true`, cancel running Cloud Run executions, set Cloud Run Job max parallelism to 0. At **≥ 45 EUR**: **detach billing from the project** (Google's documented "cap costs" pattern). | Halt is reversible by you; detaching billing stops every paid service. |
 | Quotas | Vertex AI tokens-per-minute capped low; Cloud Run Job max 2 concurrent executions, max task timeout 1 h | Limits how fast money can be spent while billing data lags. |
 | Service account scoping | worker SA can only call Vertex AI, write its own run, read its secrets | A compromised run cannot create resources. |
-| No public billable endpoints | Functions are triggered by Firestore/Pub/Sub, not public HTTP (except auth-checked callables) | No way for outsiders to run up costs. |
+| No public billable endpoints | Functions are triggered by Firestore/Pub/Sub, not public HTTP (except auth-checked callables and the token-checked, rate-limited ingest API) | No way for outsiders to run up costs. |
 
 Caveat: billing data arrives with a delay of up to roughly a day, which is why the internal ledger exists and why the GCP thresholds sit at 40 and 45 EUR. Detaching billing is a blunt tool: paid services stop and some resources may not survive a long detach, so it is the last resort, not the normal stop.
 

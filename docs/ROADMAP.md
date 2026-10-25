@@ -57,6 +57,7 @@ Goal: an AI-enabled task gets worked on in GCP and reports back.
 
 - Connector framework hardening, then Notion, Linear (agent API), GitHub Issues.
 - One-time connector configuration in settings.
+- Task ingest API (`POST /v1/tasks` with per-source tokens, idempotency keys, untrusted-content handling) and an example Gmail → dodo Apps Script.
 
 ## Phase 7 — Polish
 
