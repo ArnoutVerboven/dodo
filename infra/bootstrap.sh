@@ -132,7 +132,8 @@ done
 # The deployer may act only as the runtime accounts it deploys, not as any account in the
 # project (in particular not as itself or future accounts with billing rights).
 COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-for runtime_sa in "$KILL_SA" "$GATEWAY_SA" "$WORKER_SA" "$COMPUTE_SA"; do
+APPSPOT_SA="${PROJECT}@appspot.gserviceaccount.com"   # Firebase CLI checks ActAs on it for functions deploys
+for runtime_sa in "$KILL_SA" "$GATEWAY_SA" "$WORKER_SA" "$COMPUTE_SA" "$APPSPOT_SA"; do
   gcloud iam service-accounts add-iam-policy-binding "$runtime_sa" \
     --member="serviceAccount:${DEPLOY_SA}" --role=roles/iam.serviceAccountUser --quiet >/dev/null
 done
