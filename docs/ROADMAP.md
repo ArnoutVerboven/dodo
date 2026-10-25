@@ -1,67 +1,65 @@
 # dodo — Roadmap
 
-Each phase ends with something usable end to end and keeps the budget guardrails ahead of the features that spend money. Nothing that can spend money ships before phase 1's guardrails are live.
+Each phase ends with an exit criterion: a task you actually ran. Nothing that can spend money ships before the budget guardrails, and no tool that reaches outside the task ships before the policy engine.
 
-## Phase 0 — Plan (this PR)
+## Phase 0 — Plan
 
-- Architecture, roadmap, setup checklist.
-- Decisions recorded in [ARCHITECTURE.md](ARCHITECTURE.md).
+- Architecture, roadmap, setup checklist; decisions recorded in [ARCHITECTURE.md](ARCHITECTURE.md).
+- Architecture review addressed (honest cost guarantees, model gateway, deterministic ask for egress, credential scoping, lease fencing).
 
-## Phase 1 — Skeleton, task board, budget guardrails
+## Phase 1 — Board and money safety net
 
-Goal: you can sign in, create and manage tasks, and the money safety net is in place. No agent yet.
+- Monorepo, domain model, CostGate + ledger with Firestore emulator tests.
+- Web app: sign-in (owner only), board, task page, projects, budget page, settings with manual halt.
+- Security rules + tests. CI and keyless deploy.
+- `infra/bootstrap.sh`: lifetime 50 EUR budget, kill-switch and deployer accounts, Workload Identity Federation.
+- Kill switch: halt, cancel running executions, detach billing.
+- **Exit:** the app is live on Firebase Hosting, you created a task from your phone, and `infra/test-kill-switch.sh` detached billing for real and re-linked it.
 
-- Monorepo scaffolding: pnpm workspaces, strict TypeScript, Biome, Vitest, GitHub Actions CI.
-- `packages/core`: zod domain model (tasks, projects, messages, artifacts, runs, input requests).
-- `packages/budget`: CostGate (reserve/settle), ledger, pricing table, with unit tests against the Firestore emulator.
-- Web app: sign-in (allowlisted), board (list + kanban), task page (Summary, Status, thread, artifacts), create task with tags, priority, due date, project; projects page with defaults; settings page (connector = custom); budget page (empty dashboard over the ledger).
-- Firestore and Storage security rules + emulator tests.
-- `infra/bootstrap.sh`: enables APIs, creates the billing budget (50 EUR) + Pub/Sub topic, quotas, service accounts, Workload Identity Federation for GitHub Actions.
-- `killSwitch` function: halt at 40 EUR, detach billing at 45 EUR; tested with a fake Pub/Sub message.
-- Deploy from CI to Firebase Hosting / Functions.
+The UI breadth (kanban, projects, budget page) was built before this plan was reviewed. It only depends on the Firestore model, so a phase 2 redesign would not throw it away.
 
-## Phase 2 — First agent runs (remote)
+## Phase 2 — First agent runs (remote, task tools only)
 
-Goal: an AI-enabled task gets worked on in GCP and reports back.
+Agents in this phase can only use the task tools (summary, status, message, ask, artifacts, finish). **No bash, HTTP or browser** until the policy engine exists.
 
-- Intake pipeline with `generateTitle`, `applyProjectDefaults`, `enqueue` (routing steps fixed to defaults).
-- `AgentRuntime` interface + ADK adapter; Gemini on Vertex AI; every model call through CostGate.
-- Task tools (summary, status, message, ask_user, artifacts, finish) and the system prompt.
-- Dispatcher function + Cloud Run Job worker; leases, heartbeats, timeouts from budget, infra cost metering.
-- Live trace on the task page (AG-UI events), collapsed into one message per run; interrupt button; comment-to-continue.
-- Input requests: text, choice, approval (without "always allow" yet).
-- Budget dashboard with real data: per task, project, model, category.
+- Day 1 spike: `@google/adk` JS callbacks (veto, rewrite max tokens), session serialisation, Vertex auth from Cloud Run. Decide ADK vs own loop.
+- Model gateway: countTokens, tiered prices, thinking budget, rate governor (2 EUR/hour), context caching.
+- Cloud Monitoring alert policies (token count, Cloud Run time) into the kill switch.
+- Dispatcher + Cloud Run Job worker: lease with generation fencing, `max-retries = 0`, timeout from budget, infra metering, watches `halted`.
+- Live trace, collapse into one message, interrupt, comment-to-continue, text/choice/approval input requests, budget top-up request.
+- AI title generation.
+- **Exit:** a task asked the agent to summarise a pasted document, and the ledger matched the Vertex usage in the console within 5%.
 
-## Phase 3 — Tools and permissions
+## Phase 3 — Policy engine and local Mac with your browser
 
-- Policy engine with allow / ask / deny lists at global, project and task level; bash parser; "Always allow" from approval cards with scope picker; policy editor in settings.
-- Tools in the remote container: bash, files, git (repo checkout per project), HTTP fetch, web search.
-- Action cost models on tools; paid-API example (Maps) end to end.
-- Notifications: FCM web push, PWA install.
+The headline use case (your own accounts in your own browser) comes before the remote browser.
 
-## Phase 4 — Local Mac executor
+- Policy engine: allow / ask / deny at global, project, task; bash parser; deterministic ask for egress, writes outside the folder, git push, outbound messages; `untrusted` profile; "Always allow" with scope.
+- `dodo` CLI: device login, folders, launchd daemon, status; model calls via the gateway; sandboxed shell (sandbox-runtime) with egress allowlist and no Keychain access.
+- Playwright MCP attached to your Chrome: log in by hand, then the agent continues.
+- **Exit:** the agent downloaded your latest energy bill from a site you were logged into, asking before anything outside the allowlist.
 
-- `dodo` CLI: login with device approval, folders, daemon (launchd), status.
-- Sandboxed shell in chosen folder (sandbox-runtime), device online status in the UI.
-- Routing steps `routeDevice` and `routeModel` (`auto` with a small model, reason shown on the task).
+## Phase 4 — Remote tools and notifications
 
-## Phase 5 — Browser, credentials, MFA
+- Remote container tools: bash, files, git checkout per project, HTTP fetch, web search, all behind the policy engine and the in-container egress proxy.
+- Tool cost models; one paid API end to end (Maps).
+- Notifications: FCM web push (PWA) and Telegram with approve/deny buttons.
+- **Exit:** a remote task opened a PR on a repo after you approved the push from your phone.
 
-- Playwright MCP remote (headless) with encrypted session store.
-- Playwright MCP local, attached to your Chrome; manual-login-then-continue.
-- Secret provider (decided vault) with placeholder injection and redaction.
-- MFA as input requests, optional TOTP, `local-only` services.
-- Session handoff local → remote.
+## Phase 5 — Remote browser, credentials, MFA
+
+- Headless Playwright MCP in the container with encrypted, domain-scoped session store.
+- Bitwarden agent vault: per-task scoped secret references, taint after injection, redaction.
+- MFA as input requests, optional TOTP, `local-only` services; session handoff from the Mac.
+- **Exit:** a remote task logged in to a site with a vault credential and an MFA code you typed from your phone.
 
 ## Phase 6 — Other task interfaces
 
-- Connector framework hardening, then Notion, Linear (agent API), GitHub Issues.
-- One-time connector configuration in settings.
-- Task ingest API (`POST /v1/tasks` with per-source tokens, idempotency keys, untrusted-content handling) and an example Gmail → dodo Apps Script.
+- Task ingest API with per-source tokens, idempotency, `untrusted` profile; Gmail Apps Script example.
+- Connectors: Notion, Linear (agent API), GitHub Issues; one-time connector setting.
 
 ## Phase 7 — Polish
 
-- Push-to-talk on task creation (transcribe step).
-- Budget estimate step shown at creation.
-- Second runtime adapter (Claude Agent SDK) to prove the swap.
-- Telegram notifications with inline approve/deny (if chosen).
+- `auto` device and model routing, budget estimate at creation, server-side transcription.
+- Second runtime adapter (Claude on Vertex through the gateway) to prove the swap.
+- Billing export reconciliation.

@@ -119,15 +119,16 @@ tasks/{id}
   priority, dueDate, tags[], projectId
   ai: { enabled, model|auto, device|auto, repo, folder, tools[], budgetEur }
   summary (markdown, agent-maintained), statusLine { text, nextAction, needsYou: bool }
-  spend: { reservedEur, spentEur, byCategory }
   externalRefs: { notion?, linear?, github? }
 tasks/{id}/messages/{id}  thread: author user|agent|system, body, runId?, input request?
 tasks/{id}/artifacts/{id} kind file|link|text, role reference|output, storagePath|url, createdBy
-runs/{id}                 taskId, device, model, state, lease, budget, trigger (new|comment|resume)
-runs/{id}/events/{seq}    AG-UI events (step-level), cost annotations
+runs/{id}                 taskId, device, model, state, lease {owner, generation, expiresAt}, trigger
+runs/{id}/events/{seq}    AG-UI events (step-level), payloads over ~4 KB offloaded to Storage
+gs://…/sessions/{runId}   serialised agent session (Cloud Storage, not Firestore: 1 MiB doc limit)
 inputRequests/{id}        taskId, runId, kind text|choice|approval, prompt, options, answer
 ledger/{id}               append-only cost entries: scope ids, category, amount, reservation id
-budgets/{scope}           running totals per global/month, project, task (transactional)
+budgets/{scope}           running totals per global lifetime, global/month, project/month, task (transactional);
+                          task spend shown in the UI is read from here
 policies/{scope}          allow / ask / deny rules for global, project, task
 devices/{id}              mac daemons: lastSeen, capabilities, folders
 ```
@@ -137,14 +138,17 @@ devices/{id}              mac daemons: lastSeen, capabilities, folders
 ```txt
 queued ─► claimed ─► running ─┬─► waiting_input ─(answer)─► queued (resume)
                               ├─► interrupted   (you pressed stop or commented)
-                              ├─► budget_exhausted
+                              ├─► budget_exhausted ─► input request "top up by X EUR?" ─► queued (resume)
                               ├─► succeeded / failed
 ```
 
-- **Claiming** is a Firestore transaction that sets a lease (`owner`, `expiresAt`). Workers heartbeat every 15 s. An expired lease puts the run back to `queued` (max retries 2).
-- **Interrupt**: the UI sets `runs/{id}.interrupt = true`. The worker listens to its own run document and aborts at the next model or tool boundary (abort signal into the runtime and into any running process).
+- **Claiming** is a Firestore transaction that sets a lease (`owner`, `generation`, `expiresAt`). Workers heartbeat every 15 s.
+- **Fencing**: every write a worker makes, including every CostGate `reserve`/`settle`, carries the lease generation and is rejected in the transaction if the generation changed. A worker that loses its lease aborts itself. So a slow-but-alive worker and its replacement can never both spend the task budget.
+- **No blind retries**: an expired lease re-queues the run once. A crash does not retry (Cloud Run Job `max-retries = 0`); it is shown on the task, because a crash loop would spend the budget for nothing.
+- **Interrupt and halt**: the worker listens to its own run document and to `settings/global.halted`, and aborts at once: the abort signal goes into the runtime, and running tool processes are killed as a process group. Every tool also has its own hard timeout, so "abort at the next boundary" is always bounded.
 - **New comment while running**: interrupt, then enqueue a new run with the same session, so the comment is appended to the current context.
-- **Waiting for input** ends the run and releases the container (no paid idle time). The answer enqueues a resume run that restores the session from Firestore.
+- **Waiting for input** ends the run and releases the container (no paid idle time). The answer enqueues a resume run that restores the session from Cloud Storage.
+- **Budget exhausted** is not a dead end: it becomes an input request ("This task has used its 0.50 EUR. Top up by 0.50 EUR?"), and approving it raises the task budget and resumes.
 
 ---
 
@@ -158,17 +162,13 @@ create task ─► intake pipeline ─► queue ─► executor ─► agent run
 
 ### Intake pipeline (modular mini-steps)
 
-Each step is a small function `Step<In, Out>` registered by name; the pipeline is a list in config so steps can be swapped, reordered or disabled without touching the rest.
+Each step is a small, separately testable function `(task, ctx) => changes`. The pipeline itself is one plain function that calls them in order: easy to read and to change in code, no registry or config layer.
 
-1. `transcribe` — push-to-talk audio → text (Gemini Flash-class; Web Speech API fallback in the browser for free).
-2. `generateTitle` — if no title.
-3. `applyProjectDefaults` — project values fill unset task fields.
-4. `routeDevice` — `auto` → a very small model picks `gcp` or `mac` from the task text, tools and folder.
-5. `routeModel` — `auto` → small model picks the model tier.
-6. `estimateBudget` — (later phase) estimate and show before the run starts.
-7. `enqueue` — create the `runs` doc, unless the task is not AI-enabled.
+1. `generateTitle` — if no title (smallest model, through CostGate).
+2. `applyProjectDefaults` — project values fill unset task fields.
+3. `enqueue` — create the `runs` doc, unless the task is not AI-enabled.
 
-Routing steps return a reason string that is shown on the task, so a wrong choice is visible and correctable.
+Later, each as its own small step when the manual defaults prove annoying: `routeDevice` and `routeModel` for `auto` (a very small model picks, and its reason is shown on the task), `estimateBudget`, and server-side `transcribe` (push-to-talk uses the browser's free speech recognition until then).
 
 ### Agent run
 
@@ -218,17 +218,7 @@ interface TaskConnector {
 - **linear** (`@linear/sdk`): Linear's agent API shows agent activity natively in the issue, which matches the live-trace idea well.
 - **github** (Octokit): issue body section for Summary/Status, comments (editable) for the thread, labels for tags.
 
-The web app keeps a one-time setting for which connector is active.
-
-### 6.4 Task ingest API (programmatic task creation)
-
-Other pipelines can push tasks onto the board, for example "emails in Gmail that need action become tasks".
-
-- `POST /v1/tasks` on one HTTPS Cloud Function, authenticated with a personal access token per source (created in settings, stored hashed, revocable). Body is the same `NewTask` schema plus `source` (e.g. `gmail`) and an `idempotencyKey` (e.g. the Gmail message id) so a retried pipeline never creates duplicates.
-- Each source has its own defaults: tags, project, and whether AI starts automatically (off by default, so injected tasks wait for you).
-- Content from a source is **untrusted input**: it is stored and shown as quoted source material, and runs on such tasks get a stricter default policy, because an email can contain prompt-injection text.
-- Rate limited per token, and the function rejects anything without a valid token before doing work, so it cannot be used to run up costs.
-- Example pipeline for Gmail, at no cost: a Google Apps Script on your account that runs every 10 minutes, looks for a label like `dodo` (or a Gmail filter result), and posts each new email to the API. Connectors only translate; the canonical model, queue, budget and policy live in dodo.
+The web app keeps a one-time setting for which connector is active. Connectors only translate; the canonical model, queue, budget and policy live in dodo. The capability flags are a sketch: they get designed for real when the second connector is built.
 
 ### 6.2 AgentRuntime
 
@@ -245,8 +235,10 @@ interface RuntimeHooks {
 ```
 
 - Tools are defined once in our own format (name, zod input schema, cost model, policy key, execute) and converted by each adapter (ADK `FunctionTool`, Anthropic tool schema, MCP).
-- The adapter must route **every** model call and tool call through the hooks. That is the only contract that keeps budget and permissions intact when the runtime is swapped. ADK exposes before/after model and tool callbacks, which map one-to-one.
-- Session state (conversation so far) is serialised by the adapter into Firestore so runs can resume on another machine.
+- The adapter must route **every** model call and tool call through the hooks, including calls the framework makes on its own (agent transfer, planning, built-in tools such as search grounding). This is enforced twice: by a test that runs the adapter against a fake model and fails on any call that skipped the hooks, and by construction, since the worker has no Vertex AI permission and can only reach models through the model gateway (§6.4).
+- Session state (conversation so far) is serialised by the adapter into Cloud Storage so runs can resume on another machine.
+- **Risk: `@google/adk` for JS is younger than the Python ADK.** Phase 2 starts with a one-day spike that checks before/after model and tool callbacks (can they veto and rewrite `max_output_tokens`?), session serialisation, and Vertex auth from a container. If it falls short, the fallback is our own agent loop in TypeScript (a few hundred lines, hooks for free), still behind the same interface. A Python worker is the last resort.
+- Claude models are available on Vertex AI, so a Claude Agent SDK adapter can call them through the same gateway, under the same budget and kill switch, with no second billing account.
 
 ### 6.3 Executor
 
@@ -259,44 +251,73 @@ interface Executor {
 }
 ```
 
+### 6.4 Model gateway
+
+All model calls from both executors go through one small server-side **model gateway** (Cloud Run service, `min-instances = 0`, streaming responses). It is the only identity with Vertex AI permissions.
+
+- It does reserve → call → settle itself, so budget enforcement is server-side for remote *and* Mac runs. The Mac never holds model credentials and cannot bypass the CostGate, even if a prompt-injected shell command tries.
+- It counts input tokens before the call (`countTokens`, free on Vertex), applies the price tier for that prompt length, sets an explicit thinking budget and `max_output_tokens` that fit the remaining budget, and refuses models missing from the pricing table.
+- It applies an **independent rate governor**: a hard cap on spend per hour across all runs (default 2 EUR/hour), kept in its own counter. It protects against bugs in the CostGate or the ledger, since it does not share their code path.
+- It manages **context caching** for long sessions: the stable prefix (system prompt, task context, earlier turns) is cached, so resumes and long runs do not pay full price for the whole history on every turn.
+- Callers authenticate with a per-run token (remote worker) or the device token (Mac); the gateway checks that the run is active and the lease generation matches.
+
+### 6.5 Task ingest API (programmatic task creation)
+
+Other pipelines can push tasks onto the board, for example "emails in Gmail that need action become tasks".
+
+- `POST /v1/tasks` on one HTTPS Cloud Function, authenticated with a personal access token per source (created in settings, stored hashed, revocable). Body is the same `NewTask` schema plus `source` (e.g. `gmail`) and an `idempotencyKey` (e.g. the Gmail message id) so a retried pipeline never creates duplicates.
+- Each source has its own defaults: tags, project, and whether AI starts automatically (off by default, so injected tasks wait for you).
+- Content from a source is **untrusted input**: it is stored and shown as quoted source material. Runs on such tasks get the `untrusted` policy profile: no `agent-decides` at all, so every action outside the task tools is a deterministic *ask*, because an email can contain prompt-injection text.
+- Rate limited per token, and the function rejects anything without a valid token before doing work, so it cannot be used to run up costs.
+- Example pipeline for Gmail, at no cost: a Google Apps Script on your account that runs every 10 minutes, looks for a label like `dodo` (or a Gmail filter result), and posts each new email to the API.
+
 ---
 
 ## 7. Budget and cost control
 
-Two independent layers. The internal layer is real time and is what normally stops spending. The GCP layer is a backstop for bugs and runaway resources; it lags by hours, so it is set *below* the 50 EUR line.
+The **internal layers enforce the cap**. The GCP layer is a safety net for bugs in them: it reacts in minutes to hours and cannot undo charges already made, so it bounds the damage instead of preventing it.
 
-### 7.1 GCP layer (backstop for the 50 EUR cap)
-
-| Control | Setting | Effect |
+| Layer | Reacts in | Stops spending by |
 | --- | --- | --- |
-| Cloud Billing budget on project `dodo-512722` | 50 EUR, thresholds 50/80/90/100% of actual spend, Pub/Sub topic `billing-alerts` | Emails and an event for the kill switch. |
-| `killSwitch` function (Pub/Sub) | at **≥ 40 EUR** actual: set `settings/global.halted = true`, cancel running Cloud Run executions, set Cloud Run Job max parallelism to 0. At **≥ 45 EUR**: **detach billing from the project** (Google's documented "cap costs" pattern). | Halt is reversible by you; detaching billing stops every paid service. |
-| Quotas | Vertex AI tokens-per-minute capped low; Cloud Run Job max 2 concurrent executions, max task timeout 1 h | Limits how fast money can be spent while billing data lags. |
-| Service account scoping | worker SA can only call Vertex AI, write its own run, read its secrets | A compromised run cannot create resources. |
-| No public billable endpoints | Functions are triggered by Firestore/Pub/Sub, not public HTTP (except auth-checked callables and the token-checked, rate-limited ingest API) | No way for outsiders to run up costs. |
+| 1. CostGate + ledger (per task, project, month) | before every cost | refusing the reservation |
+| 2. Gateway rate governor (spend per hour) | before every model call | refusing the call |
+| 3. Cloud Monitoring alerts (token count, Cloud Run time) | ~5–10 minutes | kill switch: halt + cancel executions |
+| 4. Cloud Billing budget (50 EUR lifetime) | hours, up to a day | kill switch: halt, then detach billing |
 
-Caveat: billing data arrives with a delay of up to roughly a day, which is why the internal ledger exists and why the GCP thresholds sit at 40 and 45 EUR. Detaching billing is a blunt tool: paid services stop and some resources may not survive a long detach, so it is the last resort, not the normal stop.
-
-### 7.2 Internal layer: CostGate and ledger (real time, per task)
+### 7.1 Internal layer: CostGate and ledger
 
 Every cost-bearing operation follows **reserve → execute → settle**:
 
 ```ts
-const r = await costGate.reserve({ scopes: [global, project, task], category, maxEur });
-try { result = await op(r.limits); } finally { await costGate.settle(r, actualEur); }
+const r = await costGate.reserve({ scopes: [global, project, task], category, amount });
+try { result = await op(r); } finally { await costGate.settle(r.id, actual); }
 ```
 
-- `reserve` is one Firestore transaction across the scope documents. It fails if *any* scope (task, project, monthly global) would go over its cap counting existing reservations. Nothing runs without a reservation.
+- `reserve` is one Firestore transaction across the scope documents. It fails if *any* scope (task, project month, global month, global lifetime) would go over its cap counting existing reservations, or if processing is halted. Nothing runs without a reservation. Caps are read live, so lowering one applies at once.
+- Money is integer micro-euros. Prices are converted from USD at 1 USD = 1 EUR, which overestimates cost.
 - Categories, all counted against the same task budget:
-  - **tokens**: reserve `input_tokens × in_price + max_output_tokens × out_price` before each call; `max_output_tokens` is lowered to fit what is left. Settled with actual usage.
-  - **infra**: Cloud Run seconds × (vCPU + memory) price, reserved per minute by the heartbeat. The Cloud Run execution timeout is set from the remaining task budget at launch, so GCP itself kills an over-budget container. Mac runs cost 0 infra.
+  - **tokens** (in the gateway, §6.4): reserve `counted_input × tier_price + (max_output + thinking_budget) × out_price`; output and thinking budgets are lowered to fit what is left. Tool-side model costs (for example search grounding, priced per request) are reserved as their own entries. Settled with the actual usage the API reports.
+  - **infra**: Cloud Run seconds × (vCPU + memory) price, reserved per minute by the heartbeat. The Cloud Run task timeout is set from the remaining task budget at launch, so GCP itself stops an over-budget container. Mac runs cost 0 infra.
   - **actions**: each tool declares a cost model: `free`, `fixed(eur)`, `perUnit(fn)` (for example a Maps API call), or `unknown`. `unknown` and anything flagged as a payment always require approval and reserve the approved amount.
-  - **purchases**: an approval card shows the amount; the approved amount is reserved before the agent continues. For a physical hard limit, we recommend a virtual card with its own spending limit for agent purchases.
-- Prices (EUR, with a conservative USD→EUR rate) live in a versioned `pricing` table in code. Unknown models refuse to run.
-- The ledger is append-only. The budget dashboard (spend per task, project, model, category, per day) is a read of the ledger plus the running totals.
-- Reconciliation: a daily scheduled function compares ledger totals with the GCP billing export (when enabled) and flags drift.
+  - **purchases**: an approval card shows the amount; the approved amount is reserved before the agent continues. For a physical hard limit, use a virtual card with its own spending limit for agent purchases.
+- What the ledger does not see: Firestore or Storage overage, Cloud Build minutes from deploys, logging volume, Artifact Registry. These are small, and they are why the internal monthly cap sits well below the GCP alarms.
+- Default caps (editable): **35 EUR lifetime** and **25 EUR/month** internal, project unset, **0.50 EUR per task**. The lifetime cap mirrors the GCP lifetime budget, below its 40 EUR halt.
+- Later: daily reconciliation against the billing export, once the ledger has ever been wrong.
 
-Default caps (editable): global 35 EUR/month internal, project unset, task 0.50 EUR.
+### 7.2 GCP layer (safety net)
+
+| Control | Setting | Effect |
+| --- | --- | --- |
+| Cloud Billing budget on `dodo-512722` | 50 EUR over a custom period (setup → 2030-12-31, so a lifetime total), thresholds 50/80/90/100%, credits excluded (gross cost), Pub/Sub `billing-alerts` | Feeds the kill switch. |
+| Cloud Monitoring alert policies | Vertex AI `publisher/online_serving/token_count` and Cloud Run billable instance time above what the internal caps can legitimately produce per hour; notification channel into `billing-alerts` | Reacts in minutes, independent of billing data. |
+| `killSwitch` function | Any alert or ≥ **40 EUR**: set `halted`, cancel running Cloud Run executions. ≥ **45 EUR**: also **detach billing** from the project. | Workers also watch `halted` and abort. |
+| Cloud Run Job settings | max **1** concurrent execution, `max-retries = 0`, task timeout from budget (max 1 h) | Bounds the burn rate. |
+| No per-token quota | Current Gemini models on Vertex use dynamic shared quota, so there is no per-project tokens-per-minute limit to lower; the rate bound comes from the gateway governor, concurrency and per-call caps instead. | |
+| No public billable endpoints | Only auth-checked callables, the token-checked rate-limited ingest API, and the gateway (per-run tokens) | Outsiders cannot run up costs. |
+
+**Worst case if layers 1 and 2 both fail.** With one concurrent run, a 128k-token context cap, an 8k output cap and about 6 calls per minute, a Pro-class model burns roughly 90 EUR per hour, a Flash-class model roughly 20 EUR per hour. Layer 3 reacts within about 10 minutes, so the overshoot is around 15 EUR (Pro) or 4 EUR (Flash). Layer 4 alone could be hours late. This is why the default model is Flash-class and Pro needs a task-level choice.
+
+**Operating the kill switch.** `halted` stays set until you clear it in Settings. After a billing detach: re-link billing in the console, redeploy if needed, then clear `halted`. Before any agent code ships, Phase 1 runs one real detach and re-link (`infra/test-kill-switch.sh`), because the dangerous part is the billing IAM, not the message parsing.
 
 ---
 
@@ -316,8 +337,11 @@ Pay(*)
 
 - Three lists at each scope (global → project → task): **deny**, **ask**, **allow**. Precedence: deny > ask > allow; the most specific scope cannot loosen a deny from a broader scope.
 - **Bash parsing**: commands are parsed into a syntax tree, and every simple command (across `&&`, `;`, `|`, subshells, `$(...)`) must be allowed on its own. Redirections to files count as writes. Anything the parser cannot understand goes to *ask*.
-- **Default mode** for actions no rule matches: `agent-decides` (your preference). The model gets a short written policy ("ask before anything irreversible, anything that costs money, anything that sends a message as you, anything outside the task folder") and calls `ask_user(kind: approval)` itself. Payments, unknown-cost tools, credential use for a new service, and outbound messages stay deterministic *ask* regardless.
-- **Remote** runs are already inside a throwaway container. **Local** runs execute shell commands through the sandbox runtime: writes limited to the chosen folder, network limited to an allowlist.
+- **Default mode** for actions no rule matches: `agent-decides`, but only for actions that are read-only or stay inside the sandbox (reading files, running tests, editing files in the task folder). The model gets a short written policy and calls `ask_user(kind: approval)` itself when it judges something risky.
+- **Always deterministic *ask*** unless an allow rule matches, whatever the mode: network egress to a host not on the allowlist (`Http`, `Browser(navigate)`, `Bash` with network), writes outside the task folder, `git push`, opening PRs or issues, sending any message as you, payments, unknown-cost tools, and credential use. This is what blocks the "email tells the agent to send your files somewhere" attack; allow rules from the approval cards are how prompts get fewer over time.
+- **Tasks from the ingest API** use the `untrusted` profile: no `agent-decides` at all.
+- **Egress control on both executors**: shell commands and the browser go through the sandbox runtime's proxy with a domain allowlist, on the Mac *and* in the Cloud Run container. A throwaway container protects the filesystem, not your data or credentials inside it.
+- **Local** shell commands also run with writes limited to the task folder and no access to the Keychain.
 
 ### 8.2 Approval UX
 
@@ -335,16 +359,20 @@ Text questions and choice menus use the same `inputRequests` mechanism. Answerin
 
 ### 9.1 Browser control
 
-- **Remote**: headless Chromium in the Cloud Run Job container, driven through Playwright MCP. Browser state per service (cookies, local storage) is saved as an encrypted Playwright `storageState` in Cloud Storage and restored next time.
+- **Remote**: headless Chromium in the Cloud Run Job container, driven through Playwright MCP. Browser state per service (cookies, local storage) is saved as an encrypted Playwright `storageState` in Cloud Storage (not Firestore: 1 MiB limit) and restored next time.
 - **Local**: Playwright MCP attached to **your running Chrome** through its browser extension, so the agent reuses your logged-in sessions. You can log in by hand and tell the agent to continue in that same tab.
 - **Handoff**: a session you logged into locally can be exported to the remote session store, so remote runs can reuse it until it expires.
 - Every browser action goes through the policy engine (`Browser(navigate:domain)`, `Browser(submit:*)`, downloads, payments).
 
-### 9.2 Credentials (the agent never sees passwords)
+### 9.2 Credentials
+
+Goal: passwords never enter model context. This is a mitigation with known limits, not an absolute guarantee, so the rules below close the obvious read-back paths.
 
 - Credentials come from a **secret provider** behind an interface. The LLM only sees a reference like `{{secret:energy-provider.password}}`; the browser tool resolves it inside the tool and types it into the field. Values are redacted from traces and logs.
-- Recommended provider: a **dedicated vault** in your password manager that holds only what agents may use (1Password service account or Bitwarden Secrets Manager both have SDKs and free or cheap tiers). Never the full vault. GCP Secret Manager is the fallback (a handful of secrets stays in the free tier).
-- First use of a credential for a new service is always an approval.
+- **Scoped per task**: a task declares which services it may use, and the provider refuses references outside that set. Using a credential is an approval per task, not once globally, so approving the energy provider in one task does not expose it to another.
+- **Taint after injection**: once a secret is typed into a page, arbitrary JavaScript (`browser_evaluate`) is disabled for that browser context and `Http`/`Bash` egress is blocked until the page navigates away. Page snapshots are filtered for the injected value.
+- **Sessions**: saved browser sessions are restored only for domains the task's browser rules allow; the encryption key lives in Secret Manager and is fetched per run.
+- Recommended provider: a **dedicated Bitwarden vault** (Secrets Manager free tier, open-source SDK) that holds only what agents may use. Never your full vault.
 
 ### 9.3 MFA
 
@@ -367,7 +395,7 @@ dodo status                     # online, current run, last errors
 ```
 
 - The daemon signs in to Firebase as a **device identity** (custom token minted by a callable function after you approve the device in the web app), listens for queued runs with `device = mac:<id>`, and heartbeats `devices/{id}.lastSeen`. The UI shows whether the Mac is online; tasks routed to an offline Mac wait in the queue and say so.
-- Tokens are kept in the macOS Keychain.
+- The daemon never holds model or cloud credentials: model calls go through the gateway (§6.4) with the device token. The device token is kept in the Keychain and only in the daemon's memory while running; sandboxed commands cannot read the Keychain.
 - Phase 1 for local can be even simpler: `dodo daemon` in a terminal tab.
 
 ---
@@ -383,8 +411,8 @@ dodo status                     # online, current run, last errors
 
 ## 12. Security summary
 
-- Firestore and Storage rules allow only your uid and the device/worker identities; the worker can only touch its own run and task.
-- No service account keys: GitHub Actions deploy with Workload Identity Federation; workers use attached service accounts.
+- Firestore and Storage rules allow only your account (owner claim) and the Mac device identity. The Cloud Run worker and Functions use the Admin SDK, which **bypasses rules**: they are trusted code, and their scoping comes from IAM (the worker cannot call Vertex AI or touch billing) and from lease fencing, not from rules.
+- No service account keys: GitHub Actions deploy with Workload Identity Federation. The deployer may act only as the specific runtime service accounts, not as any account in the project.
 - Secrets never enter model context, traces or logs.
 - Everything that leaves dodo (messages, purchases, posts) defaults to ask.
 
@@ -407,5 +435,10 @@ dodo status                     # online, current run, last errors
 | Date | Decision |
 | --- | --- |
 | 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI). |
+| 2026-10-25 | Billing in EUR, region `europe-west1`. |
+| 2026-10-25 | Bitwarden (dedicated agent vault) as the secret provider. |
+| 2026-10-25 | Telegram as a second notification channel next to web push (free). |
+| 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review). |
+| 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic *ask*; `agent-decides` only for sandbox-confined actions (from the architecture review). |
 
-Still open: billing currency, region (`europe-west1` proposed), password manager for the agent vault, Telegram as a second notification channel.
+| 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly. |

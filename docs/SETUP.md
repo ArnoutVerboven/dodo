@@ -24,9 +24,8 @@ git clone https://github.com/ArnoutVerboven/dodo && cd dodo
 It will:
 
 - enable the needed APIs (Firestore, Cloud Run, Cloud Functions, Pub/Sub, Vertex AI, Billing Budgets, Artifact Registry, IAM Credentials);
-- create the **50 EUR budget** with Pub/Sub alerts and the kill-switch service account (needs you to be *Billing Account Administrator* on the billing account, which you are if you created it);
-- set low quotas (Cloud Run concurrency, Vertex AI tokens per minute);
-- create a `dodo-deployer` service account and a **Workload Identity Federation** pool that trusts only GitHub Actions runs from `ArnoutVerboven/dodo` on `main`.
+- create the **50 EUR lifetime budget** (from setup to the end of 2030) with Pub/Sub alerts, and the kill-switch service account (needs you to be *Billing Account Administrator* on the billing account, which you are if you created it);
+- create a `dodo-deployer` service account and a **Workload Identity Federation** pool that trusts only GitHub Actions runs from `ArnoutVerboven/dodo` on `main`. The deployer may act only as the specific runtime accounts.
 
 Then add two GitHub repo variables (Settings → Secrets and variables → Actions → *Variables*), printed at the end of the script: `GCP_WIF_PROVIDER` and `GCP_DEPLOYER_SA`.
 
@@ -34,7 +33,7 @@ What I need from you, in short:
 
 - [ ] Firebase steps above, and the `firebaseConfig` in the thread.
 - [ ] The bootstrap script run once, and the two repo variables set.
-- [ ] Your billing account currency (EUR?), so budget amounts are exact.
+- [ ] Once the first deploy is live: run `./infra/test-kill-switch.sh dodo-512722` once. It sends a fake 46 EUR alert, checks that billing really got detached, and re-links it. This proves the kill switch works before any agent can spend money.
 
 ## 3. Later phases
 
