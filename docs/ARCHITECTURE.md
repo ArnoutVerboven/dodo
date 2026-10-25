@@ -67,7 +67,7 @@ Why this shape:
 
 | Concern | Choice | Why |
 | --- | --- | --- |
-| Language | **TypeScript (strict) everywhere**, Node 22, pnpm workspaces | One language for UI, functions, worker and Mac CLI; shared zod schemas across all of them; first-class SDKs for Firebase, ADK (`@google/adk`), Anthropic Agent SDK, AG-UI, Playwright MCP, Notion, Linear, Octokit. *Alternative:* Python worker + TS UI (see decisions). |
+| Language | **TypeScript (strict) everywhere**, Node 22, pnpm workspaces | One language for UI, functions, worker and Mac CLI; shared zod schemas across all of them; first-class SDKs for Firebase, ADK (`@google/adk`), Anthropic Agent SDK, AG-UI, Playwright MCP, Notion, Linear, Octokit. Decided 2026-10-25. |
 | Schemas | zod | Runtime validation at every boundary, types for free. |
 | Web app | Vite + React + shadcn/ui + TanStack Router, static SPA | Static files on Firebase Hosting are free (Next.js SSR would need paid Cloud Run). shadcn gives standard, good-looking components. |
 | Auth | Firebase Auth (Google sign-in), allowlist of one uid | Free; security rules reject everyone else. |
@@ -392,6 +392,10 @@ dodo status                     # online, current run, last errors
 
 ---
 
-## 14. Open questions
+## 14. Decisions
 
-Tracked in the PR description and the project thread; decisions are recorded here once made.
+| Date | Decision |
+| --- | --- |
+| 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI). |
+
+Still open: billing currency, region (`europe-west1` proposed), password manager for the agent vault, Telegram as a second notification channel.
