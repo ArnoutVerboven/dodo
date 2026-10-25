@@ -1,6 +1,6 @@
 node_modules/
 dist/
-lib/
+apps/functions/lib/
 .env
 .env.*
 !.env.example
