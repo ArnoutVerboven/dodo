@@ -68,7 +68,17 @@ ensure_sa() {
   gcloud iam service-accounts describe "${name}@${PROJECT}.iam.gserviceaccount.com" >/dev/null 2>&1 ||
     gcloud iam service-accounts create "$name" --display-name="$display"
 }
+# New service accounts take a little while to become visible to IAM, so retry.
 grant() {
+  local i
+  for i in 1 2 3 4 5 6; do
+    if gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$1" --role="$2" \
+      --condition=None --quiet >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "  waiting for $1 to propagate ($i)..."
+    sleep $((i * 5))
+  done
   gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$1" --role="$2" \
     --condition=None --quiet >/dev/null
 }
