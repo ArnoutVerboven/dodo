@@ -1,0 +1,37 @@
+{
+  "name": "@dodo/budget",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./firestore": {
+      "types": "./dist/firestore.d.ts",
+      "default": "./dist/firestore.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dodo/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "firebase-admin": "^13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "firebase-admin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.5.0"
+  }
+}

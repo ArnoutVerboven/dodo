@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.21 0.02 265);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.965 0.005 265);
+  --muted-foreground: oklch(0.5 0.02 265);
+  --border: oklch(0.91 0.01 265);
+  --primary: oklch(0.25 0.03 265);
+  --primary-foreground: oklch(0.98 0 0);
+  --accent: oklch(0.95 0.01 265);
+  --attention: oklch(0.75 0.16 70);
+  --attention-bg: oklch(0.97 0.05 85);
+  --danger: oklch(0.58 0.2 27);
+  --success: oklch(0.6 0.14 155);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.17 0.02 265);
+    --foreground: oklch(0.95 0.005 265);
+    --card: oklch(0.21 0.02 265);
+    --muted: oklch(0.25 0.02 265);
+    --muted-foreground: oklch(0.7 0.02 265);
+    --border: oklch(0.3 0.02 265);
+    --primary: oklch(0.93 0.01 265);
+    --primary-foreground: oklch(0.2 0.02 265);
+    --accent: oklch(0.27 0.02 265);
+    --attention-bg: oklch(0.3 0.06 75);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-attention: var(--attention);
+  --color-attention-bg: var(--attention-bg);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+}
+
+* {
+  border-color: var(--border);
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.prose-sm h1,
+.prose-sm h2,
+.prose-sm h3 {
+  font-weight: 600;
+  margin: 0.75em 0 0.25em;
+}
+.prose-sm p {
+  margin: 0.4em 0;
+}
+.prose-sm ul {
+  list-style: disc;
+  padding-left: 1.25em;
+}
+.prose-sm ol {
+  list-style: decimal;
+  padding-left: 1.25em;
+}
+.prose-sm code {
+  background: var(--muted);
+  padding: 0 0.25em;
+  border-radius: 4px;
+}
+.prose-sm table {
+  border-collapse: collapse;
+}
+.prose-sm th,
+.prose-sm td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+}
