@@ -78,7 +78,9 @@ export class BudgetExceededError extends Error {
     readonly requested: MicroEur,
     readonly available: MicroEur,
   ) {
-    super(`Budget ${scopeKey} exceeded: requested ${requested}, available ${available} (micro-EUR)`);
+    super(
+      `Budget ${scopeKey} exceeded: requested ${requested}, available ${available} (micro-EUR)`,
+    );
   }
 }
 

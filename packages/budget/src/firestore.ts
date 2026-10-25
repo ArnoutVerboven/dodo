@@ -37,7 +37,11 @@ export class FirestoreBudgetStore implements BudgetStore {
           const snap = await t.get(this.db.doc(paths.budget(k)));
           const d = (snap.exists ? snap.data() : {}) as Partial<BudgetState>;
           // The limit is always read live, so raising or lowering a cap applies at once.
-          return { limit: await this.limitFor(k, t), reserved: d.reserved ?? 0, spent: d.spent ?? 0 };
+          return {
+            limit: await this.limitFor(k, t),
+            reserved: d.reserved ?? 0,
+            spent: d.spent ?? 0,
+          };
         },
         setBudget: (k, s) => void budgets.set(k, s),
         getReservation: async (id) => {

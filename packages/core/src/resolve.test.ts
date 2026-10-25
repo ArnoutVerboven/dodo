@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { eur } from './model.js';
 import { resolveAiConfig } from './resolve.js';
 
-const settings = { defaults: { model: 'gemini-flash', device: 'gcp' as const }, defaultTaskBudget: eur(0.5) };
+const settings = {
+  defaults: { model: 'gemini-flash', device: 'gcp' as const },
+  defaultTaskBudget: eur(0.5),
+};
 
 describe('resolveAiConfig', () => {
   it('uses global defaults when nothing else is set', () => {
@@ -16,11 +19,19 @@ describe('resolveAiConfig', () => {
       { defaults: { device: 'mac:air', model: 'gemini-pro', folder: '~/code/x' } },
       settings,
     );
-    expect(r).toMatchObject({ model: 'gemini-pro', device: 'mac:air', budget: eur(2), folder: '~/code/x' });
+    expect(r).toMatchObject({
+      model: 'gemini-pro',
+      device: 'mac:air',
+      budget: eur(2),
+      folder: '~/code/x',
+    });
   });
 
   it('falls back to auto when no layer sets model or device', () => {
-    const r = resolveAiConfig({ ai: { enabled: true } }, undefined, { defaults: {}, defaultTaskBudget: 1 });
+    const r = resolveAiConfig({ ai: { enabled: true } }, undefined, {
+      defaults: {},
+      defaultTaskBudget: 1,
+    });
     expect(r.model).toBe('auto');
     expect(r.device).toBe('auto');
   });

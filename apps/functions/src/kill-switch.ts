@@ -35,7 +35,8 @@ export interface KillSwitchDeps {
 export type KillSwitchAction = 'none' | 'halted' | 'detached';
 
 export function parseNotification(data: unknown): BudgetNotification {
-  if (typeof data !== 'object' || data === null) throw new Error('Budget notification is not an object');
+  if (typeof data !== 'object' || data === null)
+    throw new Error('Budget notification is not an object');
   const costAmount = (data as Record<string, unknown>).costAmount;
   if (typeof costAmount !== 'number' || !Number.isFinite(costAmount)) {
     throw new Error('Budget notification has no numeric costAmount');
@@ -50,7 +51,10 @@ export async function handleBudgetNotification(
 ): Promise<KillSwitchAction> {
   if (n.currencyCode && n.currencyCode !== config.currency) {
     // A currency mismatch means our thresholds are meaningless; fail safe by halting.
-    deps.log('Currency mismatch, halting to be safe', { got: n.currencyCode, want: config.currency });
+    deps.log('Currency mismatch, halting to be safe', {
+      got: n.currencyCode,
+      want: config.currency,
+    });
     await deps.halt(`Budget notification in ${n.currencyCode}, expected ${config.currency}`);
     return 'halted';
   }

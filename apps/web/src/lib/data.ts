@@ -109,9 +109,10 @@ export const useProjects = () =>
   useLiveQuery(query(collection(db, paths.projects()), orderBy('name')), Project, []);
 
 const SettingsDoc = GlobalSettings.extend({});
+const DEFAULT_SETTINGS = GlobalSettings.parse({});
 export function useSettings(): Live<GlobalSettings> {
   const live = useLiveDoc(paths.settings(), SettingsDoc);
-  return { ...live, data: live.data ?? GlobalSettings.parse({}) };
+  return { ...live, data: live.data ?? DEFAULT_SETTINGS };
 }
 
 export interface BudgetRow {
@@ -188,9 +189,8 @@ export async function createTask(input: NewTask): Promise<string> {
     dueDate: input.dueDate || undefined,
     tags: input.tags ?? [],
     projectId: input.projectId || undefined,
-    ai: input.ai ?? { enabled: false },
+    ai: { ...input.ai, enabled: input.ai?.enabled ?? false },
     summary: '',
-    spend: { reserved: 0, spent: 0 },
     externalRefs: {},
     createdAt: now,
     updatedAt: now,
@@ -204,7 +204,7 @@ function provisionalTitle(description: string): string {
   return first.length > 80 ? `${first.slice(0, 77)}…` : first || 'Untitled task';
 }
 
-export async function updateTask(id: string, changes: Partial<Omit<Task, 'id' | 'spend'>>) {
+export async function updateTask(id: string, changes: Partial<Omit<Task, 'id'>>) {
   await updateDoc(doc(db, paths.task(id)), clean({ ...changes, updatedAt: Date.now() }));
 }
 

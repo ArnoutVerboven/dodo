@@ -57,12 +57,6 @@ export const StatusLine = z.object({
 });
 export type StatusLine = z.infer<typeof StatusLine>;
 
-export const SpendSummary = z.object({
-  reserved: MicroEur.default(0),
-  spent: MicroEur.default(0),
-});
-export type SpendSummary = z.infer<typeof SpendSummary>;
-
 export const Task = z.object({
   id: z.string(),
   title: z.string(),
@@ -76,7 +70,6 @@ export const Task = z.object({
   ai: AiConfig.default({ enabled: false }),
   summary: z.string().default(''),
   statusLine: StatusLine.optional(),
-  spend: SpendSummary.default({ reserved: 0, spent: 0 }),
   externalRefs: z.record(z.string(), z.string()).default({}),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -120,7 +113,9 @@ export const InputRequest = z.object({
   answer: z
     .object({
       value: z.string(),
-      alwaysAllow: z.object({ rule: z.string(), scope: z.enum(['task', 'project', 'global']) }).optional(),
+      alwaysAllow: z
+        .object({ rule: z.string(), scope: z.enum(['task', 'project', 'global']) })
+        .optional(),
       answeredAt: Timestamp,
     })
     .optional(),

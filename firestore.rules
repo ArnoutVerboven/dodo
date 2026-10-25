@@ -11,11 +11,6 @@ service cloud.firestore {
     function onlyChanges(fields) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
-    // The UI may never touch spend counters on a task.
-    function spendUntouched() {
-      return !('spend' in request.resource.data) ||
-        (resource != null && request.resource.data.spend == resource.data.spend);
-    }
 
     match /settings/global {
       allow read, write: if isOwner();
@@ -26,10 +21,7 @@ service cloud.firestore {
     }
 
     match /tasks/{taskId} {
-      allow read, delete: if isOwner();
-      allow create: if isOwner() && (!('spend' in request.resource.data) ||
-        (request.resource.data.spend.reserved == 0 && request.resource.data.spend.spent == 0));
-      allow update: if isOwner() && spendUntouched();
+      allow read, write: if isOwner();
 
       match /messages/{messageId} {
         allow read: if isOwner();

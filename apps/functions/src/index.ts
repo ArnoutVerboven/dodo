@@ -1,5 +1,5 @@
-import { CloudBillingClient } from '@google-cloud/billing';
 import { paths } from '@dodo/core';
+import { CloudBillingClient } from '@google-cloud/billing';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { defineInt, defineString } from 'firebase-functions/params';
@@ -39,7 +39,10 @@ export const killSwitch = onMessagePublished(
       {
         isHalted: async () => (await settingsRef.get()).get('halted') === true,
         halt: async (reason) => {
-          await settingsRef.set({ halted: true, haltReason: reason, haltedAt: Date.now() }, { merge: true });
+          await settingsRef.set(
+            { halted: true, haltReason: reason, haltedAt: Date.now() },
+            { merge: true },
+          );
         },
         isBillingEnabled: async () => {
           const [info] = await billing.getProjectBillingInfo({ name: projectName });

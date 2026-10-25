@@ -14,7 +14,9 @@ export class MemoryBudgetStore implements BudgetStore {
   ledger: LedgerEntry[] = [];
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly limits: (scopeKey: string) => number | undefined = () => undefined) {}
+  constructor(
+    private readonly limits: (scopeKey: string) => number | undefined = () => undefined,
+  ) {}
 
   transact<T>(fn: (tx: BudgetTx) => Promise<T>): Promise<T> {
     const run = async () => {
@@ -24,8 +26,7 @@ export class MemoryBudgetStore implements BudgetStore {
       const tx: BudgetTx = {
         isHalted: async () => this.halted,
         getBudget: async (k) =>
-          budgets.get(k) ??
-          this.budgets.get(k) ?? { limit: this.limits(k), reserved: 0, spent: 0 },
+          budgets.get(k) ?? this.budgets.get(k) ?? { limit: this.limits(k), reserved: 0, spent: 0 },
         setBudget: (k, s) => void budgets.set(k, s),
         getReservation: async (id) => reservations.get(id) ?? this.reservations.get(id),
         putReservation: (r) => void reservations.set(r.id, r),

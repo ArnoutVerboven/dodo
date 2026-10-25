@@ -1,4 +1,4 @@
-import { type MicroEur, MICRO_PER_EUR } from '@dodo/core';
+import { MICRO_PER_EUR, type MicroEur } from '@dodo/core';
 
 /**
  * Prices used for budget reservations. Deliberately conservative:

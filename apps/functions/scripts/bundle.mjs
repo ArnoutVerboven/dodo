@@ -21,7 +21,14 @@ await build({
 await writeFile(
   new URL('../lib/package.json', import.meta.url),
   JSON.stringify(
-    { name: 'dodo-functions', private: true, type: 'module', main: 'index.js', engines: pkg.engines, dependencies: pkg.dependencies },
+    {
+      name: 'dodo-functions',
+      private: true,
+      type: 'module',
+      main: 'index.js',
+      engines: pkg.engines,
+      dependencies: pkg.dependencies,
+    },
     null,
     2,
   ),
