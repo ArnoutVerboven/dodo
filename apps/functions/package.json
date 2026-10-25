@@ -1,0 +1,23 @@
+{
+  "name": "@dodo/functions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google-cloud/billing": "^6.2.0",
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^7.4.0"
+  },
+  "devDependencies": {
+    "@dodo/budget": "workspace:*",
+    "@dodo/core": "workspace:*",
+    "esbuild": "^0.25.0"
+  }
+}

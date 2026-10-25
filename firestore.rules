@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Only the owner (custom claim set by infra/grant-owner.mjs) can use the app.
+// Budget state (budgets, reservations, ledger) is written only by trusted server code
+// through the Admin SDK, which bypasses these rules; the owner can read it.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner() {
+      return request.auth != null && request.auth.token.dodo_owner == true;
+    }
+    function onlyChanges(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
+    }
+    // The UI may never touch spend counters on a task.
+    function spendUntouched() {
+      return !('spend' in request.resource.data) ||
+        (resource != null && request.resource.data.spend == resource.data.spend);
+    }
+
+    match /settings/global {
+      allow read, write: if isOwner();
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if isOwner();
+    }
+
+    match /tasks/{taskId} {
+      allow read, delete: if isOwner();
+      allow create: if isOwner() && (!('spend' in request.resource.data) ||
+        (request.resource.data.spend.reserved == 0 && request.resource.data.spend.spent == 0));
+      allow update: if isOwner() && spendUntouched();
+
+      match /messages/{messageId} {
+        allow read: if isOwner();
+        // The owner writes only their own messages and answers to input requests.
+        allow create: if isOwner() && request.resource.data.author == 'user';
+        allow update: if isOwner() && onlyChanges(['input']);
+      }
+      match /artifacts/{artifactId} {
+        allow read, write: if isOwner();
+      }
+    }
+
+    match /runs/{runId} {
+      allow read: if isOwner();
+      // The owner can only request an interrupt.
+      allow update: if isOwner() && onlyChanges(['interrupt']) && request.resource.data.interrupt == true;
+      match /events/{eventId} {
+        allow read: if isOwner();
+      }
+    }
+
+    match /budgets/{scope} {
+      allow read: if isOwner();
+    }
+    match /ledger/{entryId} {
+      allow read: if isOwner();
+    }
+    match /reservations/{id} {
+      allow read: if isOwner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

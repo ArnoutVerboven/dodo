@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "ledger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "taskId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
