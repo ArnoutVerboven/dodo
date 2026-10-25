@@ -27,7 +27,9 @@ It will:
 - create the **50 EUR lifetime budget** (from setup to the end of 2030) with Pub/Sub alerts, and the kill-switch service account (needs you to be *Billing Account Administrator* on the billing account, which you are if you created it);
 - create a `dodo-deployer` service account and a **Workload Identity Federation** pool that trusts only GitHub Actions runs from `ArnoutVerboven/dodo` on `main`. The deployer may act only as the specific runtime accounts.
 
-Then add two GitHub repo variables (Settings → Secrets and variables → Actions → *Variables*), printed at the end of the script: `GCP_WIF_PROVIDER` and `GCP_DEPLOYER_SA`.
+Then add the GitHub repo variables (Settings → Secrets and variables → Actions → *Variables*) printed at the end of the script: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, plus `OWNER_EMAIL` (the Google account you sign in with; the first sign-in with that email becomes the owner, nothing to run by hand).
+
+After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites.
 
 What I need from you, in short:
 

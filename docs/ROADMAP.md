@@ -22,10 +22,12 @@ The UI breadth (kanban, projects, budget page) was built before this plan was re
 
 Agents in this phase can only use the task tools (summary, status, message, ask, artifacts, finish). **No bash, HTTP or browser** until the policy engine exists.
 
-- Day 1 spike: `@google/adk` JS callbacks (veto, rewrite max tokens), session serialisation, Vertex auth from Cloud Run. Decide ADK vs own loop.
-- Model gateway: countTokens, tiered prices, thinking budget, rate governor (2 EUR/hour), context caching.
+- Own agent loop behind `AgentRuntime` (or, if ADK is chosen, a day-1 spike of its callbacks and a custom model backend to the gateway).
+- Control plane callables: `gateway.generate` (streaming; countTokens, tiered prices, thinking budget, rate governor 2 EUR/hour, stable prefix for implicit caching), `run.heartbeat` (lease + infra metering), `run.finish`.
+- Per-run Firebase identity minted by the dispatcher and revoked at run end; Firestore rules for `run:*` writes with lease-generation check; worker SA with no roles.
+- Idempotent dispatcher; one active run per task; comment steering at the next model call; trace archival to Storage at run end.
 - Cloud Monitoring alert policies (token count, Cloud Run time) into the kill switch.
-- Dispatcher + Cloud Run Job worker: lease with generation fencing, `max-retries = 0`, timeout from budget, infra metering, watches `halted`.
+- Cloud Run Job worker: `max-retries = 0`, timeout from budget, aborts when the heartbeat says `halted` or `interrupt`.
 - Live trace, collapse into one message, interrupt, comment-to-continue, text/choice/approval input requests, budget top-up request.
 - AI title generation.
 - **Exit:** a task asked the agent to summarise a pasted document, and the ledger matched the Vertex usage in the console within 5%.

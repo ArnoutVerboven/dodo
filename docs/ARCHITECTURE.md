@@ -32,34 +32,38 @@ This document is the target design. [ROADMAP.md](ROADMAP.md) says in which order
 └──────┬──────────────────────────┬──────────────────────────┬───────────┘
        │ triggers                 │ listen (queued runs      │ connectors sync
        ▼                          │  for device=mac)         ▼  (later phases)
-┌──────────────────────┐          │                 ┌────────────────────┐
-│ Cloud Functions (v2) │          │                 │ Notion / Linear /  │
-│  intake pipeline     │          │                 │ GitHub Issues      │
-│  dispatcher          │          │                 └────────────────────┘
-│  budget kill switch  │          │
-│  notifications (FCM) │          │
-└──────┬───────────────┘          │
-       │ jobs.run (one execution per run)
-       ▼                          ▼
-┌──────────────────────┐   ┌────────────────────────┐
-│ Remote executor      │   │ Local executor (Mac)   │
-│ Cloud Run Job        │   │ `dodo` daemon (launchd)│
-│ ephemeral container  │   │ sandboxed shell        │
-│ headless Chromium    │   │ your real Chrome       │
-└──────┬───────────────┘   └──────────┬─────────────┘
-       └──────────────┬───────────────┘
-                      ▼
-             Worker core (same code in both)
-   AgentRuntime (ADK) ─ ToolHost ─ PolicyEngine ─ CostGate ─ Secrets
+┌──────────────────────────────┐  │                 ┌────────────────────┐
+│ Control plane (Cloud         │  │                 │ Notion / Linear /  │
+│ Functions v2, trusted code)  │  │                 │ GitHub Issues      │
+│  intake, dispatcher          │  │                 └────────────────────┘
+│  model gateway (streaming)   │  │
+│  heartbeat + action costs    │◄─┼───────────────────────────┐
+│  kill switch, notifications  │  │                           │
+└──────┬───────────────────────┘  │                           │
+       │ jobs.run (one execution per run, per-run identity)   │ callables, with a
+       ▼                          ▼                           │ per-run or device
+┌──────────────────────┐   ┌────────────────────────┐         │ Firebase identity
+│ Remote executor      │   │ Local executor (Mac)   │         │
+│ Cloud Run Job        │   │ `dodo` daemon (launchd)│         │
+│ ephemeral container  │   │ sandboxed shell        │         │
+│ headless Chromium    │   │ your real Chrome       │         │
+└──────┬───────────────┘   └──────────┬─────────────┘         │
+       └──────────────┬───────────────┘                       │
+                      ▼                                       │
+        Worker core (same code in both, **untrusted client**) ┘
+          AgentRuntime ─ ToolHost ─ PolicyEngine ─ Secrets
                       │
-          Gemini on Vertex AI (billed to the same GCP project)
+      model calls only through the gateway ─► Gemini on Vertex AI
 ```
+
+Trust boundary: everything that spends money or holds credentials (budget writes, model calls, secrets, billing) lives in the control plane. Workers are clients with a scoped identity: if a prompt-injected command takes over a worker, it can only do what that one run may do.
 
 Why this shape:
 
 - **Firestore as queue and trace store** gives realtime UI updates, the run queue, and the live trace with zero extra infrastructure, inside the free tier (50k reads / 20k writes per day). Traces are written per step (tool call, message), never per token.
 - **Cloud Run Jobs** give one throwaway container per run: a natural sandbox, billed per second, nothing running when idle, and a GCP-enforced timeout we derive from the task budget.
 - **The Mac daemon** runs the same worker core, so local and remote behave identically except for the tools and browser they are given.
+- **Workers are untrusted clients.** The Cloud Run worker's service account has **no IAM roles at all**. Each run gets its own Firebase identity (`run:{runId}`, claims `taskId`, `generation`), minted by the dispatcher and revoked when the run ends. Firestore rules scope it to its own run and task, and the gateway checks it on every model call. This matters because any process inside a Cloud Run container can read the container's service-account token from the metadata server: with zero roles, a leaked token is worthless.
 
 ---
 
@@ -69,14 +73,14 @@ Why this shape:
 | --- | --- | --- |
 | Language | **TypeScript (strict) everywhere**, Node 22, pnpm workspaces | One language for UI, functions, worker and Mac CLI; shared zod schemas across all of them; first-class SDKs for Firebase, ADK (`@google/adk`), Anthropic Agent SDK, AG-UI, Playwright MCP, Notion, Linear, Octokit. Decided 2026-10-25. |
 | Schemas | zod | Runtime validation at every boundary, types for free. |
-| Web app | Vite + React + shadcn/ui + TanStack Router, static SPA | Static files on Firebase Hosting are free (Next.js SSR would need paid Cloud Run). shadcn gives standard, good-looking components. |
+| Web app | Vite + React + Tailwind (shadcn-style components) + React Router, static SPA, installable PWA | Static files on Firebase Hosting are free (Next.js SSR would need paid Cloud Run). |
 | Auth | Firebase Auth (Google sign-in), allowlist of one uid | Free; security rules reject everyone else. |
 | Data | Firestore (Native, `europe-west1`) | Free tier, realtime, transactions for the ledger and queue claims. |
 | Files / artifacts | Cloud Storage for Firebase | 5 GB free; signed URLs for the agent. |
 | Backend glue | Cloud Functions for Firebase (2nd gen) | Free tier of 2M invocations; triggers on Firestore, Pub/Sub, schedules. |
 | Remote compute | Cloud Run Jobs | Per-second billing, scale to zero, free tier 180k vCPU-s / month. |
-| Models | Gemini via Vertex AI | Billed to the same project, so it sits under the same GCP budget cap. Model ids and prices live in config. |
-| Agent loop | Google ADK (JS) behind `AgentRuntime` | As requested; swappable for Claude Agent SDK or others. |
+| Models | Gemini via Vertex AI, only through the model gateway | Billed to the same project, so it sits under the same GCP budget cap. Model ids and prices live in a versioned table; the exact ids and prices are verified at the phase 2 spike (current-generation Flash as default). |
+| Agent loop | `AgentRuntime` interface; first adapter: own loop in TypeScript (recommended, see §6.2), ADK or Claude Agent SDK as optional adapters | The gateway already owns the model call; a framework that wants to own it too adds risk for little gain. |
 | Trace events | AG-UI event types (`@ag-ui/core`) | Standard vocabulary (RUN_STARTED, TOOL_CALL_START, TEXT_MESSAGE_CONTENT, ...). We store them in Firestore instead of using the SSE transport. Opens the door to AG-UI/CopilotKit components later. |
 | Browser | Playwright MCP (`@playwright/mcp`) | Accessibility-tree based, widely used, works headless in a container *and* attached to your real Chrome via its browser extension. `chrome-devtools-mcp` is the fallback for local. |
 | Local sandbox | `@anthropic-ai/sandbox-runtime` | Seatbelt on macOS / bubblewrap on Linux, with a network allowlist; the same thing Claude Code uses. |
@@ -142,13 +146,15 @@ queued ─► claimed ─► running ─┬─► waiting_input ─(answer)─�
                               ├─► succeeded / failed
 ```
 
-- **Claiming** is a Firestore transaction that sets a lease (`owner`, `generation`, `expiresAt`). Workers heartbeat every 15 s.
+- **Dispatching is idempotent.** Firestore triggers fire at least once, so the dispatcher moves a run `queued → dispatching` in a transaction that records the execution it is about to start; a second trigger finds the state already changed and does nothing. At most one active run exists per task; a new trigger on a task with an active run is queued behind it.
+- **Claiming** is a Firestore transaction that sets a lease (`owner`, `generation`, `expiresAt`). Workers heartbeat every 15 s through the `heartbeat` callable, which also meters infra cost (§7.1).
 - **Fencing**: every write a worker makes, including every CostGate `reserve`/`settle`, carries the lease generation and is rejected in the transaction if the generation changed. A worker that loses its lease aborts itself. So a slow-but-alive worker and its replacement can never both spend the task budget.
 - **No blind retries**: an expired lease re-queues the run once. A crash does not retry (Cloud Run Job `max-retries = 0`); it is shown on the task, because a crash loop would spend the budget for nothing.
 - **Interrupt and halt**: the worker listens to its own run document and to `settings/global.halted`, and aborts at once: the abort signal goes into the runtime, and running tool processes are killed as a process group. Every tool also has its own hard timeout, so "abort at the next boundary" is always bounded.
-- **New comment while running**: interrupt, then enqueue a new run with the same session, so the comment is appended to the current context.
+- **New comment while running** does not abort: the worker watches the thread and delivers the comment into the context at the next model call (steering, like a mid-run message in Claude Code). Only the stop button aborts. Aborting throws away in-flight work and a resume re-sends the context, so it is the exception, not the way to steer.
 - **Waiting for input** ends the run and releases the container (no paid idle time). The answer enqueues a resume run that restores the session from Cloud Storage.
 - **Budget exhausted** is not a dead end: it becomes an input request ("This task has used its 0.50 EUR. Top up by 0.50 EUR?"), and approving it raises the task budget and resumes.
+- **When a run ends**, its event documents are archived as one JSON trace in Cloud Storage (linked from the collapsed thread message) and deleted from Firestore. Firestore stays small and within the free tier; the live trace only exists while the run is live.
 
 ---
 
@@ -237,7 +243,8 @@ interface RuntimeHooks {
 - Tools are defined once in our own format (name, zod input schema, cost model, policy key, execute) and converted by each adapter (ADK `FunctionTool`, Anthropic tool schema, MCP).
 - The adapter must route **every** model call and tool call through the hooks, including calls the framework makes on its own (agent transfer, planning, built-in tools such as search grounding). This is enforced twice: by a test that runs the adapter against a fake model and fails on any call that skipped the hooks, and by construction, since the worker has no Vertex AI permission and can only reach models through the model gateway (§6.4).
 - Session state (conversation so far) is serialised by the adapter into Cloud Storage so runs can resume on another machine.
-- **Risk: `@google/adk` for JS is younger than the Python ADK.** Phase 2 starts with a one-day spike that checks before/after model and tool callbacks (can they veto and rewrite `max_output_tokens`?), session serialisation, and Vertex auth from a container. If it falls short, the fallback is our own agent loop in TypeScript (a few hundred lines, hooks for free), still behind the same interface. A Python worker is the last resort.
+- **First adapter: our own loop (recommended).** The loop is small: build the request (system prompt, task context, history, tool schemas) → call the gateway (streaming) → if the model asks for tools, run them through `executeTool` → append results → repeat until `finish` or a stop condition. About 200 lines, with the hooks, session serialisation, steering and abort handling built in rather than bolted on. It uses the Gemini function-calling format the gateway passes through unchanged.
+- **Why not ADK first.** The gateway owns the model call; ADK (and any framework) wants to own it too, so an ADK adapter needs a custom model backend pointing at the gateway plus callbacks that can veto and rewrite requests. `@google/adk` is younger than the Python ADK, and that is exactly the part that must be proven. The framework's strengths (multi-agent trees, built-in tools) are not needed here. ADK and the Claude Agent SDK remain adapters behind the same interface: the swap is proven by a second adapter in phase 7, not paid for up front. If ADK is wanted first anyway, phase 2 starts with a one-day spike of exactly those callbacks.
 - Claude models are available on Vertex AI, so a Claude Agent SDK adapter can call them through the same gateway, under the same budget and kill switch, with no second billing account.
 
 ### 6.3 Executor
@@ -251,15 +258,26 @@ interface Executor {
 }
 ```
 
-### 6.4 Model gateway
+### 6.4 Control plane: model gateway, heartbeat, action costs
 
-All model calls from both executors go through one small server-side **model gateway** (Cloud Run service, `min-instances = 0`, streaming responses). It is the only identity with Vertex AI permissions.
+Workers never write budget state and never hold model or cloud credentials. Everything that spends money is a **callable Cloud Function** (trusted code, Admin SDK), authenticated with Firebase Auth: the per-run identity for remote workers, the device identity for the Mac, your account for the web app. Callables accept all three with no extra auth code, and they stay inside the Functions free tier.
 
-- It does reserve → call → settle itself, so budget enforcement is server-side for remote *and* Mac runs. The Mac never holds model credentials and cannot bypass the CostGate, even if a prompt-injected shell command tries.
-- It counts input tokens before the call (`countTokens`, free on Vertex), applies the price tier for that prompt length, sets an explicit thinking budget and `max_output_tokens` that fit the remaining budget, and refuses models missing from the pricing table.
-- It applies an **independent rate governor**: a hard cap on spend per hour across all runs (default 2 EUR/hour), kept in its own counter. It protects against bugs in the CostGate or the ledger, since it does not share their code path.
-- It manages **context caching** for long sessions: the stable prefix (system prompt, task context, earlier turns) is cached, so resumes and long runs do not pay full price for the whole history on every turn.
-- Callers authenticate with a per-run token (remote worker) or the device token (Mac); the gateway checks that the run is active and the lease generation matches.
+| Callable | Does |
+| --- | --- |
+| `gateway.generate` (streaming) | The only path to Vertex AI: reserve → call → settle for tokens. Thin passthrough of `generateContent`, so tool calling and any Gemini feature work unchanged. |
+| `run.heartbeat` | Renews the lease, reserves the next minute of infra cost, returns `halted`/`interrupt` flags. A worker that cannot heartbeat aborts. |
+| `run.reserveAction` / `run.settleAction` | Cost of paid tools (Maps, purchases) around the tool's execution. |
+| `run.requestInput` / `run.finish` | State transitions that end a run; revoke the run identity. |
+| `secrets.resolve` (phase 5) | Returns a credential to the browser tool only for a service the task is approved for. |
+
+The gateway:
+
+- does reserve → call → settle itself, so budget enforcement is server-side for remote *and* Mac runs. A prompt-injected shell command on either executor cannot bypass the CostGate: there is nothing to bypass it with.
+- counts input tokens before the call (`countTokens`, free on Vertex), applies the price tier for that prompt length, sets an explicit thinking budget and `max_output_tokens` that fit the remaining budget, and refuses models missing from the pricing table.
+- applies an **independent rate governor**: a hard cap on spend per hour across all runs (default 2 EUR/hour), kept in its own counter. It protects against bugs in the CostGate or the ledger, since it does not share their code path.
+- keeps the request prefix stable (system prompt, task context, history in order) so Gemini's **implicit context caching** applies to long runs and resumes. Explicit caches cost storage per hour and are not worth it at this scale.
+- checks on every call that the caller's run is active and its lease generation is current; a call from a stale or finished run is refused.
+- settles with the usage the API reports. If the call fails without usage, the full reservation is charged: safe, and visible in the ledger as an overrun of zero with a failed call.
 
 ### 6.5 Task ingest API (programmatic task creation)
 
@@ -297,7 +315,7 @@ try { result = await op(r); } finally { await costGate.settle(r.id, actual); }
 - Money is integer micro-euros. Prices are converted from USD at 1 USD = 1 EUR, which overestimates cost.
 - Categories, all counted against the same task budget:
   - **tokens** (in the gateway, §6.4): reserve `counted_input × tier_price + (max_output + thinking_budget) × out_price`; output and thinking budgets are lowered to fit what is left. Tool-side model costs (for example search grounding, priced per request) are reserved as their own entries. Settled with the actual usage the API reports.
-  - **infra**: Cloud Run seconds × (vCPU + memory) price, reserved per minute by the heartbeat. The Cloud Run task timeout is set from the remaining task budget at launch, so GCP itself stops an over-budget container. Mac runs cost 0 infra.
+  - **infra**: Cloud Run seconds × (vCPU + memory) price, reserved one minute at a time by the `heartbeat` callable (server-side; the worker cannot write it). The Cloud Run task timeout is set from the remaining task budget at launch, so GCP itself stops an over-budget container. Mac runs cost 0 infra.
   - **actions**: each tool declares a cost model: `free`, `fixed(eur)`, `perUnit(fn)` (for example a Maps API call), or `unknown`. `unknown` and anything flagged as a payment always require approval and reserve the approved amount.
   - **purchases**: an approval card shows the amount; the approved amount is reserved before the agent continues. For a physical hard limit, use a virtual card with its own spending limit for agent purchases.
 - What the ledger does not see: Firestore or Storage overage, Cloud Build minutes from deploys, logging volume, Artifact Registry. These are small, and they are why the internal monthly cap sits well below the GCP alarms.
@@ -340,8 +358,8 @@ Pay(*)
 - **Default mode** for actions no rule matches: `agent-decides`, but only for actions that are read-only or stay inside the sandbox (reading files, running tests, editing files in the task folder). The model gets a short written policy and calls `ask_user(kind: approval)` itself when it judges something risky.
 - **Always deterministic *ask*** unless an allow rule matches, whatever the mode: network egress to a host not on the allowlist (`Http`, `Browser(navigate)`, `Bash` with network), writes outside the task folder, `git push`, opening PRs or issues, sending any message as you, payments, unknown-cost tools, and credential use. This is what blocks the "email tells the agent to send your files somewhere" attack; allow rules from the approval cards are how prompts get fewer over time.
 - **Tasks from the ingest API** use the `untrusted` profile: no `agent-decides` at all.
-- **Egress control on both executors**: shell commands and the browser go through the sandbox runtime's proxy with a domain allowlist, on the Mac *and* in the Cloud Run container. A throwaway container protects the filesystem, not your data or credentials inside it.
-- **Local** shell commands also run with writes limited to the task folder and no access to the Keychain.
+- **Egress control, Mac**: shell commands run under the sandbox runtime (seatbelt): writes limited to the task folder, network only through its allowlisting proxy, no Keychain access.
+- **Egress control, Cloud Run**: the container runs tool subprocesses as a separate unprivileged user with `HTTP(S)_PROXY` pointing at the same allowlisting proxy, and the policy engine treats any shell command with network as *ask* unless allowed. This is not a hard network boundary (Cloud Run does not allow the kernel features the Linux sandbox needs), which is acceptable because the worker identity can do nothing beyond its own run. If a hard boundary is ever needed, Direct VPC egress with firewall rules provides it at the cost of Cloud NAT for external sites.
 
 ### 8.2 Approval UX
 
@@ -411,8 +429,10 @@ dodo status                     # online, current run, last errors
 
 ## 12. Security summary
 
-- Firestore and Storage rules allow only your account (owner claim) and the Mac device identity. The Cloud Run worker and Functions use the Admin SDK, which **bypasses rules**: they are trusted code, and their scoping comes from IAM (the worker cannot call Vertex AI or touch billing) and from lease fencing, not from rules.
+- **Three identities, all through Firestore rules**: your account (owner claim; granted by the `claimOwnership` callable to the configured owner email, so no manual claim step), the Mac device identity (`device:{id}`), and the per-run identity (`run:{runId}`, scoped to its run's events, its task's summary/status/messages/artifacts, and checked against the lease generation with a rule-side `get()`). Only Cloud Functions use the Admin SDK: they are the trusted code.
+- **Worker service account has no IAM roles.** The threat is the metadata server: any process in a Cloud Run container can fetch the container's service-account token, so that token must be worth nothing.
 - No service account keys: GitHub Actions deploy with Workload Identity Federation. The deployer may act only as the specific runtime service accounts, not as any account in the project.
+- The Firebase web API key is public by design; it is restricted to the app's domains in the GCP console (SETUP.md). Anyone can sign in with Google, but without the owner claim the rules reject every read and write.
 - Secrets never enter model context, traces or logs.
 - Everything that leaves dodo (messages, purchases, posts) defaults to ask.
 
@@ -440,5 +460,8 @@ dodo status                     # online, current run, last errors
 | 2026-10-25 | Telegram as a second notification channel next to web push (free). |
 | 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review). |
 | 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic *ask*; `agent-decides` only for sandbox-confined actions (from the architecture review). |
-
 | 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly. |
+| 2026-10-25 | Workers are untrusted clients with a per-run Firebase identity; the worker service account has no IAM roles; all budget writes and model calls happen in callables (second review pass). |
+| 2026-10-25 | A comment during a run steers it at the next model call instead of aborting it (second review pass). |
+
+Open: own agent loop first (recommended) or ADK first (asked in the project thread).
