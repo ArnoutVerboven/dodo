@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 
 const env = import.meta.env;
@@ -18,6 +19,7 @@ const app = initializeApp({
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app, 'europe-west1');
 export const googleProvider = new GoogleAuthProvider();
 
 if (usingEmulators) {
@@ -25,4 +27,5 @@ if (usingEmulators) {
   connectAuthEmulator(auth, `http://${host}:9099`, { disableWarnings: true });
   connectFirestoreEmulator(db, host, 8080);
   connectStorageEmulator(storage, host, 9199);
+  connectFunctionsEmulator(functions, host, 5001);
 }

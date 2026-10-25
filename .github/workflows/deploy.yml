@@ -24,6 +24,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Write function parameters
+        run: printf 'OWNER_EMAIL=%s\n' "${{ vars.OWNER_EMAIL }}" > apps/functions/lib/.env
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}

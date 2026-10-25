@@ -1,6 +1,7 @@
 import { onIdTokenChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
 import { createContext, useContext, useEffect, useState } from 'react';
-import { auth, googleProvider } from './firebase';
+import { auth, functions, googleProvider } from './firebase';
 
 interface AuthState {
   user: User | null;
@@ -27,3 +28,14 @@ export const useAuth = () => useContext(AuthContext);
 export const signIn = () => signInWithPopup(auth, googleProvider);
 export const signOutUser = () => signOut(auth);
 export const refreshClaims = () => auth.currentUser?.getIdToken(true);
+
+/** Asks the backend for the owner claim (granted only to the configured OWNER_EMAIL). */
+export async function claimOwnership(): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    await httpsCallable(functions, 'claimOwnership')({});
+    await refreshClaims();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+}

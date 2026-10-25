@@ -2,10 +2,13 @@ import { paths } from '@dodo/core';
 import { CloudBillingClient } from '@google-cloud/billing';
 import { ExecutionsClient } from '@google-cloud/run';
 import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { defineInt, defineString } from 'firebase-functions/params';
 import { logger, setGlobalOptions } from 'firebase-functions/v2';
+import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
+import { claimOwnership as claim } from './claim-ownership.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 
 initializeApp();
@@ -14,6 +17,7 @@ setGlobalOptions({ region: 'europe-west1', maxInstances: 2 });
 const HALT_AT = defineInt('BUDGET_HALT_AT', { default: 40 });
 const DETACH_AT = defineInt('BUDGET_DETACH_AT', { default: 45 });
 const CURRENCY = defineString('BUDGET_CURRENCY', { default: 'EUR' });
+const OWNER_EMAIL = defineString('OWNER_EMAIL', { default: '' });
 const REGION = 'europe-west1';
 const WORKER_JOB = 'dodo-worker';
 
@@ -80,3 +84,27 @@ export const killSwitch = onMessagePublished(
     );
   },
 );
+
+/**
+ * Grants the `dodo_owner` claim to the configured OWNER_EMAIL on first sign-in. Idempotent,
+ * refuses every other account. The web app calls it after sign-in and refreshes its token.
+ */
+export const claimOwnership = onCall({ maxInstances: 1 }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first');
+  const auth = getAuth();
+  const result = await claim(uid, {
+    ownerEmail: OWNER_EMAIL.value(),
+    getUser: async (id) => {
+      const u = await auth.getUser(id);
+      return { email: u.email, emailVerified: u.emailVerified, claims: u.customClaims ?? {} };
+    },
+    setClaims: (id, claims) => auth.setCustomUserClaims(id, claims),
+  });
+  if (!result.ok) {
+    logger.warn('Ownership claim refused', { uid, reason: result.reason });
+    throw new HttpsError('permission-denied', result.reason);
+  }
+  if (!result.alreadyOwner) logger.info('Ownership granted', { uid });
+  return result;
+});

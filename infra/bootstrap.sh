@@ -144,6 +144,6 @@ say "Done. Add these as GitHub repository variables (Settings > Secrets and vari
 echo "  GCP_PROJECT_ID   = ${PROJECT}"
 echo "  GCP_WIF_PROVIDER = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/github-oidc"
 echo "  GCP_DEPLOYER_SA  = ${DEPLOY_SA}"
+echo "  OWNER_EMAIL      = <the Google account you sign in with>"
 echo
-echo "After you have signed in to the web app once, mark your account as the owner:"
-echo "  node infra/grant-owner.mjs ${PROJECT} <your-google-email>"
+echo "The first sign-in with OWNER_EMAIL becomes the owner automatically."
