@@ -8,8 +8,8 @@ This document is the target design. [ROADMAP.md](ROADMAP.md) says in which order
 
 ## 1. Design principles
 
-1. **Cost is a hard constraint, not a metric.** Every cost-bearing operation (model call, compute second, paid API call, purchase) goes through one gate that reserves budget *before* the operation runs. GCP-level caps sit underneath as a backstop.
-2. **Deterministic controls, LLM reasoning.** Budgets, permissions, credential injection, timeouts and logging are code. The model reasons and decides when to ask; it never decides *whether* it is allowed to.
+1. **Cost is a hard constraint, not a metric.** Every cost-bearing operation (model call, compute second, paid API call, purchase) goes through one gate that reserves budget _before_ the operation runs. GCP-level caps sit underneath as a backstop.
+2. **Deterministic controls, LLM reasoning.** Budgets, permissions, credential injection, timeouts and logging are code. The model reasons and decides when to ask; it never decides _whether_ it is allowed to.
 3. **Swappable edges, stable core.** Three plug-in boundaries with small interfaces: `TaskConnector` (where tasks live), `AgentRuntime` (which agent framework runs the loop), `Executor` (where the run happens). Everything else is the core.
 4. **Reuse popular code.** Firebase for auth/data/hosting/push, Google ADK for the agent loop, AG-UI's event vocabulary for traces, Playwright MCP for browsers, Anthropic's open-source sandbox runtime for local command sandboxing, official Notion/Linear/GitHub SDKs for future connectors.
 5. **Single user, minimal ops.** Everything scales to zero. Nothing runs (or bills) while no task is being processed.
@@ -69,24 +69,24 @@ Why this shape:
 
 ## 3. Stack
 
-| Concern | Choice | Why |
-| --- | --- | --- |
-| Language | **TypeScript (strict) everywhere**, Node 22, pnpm workspaces | One language for UI, functions, worker and Mac CLI; shared zod schemas across all of them; first-class SDKs for Firebase, ADK (`@google/adk`), Anthropic Agent SDK, AG-UI, Playwright MCP, Notion, Linear, Octokit. Decided 2026-10-25. |
-| Schemas | zod | Runtime validation at every boundary, types for free. |
-| Web app | Vite + React + Tailwind (shadcn-style components) + React Router, static SPA, installable PWA | Static files on Firebase Hosting are free (Next.js SSR would need paid Cloud Run). |
-| Auth | Firebase Auth (Google sign-in), allowlist of one uid | Free; security rules reject everyone else. |
-| Data | Firestore (Native, `europe-west1`) | Free tier, realtime, transactions for the ledger and queue claims. |
-| Files / artifacts | Cloud Storage for Firebase | 5 GB free; signed URLs for the agent. |
-| Backend glue | Cloud Functions for Firebase (2nd gen) | Free tier of 2M invocations; triggers on Firestore, Pub/Sub, schedules. |
-| Remote compute | Cloud Run Jobs | Per-second billing, scale to zero, free tier 180k vCPU-s / month. |
-| Models | Gemini via Vertex AI, only through the model gateway | Billed to the same project, so it sits under the same GCP budget cap. Model ids and prices live in a versioned table; the exact ids and prices are verified at the phase 2 spike (current-generation Flash as default). |
-| Agent loop | `AgentRuntime` interface; first adapter: own loop in TypeScript (decided 2026-10-25, see §6.2), ADK or Claude Agent SDK as optional adapters | The gateway already owns the model call; a framework that wants to own it too adds risk for little gain. |
-| Trace events | AG-UI event types (`@ag-ui/core`) | Standard vocabulary (RUN_STARTED, TOOL_CALL_START, TEXT_MESSAGE_CONTENT, ...). We store them in Firestore instead of using the SSE transport. Opens the door to AG-UI/CopilotKit components later. |
-| Browser | Playwright MCP (`@playwright/mcp`) | Accessibility-tree based, widely used, works headless in a container *and* attached to your real Chrome via its browser extension. `chrome-devtools-mcp` is the fallback for local. |
-| Local sandbox | `@anthropic-ai/sandbox-runtime` | Seatbelt on macOS / bubblewrap on Linux, with a network allowlist; the same thing Claude Code uses. |
-| Notifications | Firebase Cloud Messaging web push to the installed PWA | Free; works on iPhone for home-screen web apps. Telegram bot as an optional second channel (see decisions). |
-| Infra | `infra/` gcloud scripts + `firebase.json`; deploys from GitHub Actions with Workload Identity Federation | No long-lived keys anywhere. |
-| Tests / lint | Vitest, Biome, Firebase emulators for integration tests | Fast, one tool each. |
+| Concern           | Choice                                                                                                                                       | Why                                                                                                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language          | **TypeScript (strict) everywhere**, Node 22, pnpm workspaces                                                                                 | One language for UI, functions, worker and Mac CLI; shared zod schemas across all of them; first-class SDKs for Firebase, ADK (`@google/adk`), Anthropic Agent SDK, AG-UI, Playwright MCP, Notion, Linear, Octokit. Decided 2026-10-25. |
+| Schemas           | zod                                                                                                                                          | Runtime validation at every boundary, types for free.                                                                                                                                                                                   |
+| Web app           | Vite + React + Tailwind (shadcn-style components) + React Router, static SPA, installable PWA                                                | Static files on Firebase Hosting are free (Next.js SSR would need paid Cloud Run).                                                                                                                                                      |
+| Auth              | Firebase Auth (Google sign-in), allowlist of one uid                                                                                         | Free; security rules reject everyone else.                                                                                                                                                                                              |
+| Data              | Firestore (Native, `europe-west1`)                                                                                                           | Free tier, realtime, transactions for the ledger and queue claims.                                                                                                                                                                      |
+| Files / artifacts | Cloud Storage for Firebase                                                                                                                   | 5 GB free; signed URLs for the agent.                                                                                                                                                                                                   |
+| Backend glue      | Cloud Functions for Firebase (2nd gen)                                                                                                       | Free tier of 2M invocations; triggers on Firestore, Pub/Sub, schedules.                                                                                                                                                                 |
+| Remote compute    | Cloud Run Jobs                                                                                                                               | Per-second billing, scale to zero, free tier 180k vCPU-s / month.                                                                                                                                                                       |
+| Models            | Gemini via Vertex AI, only through the model gateway                                                                                         | Billed to the same project, so it sits under the same GCP budget cap. Model ids and prices live in a versioned table; the exact ids and prices are verified at the phase 2 spike (current-generation Flash as default).                 |
+| Agent loop        | `AgentRuntime` interface; first adapter: own loop in TypeScript (decided 2026-10-25, see §6.2), ADK or Claude Agent SDK as optional adapters | The gateway already owns the model call; a framework that wants to own it too adds risk for little gain.                                                                                                                                |
+| Trace events      | AG-UI event types (`@ag-ui/core`)                                                                                                            | Standard vocabulary (RUN_STARTED, TOOL_CALL_START, TEXT_MESSAGE_CONTENT, ...). We store them in Firestore instead of using the SSE transport. Opens the door to AG-UI/CopilotKit components later.                                      |
+| Browser           | Playwright MCP (`@playwright/mcp`)                                                                                                           | Accessibility-tree based, widely used, works headless in a container _and_ attached to your real Chrome via its browser extension. `chrome-devtools-mcp` is the fallback for local.                                                     |
+| Local sandbox     | `@anthropic-ai/sandbox-runtime`                                                                                                              | Seatbelt on macOS / bubblewrap on Linux, with a network allowlist; the same thing Claude Code uses.                                                                                                                                     |
+| Notifications     | Firebase Cloud Messaging web push to the installed PWA                                                                                       | Free; works on iPhone for home-screen web apps. Telegram bot as an optional second channel (see decisions).                                                                                                                             |
+| Infra             | `infra/` gcloud scripts + `firebase.json`; deploys from GitHub Actions with Workload Identity Federation                                     | No long-lived keys anywhere.                                                                                                                                                                                                            |
+| Tests / lint      | Vitest, Biome, Firebase emulators for integration tests                                                                                      | Fast, one tool each.                                                                                                                                                                                                                    |
 
 ### Repository layout
 
@@ -184,14 +184,14 @@ The worker builds the context (task fields, summary, thread, artifacts list, pro
 
 The agent writes to the task only through task tools, so the UI stays structured:
 
-| Tool | Effect |
-| --- | --- |
-| `update_summary(markdown)` | Replaces the Summary: answer first, then supporting points (top-down, MECE). |
-| `set_status(text, nextAction, needsYou)` | One-line state and the single next action or decision. |
-| `post_message(markdown)` | Final message of the run in the thread (the collapsed message). |
-| `ask_user(kind, prompt, options?)` | `text`, `choice` (buttons), or `approval`. Ends the run; resumes on answer. |
-| `add_artifact` / `read_artifact` | Attachments and links, as reference or output. |
-| `finish(outcome)` | Marks the task `review` or `done`. |
+| Tool                                     | Effect                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `update_summary(markdown)`               | Replaces the Summary: answer first, then supporting points (top-down, MECE). |
+| `set_status(text, nextAction, needsYou)` | One-line state and the single next action or decision.                       |
+| `post_message(markdown)`                 | Final message of the run in the thread (the collapsed message).              |
+| `ask_user(kind, prompt, options?)`       | `text`, `choice` (buttons), or `approval`. Ends the run; resumes on answer.  |
+| `add_artifact` / `read_artifact`         | Attachments and links, as reference or output.                               |
+| `finish(outcome)`                        | Marks the task `review` or `done`.                                           |
 
 The system prompt carries the communication style from task-ai (top-down, concise, ask only when a decision would otherwise waste your review time), rewritten for this contract.
 
@@ -205,14 +205,14 @@ The system prompt carries the communication style from task-ai (top-down, concis
 interface TaskConnector {
   id: 'custom' | 'notion' | 'linear' | 'github';
   capabilities: {
-    liveTrace: boolean;       // can show a message that updates while running
+    liveTrace: boolean; // can show a message that updates while running
     editMessages: boolean;
-    choiceInput: boolean;     // native buttons, else fall back to "reply 1/2/3"
+    choiceInput: boolean; // native buttons, else fall back to "reply 1/2/3"
     attachments: boolean;
   };
-  watch(onChange: (e: ExternalTaskEvent) => void): Unsubscribe;  // webhooks or polling
+  watch(onChange: (e: ExternalTaskEvent) => void): Unsubscribe; // webhooks or polling
   pullTask(ref: ExternalRef): Promise<ExternalTask>;
-  pushTask(task: Task, changes: TaskChange[]): Promise<void>;     // summary, status, fields
+  pushTask(task: Task, changes: TaskChange[]): Promise<void>; // summary, status, fields
   postMessage(ref: ExternalRef, msg: ThreadMessage): Promise<MessageRef>;
   updateMessage?(ref: MessageRef, msg: ThreadMessage): Promise<void>;
   requestInput(ref: ExternalRef, req: InputRequest): Promise<void>;
@@ -235,8 +235,8 @@ interface AgentRuntime {
 }
 interface RuntimeHooks {
   beforeModelCall(req: ModelCallPlan): Promise<ModelCallPermit>; // CostGate.reserve, may cap max tokens
-  afterModelCall(usage: TokenUsage): Promise<void>;               // CostGate.settle
-  executeTool(call: ToolCall): Promise<ToolResult>;               // PolicyEngine + CostGate + ToolHost
+  afterModelCall(usage: TokenUsage): Promise<void>; // CostGate.settle
+  executeTool(call: ToolCall): Promise<ToolResult>; // PolicyEngine + CostGate + ToolHost
 }
 ```
 
@@ -252,9 +252,9 @@ interface RuntimeHooks {
 ```ts
 interface Executor {
   id: 'gcp' | `mac:${string}`;
-  tools(): ToolDefinition[];      // what this environment can offer
-  browser(): BrowserProvider;    // headless container Chromium, or your Chrome
-  shell(): ShellProvider;        // container shell, or sandboxed Mac shell in the chosen folder
+  tools(): ToolDefinition[]; // what this environment can offer
+  browser(): BrowserProvider; // headless container Chromium, or your Chrome
+  shell(): ShellProvider; // container shell, or sandboxed Mac shell in the chosen folder
 }
 ```
 
@@ -262,17 +262,17 @@ interface Executor {
 
 Workers never write budget state and never hold model or cloud credentials. Everything that spends money is a **callable Cloud Function** (trusted code, Admin SDK), authenticated with Firebase Auth: the per-run identity for remote workers, the device identity for the Mac, your account for the web app. Callables accept all three with no extra auth code, and they stay inside the Functions free tier.
 
-| Callable | Does |
-| --- | --- |
-| `gateway.generate` (streaming) | The only path to Vertex AI: reserve → call → settle for tokens. Thin passthrough of `generateContent`, so tool calling and any Gemini feature work unchanged. |
-| `run.heartbeat` | Renews the lease, reserves the next minute of infra cost, returns `halted`/`interrupt` flags. A worker that cannot heartbeat aborts. |
-| `run.reserveAction` / `run.settleAction` | Cost of paid tools (Maps, purchases) around the tool's execution. |
-| `run.requestInput` / `run.finish` | State transitions that end a run; revoke the run identity. |
-| `secrets.resolve` (phase 5) | Returns a credential to the browser tool only for a service the task is approved for. |
+| Callable                                 | Does                                                                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateway.generate` (streaming)           | The only path to Vertex AI: reserve → call → settle for tokens. Thin passthrough of `generateContent`, so tool calling and any Gemini feature work unchanged. |
+| `run.heartbeat`                          | Renews the lease, reserves the next minute of infra cost, returns `halted`/`interrupt` flags. A worker that cannot heartbeat aborts.                          |
+| `run.reserveAction` / `run.settleAction` | Cost of paid tools (Maps, purchases) around the tool's execution.                                                                                             |
+| `run.requestInput` / `run.finish`        | State transitions that end a run; revoke the run identity.                                                                                                    |
+| `secrets.resolve` (phase 5)              | Returns a credential to the browser tool only for a service the task is approved for.                                                                         |
 
 The gateway:
 
-- does reserve → call → settle itself, so budget enforcement is server-side for remote *and* Mac runs. A prompt-injected shell command on either executor cannot bypass the CostGate: there is nothing to bypass it with.
+- does reserve → call → settle itself, so budget enforcement is server-side for remote _and_ Mac runs. A prompt-injected shell command on either executor cannot bypass the CostGate: there is nothing to bypass it with.
 - counts input tokens before the call (`countTokens`, free on Vertex), applies the price tier for that prompt length, sets an explicit thinking budget and `max_output_tokens` that fit the remaining budget, and refuses models missing from the pricing table.
 - applies an **independent rate governor**: a hard cap on spend per hour across all runs (default 2 EUR/hour), kept in its own counter. It protects against bugs in the CostGate or the ledger, since it does not share their code path.
 - keeps the request prefix stable (system prompt, task context, history in order) so Gemini's **implicit context caching** applies to long runs and resumes. Explicit caches cost storage per hour and are not worth it at this scale.
@@ -285,7 +285,7 @@ Other pipelines can push tasks onto the board, for example "emails in Gmail that
 
 - `POST /v1/tasks` on one HTTPS Cloud Function, authenticated with a personal access token per source (created in settings, stored hashed, revocable). Body is the same `NewTask` schema plus `source` (e.g. `gmail`) and an `idempotencyKey` (e.g. the Gmail message id) so a retried pipeline never creates duplicates.
 - Each source has its own defaults: tags, project, and whether AI starts automatically (off by default, so injected tasks wait for you).
-- Content from a source is **untrusted input**: it is stored and shown as quoted source material. Runs on such tasks get the `untrusted` policy profile: no `agent-decides` at all, so every action outside the task tools is a deterministic *ask*, because an email can contain prompt-injection text.
+- Content from a source is **untrusted input**: it is stored and shown as quoted source material. Runs on such tasks get the `untrusted` policy profile: no `agent-decides` at all, so every action outside the task tools is a deterministic _ask_, because an email can contain prompt-injection text.
 - Rate limited per token, and the function rejects anything without a valid token before doing work, so it cannot be used to run up costs.
 - Example pipeline for Gmail, at no cost: a Google Apps Script on your account that runs every 10 minutes, looks for a label like `dodo` (or a Gmail filter result), and posts each new email to the API.
 
@@ -295,12 +295,12 @@ Other pipelines can push tasks onto the board, for example "emails in Gmail that
 
 The **internal layers enforce the cap**. The GCP layer is a safety net for bugs in them: it reacts in minutes to hours and cannot undo charges already made, so it bounds the damage instead of preventing it.
 
-| Layer | Reacts in | Stops spending by |
-| --- | --- | --- |
-| 1. CostGate + ledger (per task, project, month) | before every cost | refusing the reservation |
-| 2. Gateway rate governor (spend per hour) | before every model call | refusing the call |
-| 3. Cloud Monitoring alerts (token count, Cloud Run time) | ~5–10 minutes | kill switch: halt + cancel executions |
-| 4. Cloud Billing budget (50 EUR lifetime) | hours, up to a day | kill switch: halt, then detach billing |
+| Layer                                                    | Reacts in               | Stops spending by                      |
+| -------------------------------------------------------- | ----------------------- | -------------------------------------- |
+| 1. CostGate + ledger (per task, project, month)          | before every cost       | refusing the reservation               |
+| 2. Gateway rate governor (spend per hour)                | before every model call | refusing the call                      |
+| 3. Cloud Monitoring alerts (token count, Cloud Run time) | ~5–10 minutes           | kill switch: halt + cancel executions  |
+| 4. Cloud Billing budget (50 EUR lifetime)                | hours, up to a day      | kill switch: halt, then detach billing |
 
 ### 7.1 Internal layer: CostGate and ledger
 
@@ -308,10 +308,14 @@ Every cost-bearing operation follows **reserve → execute → settle**:
 
 ```ts
 const r = await costGate.reserve({ scopes: [global, project, task], category, amount });
-try { result = await op(r); } finally { await costGate.settle(r.id, actual); }
+try {
+  result = await op(r);
+} finally {
+  await costGate.settle(r.id, actual);
+}
 ```
 
-- `reserve` is one Firestore transaction across the scope documents. It fails if *any* scope (task, project month, global month, global lifetime) would go over its cap counting existing reservations, or if processing is halted. Nothing runs without a reservation. Caps are read live, so lowering one applies at once.
+- `reserve` is one Firestore transaction across the scope documents. It fails if _any_ scope (task, project month, global month, global lifetime) would go over its cap counting existing reservations, or if processing is halted. Nothing runs without a reservation. Caps are read live, so lowering one applies at once.
 - Money is integer micro-euros. Prices are converted from USD at 1 USD = 1 EUR, which overestimates cost.
 - Categories, all counted against the same task budget:
   - **tokens** (in the gateway, §6.4): reserve `counted_input × tier_price + (max_output + thinking_budget) × out_price`; output and thinking budgets are lowered to fit what is left. Tool-side model costs (for example search grounding, priced per request) are reserved as their own entries. Settled with the actual usage the API reports.
@@ -324,14 +328,14 @@ try { result = await op(r); } finally { await costGate.settle(r.id, actual); }
 
 ### 7.2 GCP layer (safety net)
 
-| Control | Setting | Effect |
-| --- | --- | --- |
-| Cloud Billing budget on `dodo-512722` | 50 EUR over a custom period (setup → 2030-12-31, so a lifetime total), thresholds 50/80/90/100%, credits excluded (gross cost), Pub/Sub `billing-alerts` | Feeds the kill switch. |
-| Cloud Monitoring alert policies | Vertex AI `publisher/online_serving/token_count` and Cloud Run billable instance time above what the internal caps can legitimately produce per hour; notification channel into `billing-alerts` | Reacts in minutes, independent of billing data. |
-| `killSwitch` function | Any alert or ≥ **40 EUR**: set `halted`, cancel running Cloud Run executions. ≥ **45 EUR**: also **detach billing** from the project. | Workers also watch `halted` and abort. |
-| Cloud Run Job settings | max **1** concurrent execution, `max-retries = 0`, task timeout from budget (max 1 h) | Bounds the burn rate. |
-| No per-token quota | Current Gemini models on Vertex use dynamic shared quota, so there is no per-project tokens-per-minute limit to lower; the rate bound comes from the gateway governor, concurrency and per-call caps instead. | |
-| No public billable endpoints | Only auth-checked callables, the token-checked rate-limited ingest API, and the gateway (per-run tokens) | Outsiders cannot run up costs. |
+| Control                               | Setting                                                                                                                                                                                                       | Effect                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Cloud Billing budget on `dodo-512722` | 50 EUR over a custom period (setup → 2030-12-31, so a lifetime total), thresholds 50/80/90/100%, credits excluded (gross cost), Pub/Sub `billing-alerts`                                                      | Feeds the kill switch.                          |
+| Cloud Monitoring alert policies       | Vertex AI `publisher/online_serving/token_count` and Cloud Run billable instance time above what the internal caps can legitimately produce per hour; notification channel into `billing-alerts`              | Reacts in minutes, independent of billing data. |
+| `killSwitch` function                 | Any alert or ≥ **40 EUR**: set `halted`, cancel running Cloud Run executions. ≥ **45 EUR**: also **detach billing** from the project.                                                                         | Workers also watch `halted` and abort.          |
+| Cloud Run Job settings                | max **1** concurrent execution, `max-retries = 0`, task timeout from budget (max 1 h)                                                                                                                         | Bounds the burn rate.                           |
+| No per-token quota                    | Current Gemini models on Vertex use dynamic shared quota, so there is no per-project tokens-per-minute limit to lower; the rate bound comes from the gateway governor, concurrency and per-call caps instead. |                                                 |
+| No public billable endpoints          | Only auth-checked callables, the token-checked rate-limited ingest API, and the gateway (per-run tokens)                                                                                                      | Outsiders cannot run up costs.                  |
 
 **Worst case if layers 1 and 2 both fail.** With one concurrent run, a 128k-token context cap, an 8k output cap and about 6 calls per minute, a Pro-class model burns roughly 90 EUR per hour, a Flash-class model roughly 20 EUR per hour. Layer 3 reacts within about 10 minutes, so the overshoot is around 15 EUR (Pro) or 4 EUR (Flash). Layer 4 alone could be hours late. This is why the default model is Flash-class and Pro needs a task-level choice.
 
@@ -354,12 +358,12 @@ Pay(*)
 ```
 
 - Three lists at each scope (global → project → task): **deny**, **ask**, **allow**. Precedence: deny > ask > allow; the most specific scope cannot loosen a deny from a broader scope.
-- **Bash parsing**: commands are parsed into a syntax tree, and every simple command (across `&&`, `;`, `|`, subshells, `$(...)`) must be allowed on its own. Redirections to files count as writes. Anything the parser cannot understand goes to *ask*.
+- **Bash parsing**: commands are parsed into a syntax tree, and every simple command (across `&&`, `;`, `|`, subshells, `$(...)`) must be allowed on its own. Redirections to files count as writes. Anything the parser cannot understand goes to _ask_.
 - **Default mode** for actions no rule matches: `agent-decides`, but only for actions that are read-only or stay inside the sandbox (reading files, running tests, editing files in the task folder). The model gets a short written policy and calls `ask_user(kind: approval)` itself when it judges something risky.
-- **Always deterministic *ask*** unless an allow rule matches, whatever the mode: network egress to a host not on the allowlist (`Http`, `Browser(navigate)`, `Bash` with network), writes outside the task folder, `git push`, opening PRs or issues, sending any message as you, payments, unknown-cost tools, and credential use. This is what blocks the "email tells the agent to send your files somewhere" attack; allow rules from the approval cards are how prompts get fewer over time.
+- **Always deterministic _ask_** unless an allow rule matches, whatever the mode: network egress to a host not on the allowlist (`Http`, `Browser(navigate)`, `Bash` with network), writes outside the task folder, `git push`, opening PRs or issues, sending any message as you, payments, unknown-cost tools, and credential use. This is what blocks the "email tells the agent to send your files somewhere" attack; allow rules from the approval cards are how prompts get fewer over time.
 - **Tasks from the ingest API** use the `untrusted` profile: no `agent-decides` at all.
 - **Egress control, Mac**: shell commands run under the sandbox runtime (seatbelt): writes limited to the task folder, network only through its allowlisting proxy, no Keychain access.
-- **Egress control, Cloud Run**: the container runs tool subprocesses as a separate unprivileged user with `HTTP(S)_PROXY` pointing at the same allowlisting proxy, and the policy engine treats any shell command with network as *ask* unless allowed. This is not a hard network boundary (Cloud Run does not allow the kernel features the Linux sandbox needs), which is acceptable because the worker identity can do nothing beyond its own run. If a hard boundary is ever needed, Direct VPC egress with firewall rules provides it at the cost of Cloud NAT for external sites.
+- **Egress control, Cloud Run**: the container runs tool subprocesses as a separate unprivileged user with `HTTP(S)_PROXY` pointing at the same allowlisting proxy, and the policy engine treats any shell command with network as _ask_ unless allowed. This is not a hard network boundary (Cloud Run does not allow the kernel features the Linux sandbox needs), which is acceptable because the worker identity can do nothing beyond its own run. If a hard boundary is ever needed, Direct VPC egress with firewall rules provides it at the cost of Cloud NAT for external sites.
 
 ### 8.2 Approval UX
 
@@ -440,28 +444,28 @@ dodo status                     # online, current run, last errors
 
 ## 13. Cost estimate (personal use)
 
-| Item | Expected monthly cost |
-| --- | --- |
-| Firebase Hosting, Auth, Firestore, FCM, Functions | 0 EUR (free tier) |
-| Cloud Storage (artifacts, sessions) | 0 EUR under 5 GB |
-| Cloud Run Jobs (1 vCPU / 2 GiB, ~20 h of runs) | ~0–2 EUR (free tier covers ~50 h of 1 vCPU) |
-| Artifact Registry (worker image) | ~0.1 EUR |
-| Gemini tokens | what you choose to spend; capped by task budgets and the monthly cap |
+| Item                                              | Expected monthly cost                                                |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| Firebase Hosting, Auth, Firestore, FCM, Functions | 0 EUR (free tier)                                                    |
+| Cloud Storage (artifacts, sessions)               | 0 EUR under 5 GB                                                     |
+| Cloud Run Jobs (1 vCPU / 2 GiB, ~20 h of runs)    | ~0–2 EUR (free tier covers ~50 h of 1 vCPU)                          |
+| Artifact Registry (worker image)                  | ~0.1 EUR                                                             |
+| Gemini tokens                                     | what you choose to spend; capped by task budgets and the monthly cap |
 
 ---
 
 ## 14. Decisions
 
-| Date | Decision |
-| --- | --- |
-| 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI). |
-| 2026-10-25 | Billing in EUR, region `europe-west1`. |
-| 2026-10-25 | Bitwarden (dedicated agent vault) as the secret provider. |
-| 2026-10-25 | Telegram as a second notification channel next to web push (free). |
-| 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review). |
-| 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic *ask*; `agent-decides` only for sandbox-confined actions (from the architecture review). |
-| 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly. |
+| Date       | Decision                                                                                                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI).                                                                                                                                  |
+| 2026-10-25 | Billing in EUR, region `europe-west1`.                                                                                                                                                   |
+| 2026-10-25 | Bitwarden (dedicated agent vault) as the secret provider.                                                                                                                                |
+| 2026-10-25 | Telegram as a second notification channel next to web push (free).                                                                                                                       |
+| 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review).                                                                               |
+| 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic _ask_; `agent-decides` only for sandbox-confined actions (from the architecture review).                       |
+| 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly.                                         |
 | 2026-10-25 | Workers are untrusted clients with a per-run Firebase identity; the worker service account has no IAM roles; all budget writes and model calls happen in callables (second review pass). |
-| 2026-10-25 | A comment during a run steers it at the next model call instead of aborting it (second review pass). |
+| 2026-10-25 | A comment during a run steers it at the next model call instead of aborting it (second review pass).                                                                                     |
 
 | 2026-10-25 | **Own agent loop first** as the first `AgentRuntime` adapter; ADK and the Claude Agent SDK as optional adapters later (decided by Arnout). |
