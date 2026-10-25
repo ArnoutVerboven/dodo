@@ -106,18 +106,33 @@ grant "$KILL_SA" roles/eventarc.eventReceiver
 grant "$KILL_SA" roles/run.invoker
 grant "$KILL_SA" roles/run.developer            # cancel running worker executions
 
+say "Runtime service accounts for phase 2"
+# Gateway: the only identity allowed to call Vertex AI (runs the gateway/control-plane functions).
+ensure_sa dodo-gateway "dodo model gateway + control plane"
+GATEWAY_SA="dodo-gateway@${PROJECT}.iam.gserviceaccount.com"
+grant "$GATEWAY_SA" roles/aiplatform.user
+grant "$GATEWAY_SA" roles/datastore.user
+grant "$GATEWAY_SA" roles/firebaseauth.admin        # mint/revoke per-run identities
+grant "$GATEWAY_SA" roles/run.developer             # start worker executions
+grant "$GATEWAY_SA" roles/eventarc.eventReceiver
+grant "$GATEWAY_SA" roles/run.invoker
+# Worker: deliberately NO roles. Any process in the container can read its token.
+ensure_sa dodo-worker "dodo worker (no roles by design)"
+WORKER_SA="dodo-worker@${PROJECT}.iam.gserviceaccount.com"
+
 say "Deployer service account for GitHub Actions"
 ensure_sa dodo-deployer "dodo deployer (GitHub Actions)"
 DEPLOY_SA="dodo-deployer@${PROJECT}.iam.gserviceaccount.com"
 for role in roles/firebase.admin roles/cloudfunctions.admin roles/run.admin \
   roles/artifactregistry.admin roles/serviceusage.serviceUsageConsumer \
-  roles/cloudbuild.builds.editor roles/eventarc.admin roles/pubsub.editor roles/secretmanager.viewer; do
+  roles/cloudbuild.builds.editor roles/eventarc.admin roles/pubsub.editor roles/secretmanager.viewer \
+  roles/storage.admin roles/monitoring.alertPolicyEditor; do
   grant "$DEPLOY_SA" "$role"
 done
 # The deployer may act only as the runtime accounts it deploys, not as any account in the
 # project (in particular not as itself or future accounts with billing rights).
 COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-for runtime_sa in "$KILL_SA" "$COMPUTE_SA"; do
+for runtime_sa in "$KILL_SA" "$GATEWAY_SA" "$WORKER_SA" "$COMPUTE_SA"; do
   gcloud iam service-accounts add-iam-policy-binding "$runtime_sa" \
     --member="serviceAccount:${DEPLOY_SA}" --role=roles/iam.serviceAccountUser --quiet >/dev/null
 done
