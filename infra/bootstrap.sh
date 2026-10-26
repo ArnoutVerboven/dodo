@@ -26,7 +26,8 @@ gcloud services enable \
   artifactregistry.googleapis.com eventarc.googleapis.com pubsub.googleapis.com \
   aiplatform.googleapis.com cloudbilling.googleapis.com billingbudgets.googleapis.com \
   iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
-  cloudresourcemanager.googleapis.com secretmanager.googleapis.com storage.googleapis.com
+  cloudresourcemanager.googleapis.com secretmanager.googleapis.com storage.googleapis.com \
+  cloudscheduler.googleapis.com monitoring.googleapis.com
 
 say "Checking billing account"
 BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' | sed 's#billingAccounts/##')"
@@ -134,7 +135,8 @@ DEPLOY_SA="dodo-deployer@${PROJECT}.iam.gserviceaccount.com"
 for role in roles/firebase.admin roles/cloudfunctions.admin roles/run.admin \
   roles/artifactregistry.admin roles/serviceusage.serviceUsageConsumer \
   roles/cloudbuild.builds.editor roles/eventarc.admin roles/pubsub.editor roles/secretmanager.viewer \
-  roles/storage.admin roles/monitoring.alertPolicyEditor; do
+  roles/storage.admin roles/monitoring.alertPolicyEditor roles/monitoring.notificationChannelEditor \
+  roles/secretmanager.admin roles/cloudscheduler.admin; do
   grant "$DEPLOY_SA" "$role"
 done
 # The deployer may act only as the runtime accounts it deploys, not as any account in the
