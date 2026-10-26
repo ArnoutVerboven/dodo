@@ -27,7 +27,8 @@ gcloud services enable \
   aiplatform.googleapis.com cloudbilling.googleapis.com billingbudgets.googleapis.com \
   iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
   cloudresourcemanager.googleapis.com secretmanager.googleapis.com storage.googleapis.com \
-  cloudscheduler.googleapis.com monitoring.googleapis.com apikeys.googleapis.com
+  cloudscheduler.googleapis.com monitoring.googleapis.com apikeys.googleapis.com \
+  fcm.googleapis.com fcmregistrations.googleapis.com
 
 say "Checking billing account"
 BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' | sed 's#billingAccounts/##')"

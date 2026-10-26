@@ -11,6 +11,7 @@ import { ExecutionsClient, JobsClient } from '@google-cloud/run';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import { defineInt, defineString } from 'firebase-functions/params';
 import { logger, setGlobalOptions } from 'firebase-functions/v2';
@@ -22,6 +23,7 @@ import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
+import { notifyPush, type PushDeps } from './push.js';
 import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi } from './telegram.js';
@@ -75,6 +77,18 @@ const telegramDeps = () => {
   };
 };
 
+const pushDeps = (): PushDeps => ({
+  db: getFirestore(),
+  send: async (messages) => {
+    const res = await getMessaging().sendEach(messages);
+    return res.responses.map((r) => ({
+      success: r.success,
+      error: r.error ? { code: r.error.code } : undefined,
+    }));
+  },
+  log: logger.warn,
+});
+
 const controlDeps = () => {
   const db = getFirestore();
   return {
@@ -84,8 +98,9 @@ const controlDeps = () => {
     costGate: costGateFor(db),
     log: logger.warn,
     notify: async (n: Omit<Parameters<typeof notifyTelegram>[1], 'appUrl'>) => {
-      await notifyTelegram(telegramDeps(), { ...n, appUrl: APP_URL.value() }).catch((err) =>
-        logger.warn('notify failed', { err: String(err) }),
+      const full = { ...n, appUrl: APP_URL.value() };
+      await Promise.all([notifyTelegram(telegramDeps(), full), notifyPush(pushDeps(), full)]).catch(
+        (err) => logger.warn('notify failed', { err: String(err) }),
       );
     },
   };
