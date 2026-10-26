@@ -47,6 +47,10 @@ jobs:
         run: >
           pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force
           --only hosting,firestore:rules,firestore:indexes,storage,functions
+      - name: Let the web app read archived run traces (Storage CORS)
+        run: |
+          set -a; . apps/web/.env.production; set +a
+          gcloud storage buckets update "gs://$VITE_FIREBASE_STORAGE_BUCKET" --cors-file=infra/storage-cors.json
       - name: Register the Telegram webhook
         if: env.TOKEN != ''
         env:
