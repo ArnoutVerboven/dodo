@@ -194,9 +194,16 @@ const ev = (runId, seq, type, summary, at, extra = {}) => ({
 const energyTrace = [
   ev('run_abc123', 1, 'run_started', 'Run started on gcp', now - 2400_000),
   ev('run_abc123', 2, 'model_call', 'gemini-2.5-flash', now - 2390_000, { cost: 1200 }),
-  ev('run_abc123', 3, 'tool_call', 'web_search("fixed energy contract Belgium 2027")', now - 2300_000, {
-    data: { query: 'fixed energy contract Belgium 2027' },
-  }),
+  ev(
+    'run_abc123',
+    3,
+    'tool_call',
+    'web_search("fixed energy contract Belgium 2027")',
+    now - 2300_000,
+    {
+      data: { query: 'fixed energy contract Belgium 2027' },
+    },
+  ),
   ev('run_abc123', 4, 'tool_result', '11 offers found', now - 2200_000),
   ev('run_abc123', 5, 'tool_call', 'post_message', now - 1800_000),
   ev('run_abc123', 6, 'tool_call', 'request_input(choice)', now - 1700_000),
