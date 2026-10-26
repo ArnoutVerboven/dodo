@@ -1,13 +1,13 @@
 import type { Task, TaskStatus } from '@dodo/core';
-import { Bot, Columns3, List, Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Bot, Columns3, List, Plus, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { NewTaskDialog } from '@/components/NewTaskDialog';
-import { PriorityLabel, STATUSES, StatusBadge, Tags } from '@/components/task-meta';
+import { DueDate, PriorityLabel, StatusBadge, statusMeta, Tags } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { setTaskStatus, useBudgets, useProjects, useTasks } from '@/lib/data';
-import { cn, formatEur, timeAgo } from '@/lib/utils';
+import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
 
 type View = 'list' | 'board';
 
@@ -28,6 +28,23 @@ export function BoardPage() {
   const [tag, setTag] = useState('');
   const [projectId, setProjectId] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  // Shortcuts: "/" focuses search, "n" or "c" creates a task.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        searchInput.current?.focus();
+      } else if (e.key === 'n' || e.key === 'c') {
+        e.preventDefault();
+        setCreating(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const setView = (v: View) => {
     setViewState(v);
@@ -63,6 +80,7 @@ export function BoardPage() {
             variant={view === 'list' ? 'outline' : 'ghost'}
             onClick={() => setView('list')}
             aria-label="List view"
+            title="List view"
           >
             <List className="h-4 w-4" />
           </Button>
@@ -71,45 +89,72 @@ export function BoardPage() {
             variant={view === 'board' ? 'outline' : 'ghost'}
             onClick={() => setView('board')}
             aria-label="Board view"
+            title="Board view"
           >
             <Columns3 className="h-4 w-4" />
           </Button>
         </div>
-        <Button onClick={() => setCreating(true)}>
+        <Button onClick={() => setCreating(true)} title="New task (N)">
           <Plus className="h-4 w-4" /> New task
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Input
-          className="w-full sm:w-64"
-          placeholder="Search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Select className="w-auto" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">All projects</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </Select>
-        <Select className="w-auto" value={tag} onChange={(e) => setTag(e.target.value)}>
-          <option value="">All tags</option>
-          {allTags.map((t) => (
-            <option key={t}>{t}</option>
-          ))}
-        </Select>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={searchInput}
+            className="pl-8"
+            placeholder="Search  /"
+            aria-label="Search tasks"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearch('');
+                e.currentTarget.blur();
+              }
+            }}
+          />
+        </div>
+        {projects.length > 0 && (
+          <Select
+            className={cn('w-auto', !projectId && 'text-muted-foreground')}
+            aria-label="Filter by project"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+          >
+            <option value="">All projects</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {allTags.length > 0 && (
+          <Select
+            className={cn('w-auto', !tag && 'text-muted-foreground')}
+            aria-label="Filter by tag"
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+          >
+            <option value="">All tags</option>
+            {allTags.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </Select>
+        )}
         {view === 'list' && (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={showClosed}
-              onChange={(e) => setShowClosed(e.target.checked)}
-            />{' '}
-            Show done
-          </label>
+          <Button
+            size="sm"
+            variant={showClosed ? 'outline' : 'ghost'}
+            className="text-muted-foreground"
+            aria-pressed={showClosed}
+            onClick={() => setShowClosed((v) => !v)}
+          >
+            {showClosed ? 'Hide done' : 'Show done'}
+          </Button>
         )}
       </div>
 
@@ -172,37 +217,53 @@ function TaskList({
         <li key={t.id}>
           <Link
             to={`/tasks/${t.id}`}
-            className="flex flex-col gap-1 px-4 py-3 hover:bg-accent sm:flex-row sm:items-center sm:gap-3"
+            className="group flex gap-3 px-3 py-2.5 transition-colors hover:bg-accent sm:items-center"
           >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                {t.ai.enabled && (
-                  <Bot className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="AI enabled" />
+            <span className="mt-0.5 sm:mt-0">
+              <StatusBadge status={t.status} iconOnly />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'truncate font-medium',
+                      ['done', 'cancelled'].includes(t.status) && 'text-muted-foreground',
+                    )}
+                  >
+                    {t.title}
+                  </span>
+                  {t.ai.enabled && (
+                    <Bot
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      aria-label="AI enabled"
+                    />
+                  )}
+                </div>
+                {t.statusLine?.text && (
+                  <p className="truncate text-sm text-muted-foreground">{t.statusLine.text}</p>
                 )}
-                <span className="truncate font-medium">{t.title}</span>
               </div>
-              {t.statusLine?.text && (
-                <p className="truncate text-sm text-muted-foreground">{t.statusLine.text}</p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {t.projectId && (
-                <span className="text-xs text-muted-foreground">
-                  {projectName.get(t.projectId)}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <Tags tags={t.tags} />
+                {t.projectId && (
+                  <span className="text-xs text-muted-foreground">
+                    {projectName.get(t.projectId)}
+                  </span>
+                )}
+                {(spent.get(t.id) ?? 0) > 0 && (
+                  <span className="hidden text-xs text-muted-foreground group-hover:inline">
+                    {formatEur(spent.get(t.id) ?? 0)}
+                  </span>
+                )}
+                <PriorityLabel priority={t.priority} />
+                {t.dueDate && (
+                  <DueDate date={t.dueDate} closed={['done', 'cancelled'].includes(t.status)} />
+                )}
+                <span className="w-14 text-right text-xs text-muted-foreground">
+                  {timeAgo(t.updatedAt)}
                 </span>
-              )}
-              <Tags tags={t.tags} />
-              <PriorityLabel priority={t.priority} />
-              {t.dueDate && <span className="text-xs text-muted-foreground">due {t.dueDate}</span>}
-              {(spent.get(t.id) ?? 0) > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {formatEur(spent.get(t.id) ?? 0)}
-                </span>
-              )}
-              <StatusBadge status={t.status} />
-              <span className="w-16 text-right text-xs text-muted-foreground">
-                {timeAgo(t.updatedAt)}
-              </span>
+              </div>
             </div>
           </Link>
         </li>
@@ -241,9 +302,10 @@ function Kanban({ tasks, projectName }: { tasks: Task[]; projectName: Map<string
               over === status && 'ring-2 ring-primary/30',
             )}
           >
-            <h2 className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-muted-foreground uppercase">
-              {STATUSES.find((s) => s.value === status)?.label}
-              <span>{col.length}</span>
+            <h2 className="mb-2 flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground">
+              <StatusBadge status={status} iconOnly />
+              {statusMeta(status).label}
+              <span className="ml-auto font-normal">{col.length}</span>
             </h2>
             <div className="space-y-2">
               {col.map((t) => (
@@ -252,13 +314,20 @@ function Kanban({ tasks, projectName }: { tasks: Task[]; projectName: Map<string
                   to={`/tasks/${t.id}`}
                   draggable
                   onDragStart={() => setDragging(t.id)}
-                  className="block rounded-md border bg-card p-3 text-sm shadow-xs hover:border-primary/40"
+                  onDragEnd={() => setDragging(null)}
+                  className={cn(
+                    'block rounded-md border bg-card p-3 text-sm shadow-xs transition hover:border-primary/40 hover:shadow-sm',
+                    dragging === t.id && 'opacity-50',
+                  )}
                 >
                   <div className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 font-medium">{t.title}</span>
                     {t.ai.enabled && (
-                      <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Bot
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                        aria-label="AI enabled"
+                      />
                     )}
-                    <span className="font-medium">{t.title}</span>
                   </div>
                   {t.statusLine?.text && (
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
@@ -272,7 +341,9 @@ function Kanban({ tasks, projectName }: { tasks: Task[]; projectName: Map<string
                       </span>
                     )}
                     <Tags tags={t.tags} />
+                    <span className="flex-1" />
                     <PriorityLabel priority={t.priority} />
+                    {t.dueDate && <DueDate date={t.dueDate} closed={t.status === 'done'} />}
                   </div>
                 </Link>
               ))}

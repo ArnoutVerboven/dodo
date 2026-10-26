@@ -13,8 +13,10 @@ export function CardHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between border-b px-4 py-2.5">
-      <h3 className="text-sm font-semibold">{title}</h3>
+    <div className="flex min-h-10 items-center justify-between gap-2 px-4 pt-3 [&+*]:pt-2">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {title}
+      </h3>
       {action}
     </div>
   );
