@@ -128,6 +128,14 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(run('r1', 2, 't2'), 'tasks/t1')));
   });
 
+  it('keeps push tokens to the owner', async () => {
+    await assertSucceeds(setDoc(doc(owner(), 'pushTokens/tok1'), { createdAt: 1 }));
+    await assertSucceeds(getDoc(doc(owner(), 'pushTokens/tok1')));
+    await assertFails(getDoc(doc(stranger(), 'pushTokens/tok1')));
+    await assertFails(setDoc(doc(stranger(), 'pushTokens/tok2'), { createdAt: 1 }));
+    await assertFails(getDoc(doc(run(), 'pushTokens/tok1')));
+  });
+
   it('denies unknown collections', async () => {
     await assertFails(setDoc(doc(owner(), 'anything/x'), { a: 1 }));
   });

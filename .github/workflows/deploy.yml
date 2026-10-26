@@ -51,7 +51,7 @@ jobs:
             echo "functions=$(hit "^(apps/functions/|packages/budget/)|$FB")"
             echo "hosting=$(hit "^apps/web/|$FB")"
             echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"
-            echo "storage=$(hit "^storage\.rules$|$FB")"
+            echo "storage=$(hit "^(storage\.rules|infra/storage-cors\.json)$|$FB")"
           } | tee -a "$GITHUB_OUTPUT"
 
   firebase:
@@ -113,6 +113,11 @@ jobs:
           [ "$FUNCTIONS" = true ] && ONLY="$ONLY,functions"
           echo "Deploying: ${ONLY#,}"
           pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force --only "${ONLY#,}"
+      - name: Let the web app read archived run traces (Storage CORS)
+        if: env.STORAGE == 'true'
+        run: |
+          set -a; . apps/web/.env.production; set +a
+          gcloud storage buckets update "gs://$VITE_FIREBASE_STORAGE_BUCKET" --cors-file=infra/storage-cors.json
       - name: Register the Telegram webhook
         if: env.FUNCTIONS == 'true' && env.TOKEN != ''
         env:

@@ -7,7 +7,7 @@ import { connectStorageEmulator, getStorage } from 'firebase/storage';
 const env = import.meta.env;
 export const usingEmulators = env.VITE_USE_EMULATORS === 'true';
 
-const app = initializeApp({
+export const app = initializeApp({
   apiKey: env.VITE_FIREBASE_API_KEY || 'demo-key',
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: usingEmulators ? 'demo-dodo' : env.VITE_FIREBASE_PROJECT_ID,

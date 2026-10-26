@@ -21,7 +21,7 @@ export interface TriggerDeps {
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.8-flash';
 
 function resolveModel(choice: string): string {
   return choice === 'auto' ? DEFAULT_MODEL : choice;
