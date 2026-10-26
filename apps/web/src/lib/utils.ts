@@ -16,3 +16,9 @@ export function timeAgo(ms: number): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(ms).toLocaleDateString();
 }
+
+/** True when a key event comes from a field the user is typing in, so shortcuts stay out of the way. */
+export function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+}
