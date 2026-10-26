@@ -24,6 +24,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Install function runtime dependencies
+        # firebase deploy resolves firebase-functions from the functions source dir.
+        run: cd apps/functions/lib && npm install --omit=dev --no-package-lock --no-audit --no-fund
       - name: Write function parameters
         run: printf 'OWNER_EMAIL=%s\n' "${{ vars.OWNER_EMAIL }}" > apps/functions/lib/.env
       - uses: google-github-actions/auth@v2
