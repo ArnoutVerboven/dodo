@@ -37,6 +37,9 @@ const CURRENCY = defineString('BUDGET_CURRENCY', { default: 'EUR' });
 const OWNER_EMAIL = defineString('OWNER_EMAIL', { default: '' });
 /** `fake` runs the scripted model (emulator, tests); anything else uses Vertex AI. */
 const MODEL_BACKEND = defineString('MODEL_BACKEND', { default: 'vertex' });
+/** Vertex endpoint for Gemini. `global` serves every current model and is ~10% cheaper than a
+ * region; set a region (e.g. europe-west4) only if EU-only processing matters more. */
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'global';
 const TELEGRAM_BOT_TOKEN = defineString('TELEGRAM_BOT_TOKEN', { default: '' });
 const APP_URL = defineString('APP_URL', { default: 'https://dodo-512722.web.app' });
 const REGION = 'europe-west1';
@@ -58,7 +61,7 @@ const provider = (): ModelProvider => {
   providerInstance ??=
     MODEL_BACKEND.value() === 'fake' || isEmulator
       ? new FakeProvider()
-      : new VertexProvider(projectId(), REGION);
+      : new VertexProvider(projectId(), VERTEX_LOCATION);
   return providerInstance;
 };
 

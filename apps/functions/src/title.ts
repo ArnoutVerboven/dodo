@@ -2,7 +2,7 @@ import { scopesForTask } from '@dodo/budget';
 import { paths } from '@dodo/core';
 import { type GatewayDeps, generateWithBudget } from './gateway.js';
 
-const TITLE_MODEL = 'gemini-2.5-flash-lite';
+const TITLE_MODEL = 'gemini-3.1-flash-lite';
 
 /** Tasks created without a title get one from the cheapest model, charged to the task. */
 export async function generateTitle(
