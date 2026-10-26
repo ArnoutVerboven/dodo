@@ -39,13 +39,14 @@ Agents in this phase can only use the task tools (summary, status, message, ask,
 The headline use case (your own accounts in your own browser) comes before the remote browser.
 
 - Policy engine: allow / ask / deny at global, project, task; bash parser; deterministic ask for egress, writes outside the folder, git push, outbound messages; `untrusted` profile; "Always allow" with scope.
+- Tracked as #22 (Mac executor) and #23 (your Chrome).
 - `dodo` CLI: device login, folders, launchd daemon, status; model calls via the gateway; sandboxed shell (sandbox-runtime) with egress allowlist and no Keychain access.
 - Playwright MCP attached to your Chrome: log in by hand, then the agent continues.
 - **Exit:** the agent downloaded your latest energy bill from a site you were logged into, asking before anything outside the allowlist.
 
 ## Phase 4 — Remote tools and notifications
 
-**Status (2026-10-26): policy engine, bash, files, HTTP fetch, git checkout per task/project and Telegram notifications built (#4), ahead of phase 3 because they needed no Mac.** The policy engine from phase 3 moved here; phase 3 now reuses it. Still open in this phase: web search, the in-container egress proxy, tool cost models, FCM web push, and the exit criterion (a PR opened after an approval from your phone).
+**Status (2026-10-26): policy engine, bash, files, HTTP fetch, git checkout per task/project and Telegram notifications built (#4), ahead of phase 3 because they needed no Mac.** The policy engine from phase 3 moved here; phase 3 now reuses it. FCM web push added afterwards (#14). Still open in this phase: web search, the in-container egress proxy, tool cost models, and the exit criterion (a PR opened after an approval from your phone).
 
 - Remote container tools: bash, files, git checkout per project, HTTP fetch, web search, all behind the policy engine and the in-container egress proxy.
 - Tool cost models; one paid API end to end (Maps).
@@ -54,6 +55,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 
 ## Phase 5 — Remote browser, credentials, MFA
 
+- Tracked as #24 (remote browser) and #25 (vault and MFA).
 - Headless Playwright MCP in the container with encrypted, domain-scoped session store.
 - Bitwarden agent vault: per-task scoped secret references, taint after injection, redaction.
 - MFA as input requests, optional TOTP, `local-only` services; session handoff from the Mac.

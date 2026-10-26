@@ -75,6 +75,11 @@ service cloud.firestore {
       }
     }
 
+    // Web push registrations of the owner's browsers. Runs never see them.
+    match /pushTokens/{token} {
+      allow read, write: if isOwner();
+    }
+
     match /budgets/{scope} {
       allow read: if isOwner();
     }

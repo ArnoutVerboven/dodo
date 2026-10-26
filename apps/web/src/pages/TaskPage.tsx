@@ -1,5 +1,6 @@
 import {
   type AiConfig,
+  type Run,
   resolveAiConfig,
   type Task,
   type TaskPriority,
@@ -7,17 +8,26 @@ import {
   type ThreadMessage,
 } from '@dodo/core';
 import {
+  ArrowDown,
   ArrowLeft,
   Bot,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   FileText,
+  Folder,
   Link2,
+  Loader2,
+  type LucideIcon,
   Paperclip,
+  Pencil,
+  Plus,
   Send,
+  Settings2,
+  Square,
   Trash2,
   User,
+  X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -25,11 +35,18 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { parseTags } from '@/components/NewTaskDialog';
-import { RunPanel } from '@/components/RunPanel';
-import { PRIORITIES, STATUSES } from '@/components/task-meta';
+import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
+import {
+  dueTone,
+  formatDue,
+  PRIORITIES,
+  priorityMeta,
+  STATUSES,
+  statusMeta,
+} from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
-import { Input, Label, Select, Textarea } from '@/components/ui/input';
+import { Input, Select, Textarea } from '@/components/ui/input';
 import { Meter } from '@/components/ui/progress';
 import {
   addFileArtifact,
@@ -37,16 +54,20 @@ import {
   answerInput,
   deleteArtifact,
   deleteTask,
+  interruptRun,
   postUserMessage,
   updateTask,
   useArtifacts,
   useBudgets,
   useMessages,
   useProjects,
+  useRuns,
   useSettings,
   useTask,
 } from '@/lib/data';
-import { cn, formatEur, timeAgo } from '@/lib/utils';
+import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
+
+const PENDING_INPUT_ID = 'pending-input';
 
 export function TaskPage() {
   const { id } = useParams();
@@ -65,25 +86,39 @@ export function TaskPage() {
 }
 
 function TaskView({ task }: { task: Task }) {
+  const navigate = useNavigate();
+  // Esc goes back to the task list, unless you are typing somewhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || isTyping(e.target)) return;
+      navigate('/');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigate]);
   return (
     <div className="space-y-4">
       <Link
         to="/"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        title="Back to tasks (Esc)"
       >
         <ArrowLeft className="h-4 w-4" /> Tasks
       </Link>
-      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-4">
-          <TitleEditor task={task} />
-          <DescriptionCard task={task} />
-          <StatusCard task={task} />
-          <SummaryCard task={task} />
-          <RunPanel taskId={task.id} />
+          <div className="space-y-2">
+            <TitleEditor task={task} />
+            <Description task={task} />
+            <PropertyBar task={task} />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <StatusCard task={task} />
+            <SummaryCard task={task} />
+          </div>
           <Thread taskId={task.id} />
         </div>
         <aside className="space-y-4">
-          <DetailsCard task={task} />
           <AiCard task={task} />
           <ArtifactsCard taskId={task.id} />
           <DangerZone taskId={task.id} />
@@ -99,18 +134,229 @@ function TitleEditor({ task }: { task: Task }) {
     setTitle(task.title);
   }, [task.title]);
   return (
-    <input
-      aria-label="Title"
-      className="w-full bg-transparent text-xl font-semibold outline-none"
-      value={title}
-      onChange={(e) => setTitle(e.target.value)}
-      onBlur={() =>
-        title.trim() &&
-        title !== task.title &&
-        updateTask(task.id, { title: title.trim(), titleSource: 'user' })
-      }
-      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-    />
+    <label className="group flex items-center gap-2">
+      <textarea
+        aria-label="Title"
+        rows={1}
+        className="-mx-1 w-full resize-none rounded-md bg-transparent px-1 text-xl font-semibold outline-none field-sizing-content hover:bg-accent/50 focus:bg-accent/50"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onBlur={() =>
+          title.trim() &&
+          title !== task.title &&
+          updateTask(task.id, { title: title.trim(), titleSource: 'user' })
+        }
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          if (e.key === 'Escape') {
+            setTitle(task.title);
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <Pencil className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+    </label>
+  );
+}
+
+/** One compact row of editable properties in place of a form of labelled boxes. */
+function PropertyBar({ task }: { task: Task }) {
+  const { data: projects } = useProjects();
+  const status = statusMeta(task.status);
+  const priority = priorityMeta(task.priority);
+  const closed = task.status === 'done' || task.status === 'cancelled';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <SelectChip
+        label="Status"
+        icon={status.icon}
+        tone={status.tone}
+        text={status.label}
+        value={task.status}
+        options={STATUSES}
+        onChange={(v) => updateTask(task.id, { status: v as TaskStatus })}
+      />
+      <SelectChip
+        label="Priority"
+        icon={priority.icon}
+        tone={priority.tone}
+        text={task.priority === 'none' ? 'Priority' : priority.label}
+        muted={task.priority === 'none'}
+        value={task.priority}
+        options={PRIORITIES}
+        onChange={(v) => updateTask(task.id, { priority: v as TaskPriority })}
+      />
+      <DueChip task={task} closed={closed} />
+      <SelectChip
+        label="Project"
+        icon={Folder}
+        text={projects.find((p) => p.id === task.projectId)?.name ?? 'Project'}
+        muted={!task.projectId}
+        value={task.projectId ?? ''}
+        options={[
+          { value: '', label: 'No project' },
+          ...projects.map((p) => ({ value: p.id, label: p.name })),
+        ]}
+        onChange={(v) => updateTask(task.id, { projectId: v || undefined })}
+      />
+      <TagEditor task={task} />
+    </div>
+  );
+}
+
+const chip =
+  'relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition hover:bg-accent focus-within:ring-2 focus-within:ring-primary/30';
+
+/** A chip that opens a native select: looks light, stays accessible and works on mobile. */
+function SelectChip({
+  label,
+  icon: Icon,
+  tone,
+  text,
+  muted = false,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  icon: LucideIcon;
+  tone?: string;
+  text: string;
+  muted?: boolean;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <span className={cn(chip, muted ? 'text-muted-foreground' : 'bg-muted/60')} title={label}>
+      <Icon className={cn('h-3.5 w-3.5', tone)} />
+      <span>{text}</span>
+      <select
+        aria-label={label}
+        className="absolute inset-0 cursor-pointer opacity-0"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+function DueChip({ task, closed }: { task: Task; closed: boolean }) {
+  const input = useRef<HTMLInputElement>(null);
+  const open = () => {
+    const el = input.current;
+    if (!el) return;
+    try {
+      el.showPicker();
+    } catch {
+      el.focus();
+    }
+  };
+  return (
+    <span
+      className={cn(chip, task.dueDate ? 'bg-muted/60' : 'text-muted-foreground')}
+      title={task.dueDate ? `Due ${task.dueDate}` : 'Due date'}
+    >
+      <button type="button" className="inline-flex items-center gap-1.5" onClick={open}>
+        <CalendarDays
+          className={cn('h-3.5 w-3.5', task.dueDate && dueTone(task.dueDate, closed))}
+        />
+        <span className={cn(task.dueDate && dueTone(task.dueDate, closed))}>
+          {task.dueDate ? formatDue(task.dueDate) : 'Due date'}
+        </span>
+      </button>
+      {task.dueDate && (
+        <button
+          type="button"
+          aria-label="Clear due date"
+          className="rounded text-muted-foreground hover:text-foreground"
+          onClick={() => updateTask(task.id, { dueDate: undefined })}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+      <input
+        ref={input}
+        type="date"
+        aria-label="Due date"
+        tabIndex={-1}
+        className="pointer-events-none absolute bottom-0 left-0 h-0 w-0 opacity-0"
+        value={task.dueDate ?? ''}
+        onChange={(e) => updateTask(task.id, { dueDate: e.target.value || undefined })}
+      />
+    </span>
+  );
+}
+
+function TagEditor({ task }: { task: Task }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    const tags = parseTags([...task.tags, draft].join(','));
+    if (tags.length !== task.tags.length) void updateTask(task.id, { tags });
+    setDraft('');
+  };
+  return (
+    <>
+      {task.tags.map((t) => (
+        <span
+          key={t}
+          className="group inline-flex h-7 items-center gap-1 rounded-md bg-muted/60 px-2 text-xs text-muted-foreground"
+        >
+          #{t}
+          <button
+            type="button"
+            aria-label={`Remove tag ${t}`}
+            className="hidden hover:text-foreground group-hover:inline"
+            onClick={() => updateTask(task.id, { tags: task.tags.filter((x) => x !== t) })}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          // biome-ignore lint/a11y/noAutofocus: opened by an explicit click on "Tag"
+          autoFocus
+          aria-label="New tag"
+          className="h-7 w-28 rounded-md border bg-card px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          placeholder="tag, Enter"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ',') {
+              e.preventDefault();
+              commit();
+            }
+            if (e.key === 'Escape') {
+              setDraft('');
+              setAdding(false);
+            }
+          }}
+          onBlur={() => {
+            commit();
+            setAdding(false);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className={cn(chip, 'text-muted-foreground')}
+          onClick={() => setAdding(true)}
+        >
+          <Plus className="h-3.5 w-3.5" /> Tag
+        </button>
+      )}
+    </>
   );
 }
 
@@ -119,14 +365,32 @@ function StatusCard({ task }: { task: Task }) {
   const needsYou = task.status === 'needs_input' || s?.needsYou;
   return (
     <Card className={cn(needsYou && 'border-attention bg-attention-bg')}>
-      <CardHeader title={needsYou ? 'Status: needs you' : 'Status'} />
+      <CardHeader
+        title={needsYou ? 'Needs you' : 'Status'}
+        action={
+          needsYou && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-my-1 h-7"
+              onClick={() =>
+                document
+                  .getElementById(PENDING_INPUT_ID)
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }
+            >
+              Answer <ArrowDown className="h-3.5 w-3.5" />
+            </Button>
+          )
+        }
+      />
       <CardBody className="space-y-1 text-sm">
         {s ? (
           <>
             <p>{s.text}</p>
             {s.nextAction && (
-              <p>
-                <span className="font-medium">Next: </span>
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">Next: </span>
                 {s.nextAction}
               </p>
             )}
@@ -147,7 +411,7 @@ function SummaryCard({ task }: { task: Task }) {
   return (
     <Card>
       <CardHeader title="Summary" />
-      <CardBody className="prose-sm text-sm">
+      <CardBody className="prose-sm max-h-80 overflow-y-auto text-sm">
         {task.summary ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.summary}</ReactMarkdown>
         ) : (
@@ -160,145 +424,356 @@ function SummaryCard({ task }: { task: Task }) {
   );
 }
 
-function DescriptionCard({ task }: { task: Task }) {
+/** The description sits right under the title as plain text; long ones fold to a few lines. */
+function Description({ task }: { task: Task }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(task.description);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setText(task.description);
   }, [task.description]);
-  // Collapsed by default: the summary and status above it are the top-down view; the
-  // description is what you wrote at the start.
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      className="rounded-lg border bg-card"
-      open={open || editing}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm font-semibold">
-        <span className="flex items-center gap-1">
-          {open || editing ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-          Description
-          {!open && !editing && task.description && (
-            <span className="ml-2 max-w-[60ch] truncate font-normal text-muted-foreground">
-              {task.description}
-            </span>
-          )}
-        </span>
-        {!editing && (open || editing) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={(e) => {
-              e.preventDefault();
-              setEditing(true);
-            }}
-          >
-            Edit
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text changes
+  useEffect(() => {
+    const el = body.current;
+    if (el) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [task.description, editing]);
+  const save = () => updateTask(task.id, { description: text }).then(() => setEditing(false));
+  const cancel = () => {
+    setText(task.description);
+    setEditing(false);
+  };
+  if (editing)
+    return (
+      <div className="space-y-2">
+        <Textarea
+          autoFocus
+          rows={6}
+          aria-label="Description"
+          className="field-sizing-content"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
+            if (e.key === 'Escape') cancel();
+          }}
+        />
+        <div className="flex items-center justify-end gap-2">
+          <span className="mr-auto text-xs text-muted-foreground">⌘/Ctrl+Enter to save</span>
+          <Button size="sm" variant="ghost" onClick={cancel}>
+            Cancel
           </Button>
-        )}
-      </summary>
-      <div className="prose-sm border-t p-4 text-sm">
-        {editing ? (
-          <div className="space-y-2">
-            <Textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
-            <div className="flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setText(task.description);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={() =>
-                  updateTask(task.id, { description: text }).then(() => setEditing(false))
-                }
-              >
-                Save
-              </Button>
-            </div>
-          </div>
-        ) : task.description ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
-        ) : (
-          <p className="text-muted-foreground">No description.</p>
-        )}
+          <Button size="sm" onClick={save}>
+            Save
+          </Button>
+        </div>
       </div>
-    </details>
+    );
+  return (
+    <div className="group relative">
+      {task.description ? (
+        <div
+          ref={body}
+          className={cn(
+            'prose-sm pr-16 text-sm text-muted-foreground',
+            !expanded && 'line-clamp-4',
+          )}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="text-sm text-muted-foreground hover:text-foreground"
+          onClick={() => setEditing(true)}
+        >
+          Add a description…
+        </button>
+      )}
+      {(overflows || expanded) && (
+        <button
+          type="button"
+          className="mt-0.5 inline-flex items-center gap-0.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <>
+              <ChevronDown className="h-3.5 w-3.5 rotate-180" /> Show less
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" /> Show more
+            </>
+          )}
+        </button>
+      )}
+      {task.description && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="absolute top-0 right-0 h-7 text-muted-foreground opacity-60 group-hover:opacity-100"
+          onClick={() => setEditing(true)}
+        >
+          <Pencil className="h-3.5 w-3.5" /> Edit
+        </Button>
+      )}
+    </div>
   );
 }
 
+type TimelineItem =
+  | { kind: 'message'; at: number; message: ThreadMessage }
+  | { kind: 'run'; at: number; run: Run };
+
+/**
+ * Messages and agent runs as one timeline. Clicking an agent message opens the steps behind
+ * it; a run that ended without a message gets its own row, and a running one sits at the end.
+ */
 function Thread({ taskId }: { taskId: string }) {
-  const { data: messages } = useMessages(taskId);
+  const { data: messages, loading } = useMessages(taskId);
+  const { data: runs } = useRuns(taskId);
   const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
   const end = useRef<HTMLDivElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the message count changes
+  const seen = useRef<number | null>(null);
+  // Follow new messages as they arrive, but don't jump down to the thread when the page opens.
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'nearest' });
-  }, [messages.length]);
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!body.trim()) return;
-    await postUserMessage(taskId, body.trim());
+    if (loading) return;
+    if (seen.current !== null && messages.length > seen.current) {
+      end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    seen.current = messages.length;
+  }, [loading, messages.length]);
+
+  const runById = new Map(runs.map((r) => [r.id, r]));
+  const byRun = new Map<string, ThreadMessage[]>();
+  for (const m of messages) if (m.runId) byRun.set(m.runId, [...(byRun.get(m.runId) ?? []), m]);
+  const liveRun = runs.find(isLive);
+  const items: TimelineItem[] = [
+    ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, message: m })),
+    ...runs
+      .filter((r) => !isLive(r) && !byRun.has(r.id))
+      .map((r) => ({ kind: 'run' as const, at: r.endedAt ?? r.updatedAt, run: r })),
+  ].sort((a, b) => a.at - b.at);
+
+  const send = async () => {
+    const text = body.trim();
+    if (!text || sending) return;
+    setSending(true);
     setBody('');
+    try {
+      await postUserMessage(taskId, text);
+    } catch (err) {
+      setBody(text);
+      console.error('Could not send the message', err);
+    } finally {
+      setSending(false);
+    }
   };
   return (
     <Card>
       <CardHeader title="Thread" />
-      <CardBody className="space-y-4">
-        {messages.length === 0 && <p className="text-sm text-muted-foreground">No messages yet.</p>}
-        {messages.map((m) => (
-          <MessageView key={m.id} taskId={taskId} message={m} />
-        ))}
+      <CardBody className="space-y-1">
+        {items.length === 0 && !liveRun && (
+          <p className="text-sm text-muted-foreground">No messages yet.</p>
+        )}
+        {items.map((item) => {
+          if (item.kind === 'run') return <RunRow key={item.run.id} run={item.run} />;
+          const m = item.message;
+          const run = m.runId ? runById.get(m.runId) : undefined;
+          // The steps behind a message are those since the run's previous message.
+          const siblings = (m.runId && byRun.get(m.runId)) || [];
+          const i = siblings.indexOf(m);
+          const from = i > 0 ? siblings[i - 1]?.createdAt : undefined;
+          const to = i === siblings.length - 1 ? undefined : m.createdAt;
+          return (
+            <MessageView
+              key={m.id}
+              taskId={taskId}
+              message={m}
+              run={run}
+              traceFrom={from}
+              traceTo={to}
+            />
+          );
+        })}
+        {liveRun && <RunRow run={liveRun} />}
         <div ref={end} />
-        <form onSubmit={send} className="flex items-end gap-2">
-          <Textarea
-            rows={2}
-            className="min-h-0"
-            placeholder="Reply or steer the agent…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send(e);
-            }}
-          />
-          <Button type="submit" size="icon" aria-label="Send" disabled={!body.trim()}>
-            <Send className="h-4 w-4" />
-          </Button>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+          className="pt-3"
+        >
+          <div className="flex items-end gap-2 rounded-lg border bg-card p-1.5 focus-within:ring-2 focus-within:ring-primary/30">
+            <Textarea
+              rows={1}
+              className="max-h-48 min-h-9 resize-none border-0 field-sizing-content focus-visible:ring-0"
+              placeholder={
+                liveRun ? 'Steer the agent while it works…' : 'Reply or steer the agent…'
+              }
+              aria-label="Reply"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter sends; Shift+Enter adds a line. Leave Enter alone while an IME is composing.
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              aria-label="Send"
+              title="Send (Enter)"
+              disabled={!body.trim() || sending}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
+          <p className="mt-1 px-1 text-xs text-muted-foreground">
+            Enter to send · Shift+Enter for a new line
+          </p>
         </form>
       </CardBody>
     </Card>
   );
 }
 
-function MessageView({ taskId, message: m }: { taskId: string; message: ThreadMessage }) {
-  const Icon = m.author === 'user' ? User : Bot;
+/** Clicks on links, buttons, fields or selected text should not toggle the trace. */
+function isPlainClick(e: React.MouseEvent): boolean {
+  if (window.getSelection()?.toString()) return false;
+  return !(e.target as HTMLElement).closest('a,button,input,select,textarea,pre');
+}
+
+function StepsToggle({ run, open, onClick }: { run: Run; open: boolean; onClick: () => void }) {
   return (
-    <div className="flex gap-3">
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      title={open ? 'Hide steps' : 'Show the steps behind this'}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded px-1 hover:bg-muted hover:text-foreground',
+        !open && 'opacity-70 group-hover:opacity-100',
+      )}
+    >
+      <ChevronRight className={cn('h-3 w-3 transition', open && 'rotate-90')} />
+      {runStats(run)}
+    </button>
+  );
+}
+
+function MessageView({
+  taskId,
+  message: m,
+  run,
+  traceFrom,
+  traceTo,
+}: {
+  taskId: string;
+  message: ThreadMessage;
+  run?: Run;
+  traceFrom?: number;
+  traceTo?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const Icon = m.author === 'user' ? User : Bot;
+  const pending = !!m.input && !m.input.answer;
+  const toggle = run ? () => setOpen((v) => !v) : undefined;
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a shortcut for the steps button in the header
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the steps button in the header is the keyboard path
+    <div
+      onClick={(e) => toggle && isPlainClick(e) && toggle()}
+      className={cn(
+        'group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60',
+        pending && 'bg-attention-bg/50',
+        run && 'cursor-pointer',
+        open && 'bg-accent/40',
+      )}
+    >
+      <div
+        className={cn(
+          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted transition-colors',
+          m.author === 'user' ? 'group-hover:bg-primary/10' : 'group-hover:bg-blue-500/15',
+        )}
+      >
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
             {m.author === 'user' ? 'You' : m.author === 'agent' ? 'Agent' : 'System'}
           </span>
-          <span>{timeAgo(m.createdAt)}</span>
-          {m.runId && <span className="rounded bg-muted px-1.5">run {m.runId.slice(0, 6)}</span>}
+          <time title={new Date(m.createdAt).toLocaleString()}>{timeAgo(m.createdAt)}</time>
+          {run && toggle && <StepsToggle run={run} open={open} onClick={toggle} />}
         </div>
-        <div className="prose-sm text-sm">
+        <div className="prose-sm cursor-auto text-sm">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
+        {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
         {m.input && <InputRequestView taskId={taskId} message={m} />}
+      </div>
+    </div>
+  );
+}
+
+/** A run with no message of its own: the one working now, or one that ended silently. */
+function RunRow({ run }: { run: Run }) {
+  const [open, setOpen] = useState(false);
+  const live = isLive(run);
+  const failed = run.state === 'failed';
+  return (
+    <div className="group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+        {live ? (
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+        ) : (
+          <Bot className="h-4 w-4" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <span
+            className={cn(
+              'font-medium',
+              live
+                ? 'text-blue-600 dark:text-blue-400'
+                : failed
+                  ? 'text-danger'
+                  : 'text-foreground',
+            )}
+          >
+            Agent · {RUN_STATE_LABEL[run.state]}
+            {live && '…'}
+          </span>
+          <time title={new Date(run.updatedAt).toLocaleString()}>
+            {timeAgo(run.endedAt ?? run.updatedAt)}
+          </time>
+          <StepsToggle run={run} open={open} onClick={() => setOpen((v) => !v)} />
+          {live && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-6 px-2 text-xs"
+              onClick={() => interruptRun(run.id)}
+              disabled={run.interrupt}
+            >
+              <Square className="h-3 w-3" /> {run.interrupt ? 'Stopping…' : 'Stop'}
+            </Button>
+          )}
+        </div>
+        {!live && (run.error || run.endReason) && (
+          <p className={cn('text-sm', failed ? 'text-danger' : 'text-muted-foreground')}>
+            {run.error ?? `Ended: ${run.endReason?.replace('_', ' ')}.`}
+          </p>
+        )}
+        {open && <RunTrace run={run} />}
       </div>
     </div>
   );
@@ -309,6 +784,7 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
   const [text, setText] = useState('');
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
   const [scope, setScope] = useState<'task' | 'project' | 'global'>('project');
+  const [showRule, setShowRule] = useState(false);
   if (!req) return null;
   if (req.answer) {
     return (
@@ -321,9 +797,16 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
   }
   const answer = (value: string, alwaysAllow?: { rule: string; scope: typeof scope }) =>
     answerInput(taskId, message.id, req, value, alwaysAllow);
+  const sendText = () => {
+    if (!text.trim()) return;
+    void answer(req.kind === 'approval' ? `deny: ${text.trim()}` : text.trim());
+  };
   return (
-    <div className="mt-2 space-y-2 rounded-md border border-attention bg-attention-bg p-3 text-sm">
-      <p className="font-medium">{req.prompt}</p>
+    <div
+      id={PENDING_INPUT_ID}
+      className="mt-2 scroll-mt-20 space-y-2 rounded-md border border-attention bg-attention-bg p-3 text-sm"
+    >
+      {req.prompt.trim() !== message.body.trim() && <p className="font-medium">{req.prompt}</p>}
       {req.costEstimate !== undefined && (
         <p className="text-xs">Estimated cost: {formatEur(req.costEstimate)}</p>
       )}
@@ -338,15 +821,24 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
       )}
       {req.kind === 'approval' && (
         <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => answer('approve')}>
               Approve once
             </Button>
             <Button size="sm" variant="outline" onClick={() => answer('deny')}>
               Deny
             </Button>
+            {req.suggestedRule !== undefined && (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setShowRule((v) => !v)}
+              >
+                {showRule ? 'Hide' : 'Always allow…'}
+              </button>
+            )}
           </div>
-          {req.suggestedRule !== undefined && (
+          {req.suggestedRule !== undefined && showRule && (
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 className="h-8 w-56 font-mono text-xs"
@@ -381,89 +873,19 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
             placeholder={req.kind === 'approval' ? 'Deny and tell the agent why…' : 'Your answer…'}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                sendText();
+              }
+            }}
           />
-          <Button
-            size="sm"
-            disabled={!text.trim()}
-            onClick={() => answer(req.kind === 'approval' ? `deny: ${text.trim()}` : text.trim())}
-          >
+          <Button size="sm" disabled={!text.trim()} onClick={sendText}>
             Send
           </Button>
         </div>
       )}
     </div>
-  );
-}
-
-function DetailsCard({ task }: { task: Task }) {
-  const { data: projects } = useProjects();
-  const [tags, setTags] = useState(task.tags.join(', '));
-  useEffect(() => {
-    setTags(task.tags.join(', '));
-  }, [task.tags]);
-  return (
-    <Card>
-      <CardHeader title="Details" />
-      <CardBody className="space-y-3">
-        <label className="block">
-          <Label>Status</Label>
-          <Select
-            value={task.status}
-            onChange={(e) => updateTask(task.id, { status: e.target.value as TaskStatus })}
-          >
-            {STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="block">
-          <Label>Priority</Label>
-          <Select
-            value={task.priority}
-            onChange={(e) => updateTask(task.id, { priority: e.target.value as TaskPriority })}
-          >
-            {PRIORITIES.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="block">
-          <Label>Due date</Label>
-          <Input
-            type="date"
-            value={task.dueDate ?? ''}
-            onChange={(e) => updateTask(task.id, { dueDate: e.target.value || undefined })}
-          />
-        </label>
-        <label className="block">
-          <Label>Project</Label>
-          <Select
-            value={task.projectId ?? ''}
-            onChange={(e) => updateTask(task.id, { projectId: e.target.value || undefined })}
-          >
-            <option value="">No project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="block">
-          <Label>Tags</Label>
-          <Input
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-            onBlur={() => updateTask(task.id, { tags: parseTags(tags) })}
-            placeholder="comma separated"
-          />
-        </label>
-      </CardBody>
-    </Card>
   );
 }
 
@@ -478,10 +900,21 @@ function AiCard({ task }: { task: Task }) {
   }, [task.ai]);
   const project = projects.find((p) => p.id === task.projectId);
   const resolved = resolveAiConfig(task, project, settings);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(task.ai);
+  const { enabled: _a, ...draftRest } = draft;
+  const { enabled: _b, ...savedRest } = task.ai;
+  const dirty = JSON.stringify(draftRest) !== JSON.stringify(savedRest);
   return (
     <Card>
-      <CardHeader title="AI" />
+      <CardHeader
+        title="AI"
+        action={
+          <Switch
+            label="Let AI work on this task"
+            checked={task.ai.enabled}
+            onChange={(enabled) => updateTask(task.id, { ai: { ...task.ai, enabled } })}
+          />
+        }
+      />
       <CardBody className="space-y-3">
         <div>
           <div className="mb-1 flex justify-between text-xs">
@@ -497,25 +930,67 @@ function AiCard({ task }: { task: Task }) {
             </p>
           )}
         </div>
-        <AiConfigFields value={draft} onChange={setDraft} />
-        <p className="text-xs text-muted-foreground">
-          Effective: {resolved.model} on {resolved.device}, budget {formatEur(resolved.budget)}
-        </p>
-        {dirty && (
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setDraft(task.ai)}>
-              Reset
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => updateTask(task.id, { ai: { enabled: false, ...draft } })}
-            >
-              Save
-            </Button>
+        <details className="group/adv" open={dirty || undefined}>
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            <Settings2 className="h-3.5 w-3.5" />
+            <span className="min-w-0 flex-1 truncate">
+              {resolved.model} · {resolved.device}
+            </span>
+            <ChevronRight className="h-3.5 w-3.5 transition group-open/adv:rotate-90" />
+          </summary>
+          <div className="mt-3 space-y-3">
+            <AiConfigFields value={draft} onChange={setDraft} showEnabled={false} />
+            {dirty && (
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setDraft(task.ai)}>
+                  Reset
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    updateTask(task.id, { ai: { ...draft, enabled: task.ai.enabled } })
+                  }
+                >
+                  Save
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+        </details>
       </CardBody>
     </Card>
+  );
+}
+
+function Switch({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={label}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none',
+        checked ? 'bg-success' : 'bg-muted-foreground/30',
+      )}
+    >
+      <span
+        className={cn(
+          'inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
+          checked ? 'translate-x-4.5' : 'translate-x-0.5',
+        )}
+      />
+    </button>
   );
 }
 
@@ -527,14 +1002,16 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
   return (
     <Card>
       <CardHeader
-        title="Artifacts"
+        title="Files & links"
         action={
           <Button
-            size="sm"
+            size="icon"
             variant="ghost"
+            className="-my-1 h-7 w-7"
             disabled={uploading}
             onClick={() => fileInput.current?.click()}
             aria-label="Attach file"
+            title="Attach file"
           >
             <Paperclip className="h-4 w-4" />
           </Button>
@@ -557,40 +1034,40 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
             }
           }}
         />
-        {artifacts.length === 0 && (
-          <p className="text-sm text-muted-foreground">No attachments or links.</p>
+        {artifacts.length > 0 && (
+          <ul className="-mx-2">
+            {artifacts.map((a) => (
+              <li
+                key={a.id}
+                className="group flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent/60"
+              >
+                {a.kind === 'link' ? (
+                  <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 flex-1 truncate hover:underline"
+                >
+                  {a.name}
+                </a>
+                {a.role === 'output' && <span className="text-xs text-success">output</span>}
+                <button
+                  type="button"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  onClick={() => deleteArtifact(taskId, a.id)}
+                  aria-label={`Remove ${a.name}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-danger" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
-        <ul className="space-y-1">
-          {artifacts.map((a) => (
-            <li key={a.id} className="group flex items-center gap-2 text-sm">
-              {a.kind === 'link' ? (
-                <Link2 className="h-4 w-4 shrink-0" />
-              ) : (
-                <FileText className="h-4 w-4 shrink-0" />
-              )}
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noreferrer"
-                className="min-w-0 flex-1 truncate hover:underline"
-              >
-                {a.name}
-              </a>
-              {a.role === 'output' && <span className="text-xs text-success">output</span>}
-              <ExternalLink className="h-3 w-3 text-muted-foreground" />
-              <button
-                type="button"
-                className="opacity-0 group-hover:opacity-100"
-                onClick={() => deleteArtifact(taskId, a.id)}
-                aria-label={`Remove ${a.name}`}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            </li>
-          ))}
-        </ul>
         <form
-          className="flex gap-2"
           onSubmit={async (e) => {
             e.preventDefault();
             if (!url.trim()) return;
@@ -601,13 +1078,11 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
           <Input
             className="h-8"
             type="url"
-            placeholder="Add a link"
+            placeholder="Paste a link, press Enter"
+            aria-label="Add a link"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
-          <Button size="sm" type="submit" variant="outline" disabled={!url.trim()}>
-            Add
-          </Button>
         </form>
       </CardBody>
     </Card>
@@ -635,7 +1110,7 @@ function DangerZone({ taskId }: { taskId: string }) {
     <Button
       size="sm"
       variant="ghost"
-      className="text-muted-foreground"
+      className="text-muted-foreground hover:text-danger"
       onClick={() => setConfirming(true)}
     >
       <Trash2 className="h-4 w-4" /> Delete task

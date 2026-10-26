@@ -8,13 +8,67 @@ on:
 concurrency: deploy
 
 jobs:
-  deploy:
+  # Works out what changed since the last successful deploy, so each job below only
+  # deploys what it has to. Comparing against the last successful deploy (not the
+  # previous commit) means a cancelled or failed run never loses changes.
+  changes:
     runs-on: ubuntu-latest
-    # Keyless auth through Workload Identity Federation (see infra/bootstrap.sh).
     if: vars.GCP_WIF_PROVIDER != ''
     permissions:
       contents: read
+      actions: read
+    outputs:
+      worker: ${{ steps.diff.outputs.worker }}
+      functions: ${{ steps.diff.outputs.functions }}
+      hosting: ${{ steps.diff.outputs.hosting }}
+      firestore: ${{ steps.diff.outputs.firestore }}
+      storage: ${{ steps.diff.outputs.storage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          everything() { for t in worker functions hosting firestore storage; do echo "$t=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          # A manual run redeploys everything (e.g. after changing repository variables).
+          [ "${{ github.event_name }}" = workflow_dispatch ] && { echo "Manual run: deploying everything"; everything; }
+          BASE=$(gh run list -R "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main --status success \
+            --limit 1 --json headSha -q '.[0].headSha' || true)
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "No usable last successful deploy: deploying everything"; everything
+          fi
+          FILES=$(git diff --name-only "$BASE" HEAD)
+          echo "Changed since last successful deploy ($BASE):"; echo "$FILES"
+          hit() { echo "$FILES" | grep -qE "$1" && echo true || echo false; }
+          # Shared inputs: any change here redeploys everything.
+          ALL='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|packages/core/|\.github/workflows/deploy\.yml)'
+          [ "$(hit "$ALL")" = true ] && { echo "Shared input changed: deploying everything"; everything; }
+          FB='^firebase\.json$'
+          {
+            echo "worker=$(hit '^(apps/worker/|packages/(agent|policy)/|apps/web/\.env\.production$)')"
+            echo "functions=$(hit "^(apps/functions/|packages/budget/)|$FB")"
+            echo "hosting=$(hit "^apps/web/|$FB")"
+            echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"
+            echo "storage=$(hit "^(storage\.rules|infra/storage-cors\.json)$|$FB")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  firebase:
+    needs: changes
+    if: >
+      needs.changes.outputs.functions == 'true' || needs.changes.outputs.hosting == 'true' ||
+      needs.changes.outputs.firestore == 'true' || needs.changes.outputs.storage == 'true'
+    runs-on: ubuntu-latest
+    # Keyless auth through Workload Identity Federation (see infra/bootstrap.sh).
+    permissions:
+      contents: read
       id-token: write
+    env:
+      FUNCTIONS: ${{ needs.changes.outputs.functions }}
+      HOSTING: ${{ needs.changes.outputs.hosting }}
+      FIRESTORE: ${{ needs.changes.outputs.firestore }}
+      STORAGE: ${{ needs.changes.outputs.storage }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,11 +77,18 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - name: Build what is being deployed
+        run: |
+          FILTERS=""
+          [ "$FUNCTIONS" = true ] && FILTERS="$FILTERS --filter @dodo/functions..."
+          [ "$HOSTING" = true ] && FILTERS="$FILTERS --filter @dodo/web..."
+          if [ -n "$FILTERS" ]; then pnpm $FILTERS --workspace-concurrency=1 build; fi
       - name: Install function runtime dependencies
+        if: env.FUNCTIONS == 'true'
         # firebase deploy resolves firebase-functions from the functions source dir.
         run: cd apps/functions/lib && rm -rf node_modules && npm install --omit=dev --no-package-lock --no-audit --no-fund
       - name: Write function parameters
+        if: env.FUNCTIONS == 'true'
         # Non-interactive deploys need a value for every param, defaults included.
         run: |
           cat > apps/functions/lib/.env <<EOF
@@ -44,11 +105,21 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
       - name: Deploy to Firebase
-        run: >
-          pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force
-          --only hosting,firestore:rules,firestore:indexes,storage,functions
+        run: |
+          ONLY=""
+          [ "$HOSTING" = true ] && ONLY="$ONLY,hosting"
+          [ "$FIRESTORE" = true ] && ONLY="$ONLY,firestore:rules,firestore:indexes"
+          [ "$STORAGE" = true ] && ONLY="$ONLY,storage"
+          [ "$FUNCTIONS" = true ] && ONLY="$ONLY,functions"
+          echo "Deploying: ${ONLY#,}"
+          pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force --only "${ONLY#,}"
+      - name: Let the web app read archived run traces (Storage CORS)
+        if: env.STORAGE == 'true'
+        run: |
+          set -a; . apps/web/.env.production; set +a
+          gcloud storage buckets update "gs://$VITE_FIREBASE_STORAGE_BUCKET" --cors-file=infra/storage-cors.json
       - name: Register the Telegram webhook
-        if: env.TOKEN != ''
+        if: env.FUNCTIONS == 'true' && env.TOKEN != ''
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
@@ -56,40 +127,47 @@ jobs:
           curl -sS -X POST "https://api.telegram.org/bot$TOKEN/setWebhook" \
             -d "url=https://europe-west1-${{ vars.GCP_PROJECT_ID }}.cloudfunctions.net/telegramWebhook" \
             -d "secret_token=$SECRET" -d "allowed_updates=[\"message\",\"callback_query\"]" | sed 's/.*"description":"\([^"]*\)".*/\1/'
-      - name: Build and push the worker image
-        env:
-          REGISTRY: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo
+
+  # Runs in parallel with the firebase job.
+  worker:
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGISTRY: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @dodo/worker... --workspace-concurrency=1 build
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Sign in to the image registry
+        # The registry itself is managed by infra/terraform.
         run: |
-          gcloud artifacts repositories describe dodo --location=europe-west1 >/dev/null 2>&1 ||
-            gcloud artifacts repositories create dodo --repository-format=docker --location=europe-west1
           gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
-          docker build -f apps/worker/Dockerfile -t "$REGISTRY/worker:${GITHUB_SHA}" -t "$REGISTRY/worker:latest" .
-          docker push --all-tags "$REGISTRY/worker"
-      - name: Worker API key
-        # The browser key is restricted to the web app's domains, which blocks sign-in from
-        # Cloud Run. The worker gets its own key, restricted by API instead of by website.
-        id: worker_key
-        run: |
-          NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
-          if [ -z "$NAME" ]; then
-            gcloud services api-keys create --display-name=dodo-worker \
-              --api-target=service=identitytoolkit.googleapis.com \
-              --api-target=service=securetoken.googleapis.com \
-              --api-target=service=firestore.googleapis.com \
-              --api-target=service=firebasestorage.googleapis.com --quiet
-            NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
-          fi
-          KEY=$(gcloud services api-keys get-key-string "$NAME" --format='value(keyString)')
-          echo "::add-mask::$KEY"
-          echo "key=$KEY" >> "$GITHUB_OUTPUT"
-      - name: Deploy the worker Cloud Run Job
-        run: |
-          set -a; . apps/web/.env.production; set +a
-          WORKER_KEY='${{ steps.worker_key.outputs.key }}'
-          gcloud run jobs deploy dodo-worker \
-            --image "europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo/worker:${GITHUB_SHA}" \
-            --region europe-west1 \
-            --service-account "dodo-worker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --max-retries 0 --task-timeout 3600 --cpu 1 --memory 1Gi --tasks 1 \
-            --set-env-vars "FIREBASE_API_KEY=$WORKER_KEY,FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID,FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID,FUNCTIONS_REGION=europe-west1" \
-            --quiet
+      - name: Build and push the worker image
+        # Layers (the apt-get install in particular) are cached in the GitHub Actions cache.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/worker:${{ github.sha }}
+            ${{ env.REGISTRY }}/worker:latest
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+      - name: Point the worker Cloud Run Job at the new image
+        # The job's settings and its API key are managed by infra/terraform, which ignores the image.
+        run: gcloud run jobs update dodo-worker --image "$REGISTRY/worker:${GITHUB_SHA}" --region europe-west1 --quiet
