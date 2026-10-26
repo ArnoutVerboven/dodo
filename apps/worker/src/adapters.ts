@@ -106,9 +106,15 @@ export class CallableControlPlane implements ControlPlane {
       task: Record<string, unknown>;
       project?: Record<string, unknown>;
       session: GenerateRequest['contents'];
-      answer?: { prompt: string; value: string };
+      answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
       trigger: 'new' | 'comment' | 'resume';
       model: string;
+      policy: {
+        profile: 'agent-decides' | 'untrusted';
+        allow: string[];
+        deny: string[];
+        allowedHosts: string[];
+      };
     }>('runStart', { runId: this.runId });
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {

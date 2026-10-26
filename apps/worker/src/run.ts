@@ -1,5 +1,9 @@
-import { runAgent, taskTools } from '@dodo/agent';
+import { mkdir } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execTools, runAgent, taskTools } from '@dodo/agent';
 import { Project, Task } from '@dodo/core';
+import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
 import {
   CallableControlPlane,
@@ -36,6 +40,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const project = started.project ? Project.parse(started.project) : undefined;
   const store = new FirestoreTaskStore(clients.db, task.id, env.runId, project?.id);
   const trace = new FirestoreTrace(clients.db, env.runId);
+  const workdir = path.join(os.tmpdir(), 'dodo-work', task.id);
+  await mkdir(workdir, { recursive: true });
+  const policy = new PolicyEngine(started.policy);
 
   const result = await runAgent(
     {
@@ -51,7 +58,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       control,
       store,
       trace,
-      tools: taskTools,
+      tools: [...taskTools, ...execTools],
+      policy,
+      workdir,
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },

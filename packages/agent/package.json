@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@dodo/core": "workspace:*",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@dodo/policy": "workspace:*"
   }
 }

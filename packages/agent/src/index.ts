@@ -1,4 +1,5 @@
 export * from './control-plane.js';
+export * from './exec-tools.js';
 export * from './loop.js';
 export * from './prompt.js';
 export * from './testing.js';

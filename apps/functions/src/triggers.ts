@@ -34,8 +34,8 @@ export interface EnqueueOptions {
   trigger: Run['trigger'];
   /** Session to resume from (the previous run's), if any. */
   sessionPath?: string;
-  /** For resumes after ask_user. */
-  answer?: { prompt: string; value: string };
+  /** For resumes after ask_user or an approval card. */
+  answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
 }
 
 export async function enqueueRun(
@@ -76,7 +76,8 @@ export async function enqueueRun(
       createdAt: now,
       updatedAt: now,
     };
-    t.create(ref, stripUndefined({ ...run, answer: opts.answer }));
+    // Nested undefined (e.g. answer.suggestedRule) is not a Firestore value either.
+    t.create(ref, JSON.parse(JSON.stringify(stripUndefined({ ...run, answer: opts.answer }))));
     t.update(db.doc(paths.task(taskId)), {
       activeRunId: ref.id,
       status: 'in_progress',
@@ -159,6 +160,7 @@ export async function onInputAnswered(
     runId?: string;
     input?: {
       prompt: string;
+      suggestedRule?: string;
       topUp?: number;
       answer?: { value: string; alwaysAllow?: { rule: string; scope: string } };
     };
@@ -202,7 +204,12 @@ export async function onInputAnswered(
   const id = await enqueueRun(deps, taskId, {
     trigger: 'resume',
     sessionPath,
-    answer: { prompt: after.input?.prompt ?? '', value: answer.value },
+    answer: {
+      prompt: after.input?.prompt ?? '',
+      value: answer.value,
+      suggestedRule: after.input?.suggestedRule,
+      alwaysAllow: !!answer.alwaysAllow,
+    },
   });
   if (id) deps.log?.('run enqueued (answer)', { taskId, messageId, runId: id });
 }

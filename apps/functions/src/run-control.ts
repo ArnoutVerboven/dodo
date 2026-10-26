@@ -35,9 +35,16 @@ export interface StartResponse {
   task: Record<string, unknown>;
   project: Record<string, unknown> | undefined;
   session: Content[];
-  answer?: { prompt: string; value: string };
+  answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
   trigger: Run['trigger'];
   model: string;
+  /** Merged permission rules: task, project and global. */
+  policy: {
+    profile: 'agent-decides' | 'untrusted';
+    allow: string[];
+    deny: string[];
+    allowedHosts: string[];
+  };
 }
 
 /** First call of a worker: claimed → running, and the context it needs (session comes from Storage). */
@@ -50,6 +57,25 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     : undefined;
   const session = run.sessionPath ? await loadSession(deps, run.sessionPath).catch(() => []) : [];
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
+  const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  const t = task as Record<string, unknown>;
+  const ai = (t.ai ?? {}) as Record<string, unknown>;
+  const pdefaults = ((project as Record<string, unknown> | undefined)?.defaults ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const policy: StartResponse['policy'] = {
+    profile: (ai.profile ?? pdefaults.profile ?? 'agent-decides') as 'agent-decides' | 'untrusted',
+    allow: [...list(settings.allowRules), ...list(project?.allowRules), ...list(t.allowRules)],
+    deny: [...list(settings.denyRules), ...list(project?.denyRules), ...list(t.denyRules)],
+    allowedHosts: [
+      ...list(settings.allowedHosts),
+      ...list(project?.allowedHosts),
+      ...list(t.allowedHosts),
+    ],
+  };
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,
@@ -68,6 +94,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     answer: raw.answer as StartResponse['answer'],
     trigger: run.trigger,
     model: run.model,
+    policy,
   };
 }
 

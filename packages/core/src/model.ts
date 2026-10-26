@@ -47,6 +47,8 @@ export const AiConfig = z.object({
   folder: z.string().optional(),
   tools: z.array(z.string()).optional(),
   budget: MicroEur.optional(),
+  /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
+  profile: z.enum(['agent-decides', 'untrusted']).optional(),
 });
 export type AiConfig = z.infer<typeof AiConfig>;
 
