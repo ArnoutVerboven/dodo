@@ -31,6 +31,8 @@ Then add the GitHub repo variables (Settings → Secrets and variables → Actio
 
 After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, created by the deploy workflow), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
 
+Google sign-in runs through the app's own domain (`VITE_FIREBASE_AUTH_DOMAIN=dodo-512722.web.app`), so browsers that partition third-party storage don't lose the sign-in state. For that to work, in the same Credentials page edit "Web client (auto created by Google Service)" → Authorized redirect URIs → add `https://dodo-512722.web.app/__/auth/handler`, and add `https://dodo-512722.web.app` under Authorized JavaScript origins. Without it, Google shows `redirect_uri_mismatch` on sign-in.
+
 What I need from you, in short:
 
 - [ ] Firebase steps above, and the `firebaseConfig` in the thread.
