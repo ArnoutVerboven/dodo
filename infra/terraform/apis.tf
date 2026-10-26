@@ -23,6 +23,8 @@ locals {
     "cloudscheduler.googleapis.com",
     "monitoring.googleapis.com",
     "apikeys.googleapis.com",
+    "fcm.googleapis.com",
+    "fcmregistrations.googleapis.com",
   ])
 }
 
