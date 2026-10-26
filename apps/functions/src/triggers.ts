@@ -15,6 +15,8 @@ import { stripUndefined } from './runtime.js';
  */
 export interface TriggerDeps {
   db: Firestore;
+  /** Ends a run whose worker died, so the task can be picked up again. */
+  reap?: (runId: string) => Promise<boolean>;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -111,7 +113,13 @@ export async function onTaskChanged(
   before: Task | undefined,
   after: Task | undefined,
 ) {
-  if (!after || !isReady(after) || isReady(before)) return;
+  if (!after) return;
+  let current = after;
+  // A task stuck behind a dead worker (stale activeRunId) is released first.
+  if (after.activeRunId && deps.reap && (await deps.reap(after.activeRunId))) {
+    current = { ...after, activeRunId: undefined };
+  }
+  if (!isReady(current) || isReady(before)) return;
   // A task the agent already worked on continues its conversation instead of starting over.
   const sessionPath = await latestSessionPath(deps.db, after.id);
   const id = await enqueueRun(deps, after.id, {
@@ -129,8 +137,10 @@ export async function onUserMessage(
 ) {
   if (message.author !== 'user' || message.input) return;
   const task = (await deps.db.doc(paths.task(taskId)).get()).data() as Task | undefined;
-  if (!task?.ai?.enabled || task.activeRunId) return;
+  if (!task?.ai?.enabled) return;
   if (task.status === 'done' || task.status === 'cancelled') return;
+  // A live run picks the comment up through its heartbeat; a dead one is reaped and replaced.
+  if (task.activeRunId && !(deps.reap && (await deps.reap(task.activeRunId)))) return;
   const sessionPath = await latestSessionPath(deps.db, taskId);
   const id = await enqueueRun(deps, taskId, {
     trigger: sessionPath ? 'comment' : 'new',

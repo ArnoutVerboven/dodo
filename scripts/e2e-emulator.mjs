@@ -123,6 +123,52 @@ const runs = await db.collection('runs').where('taskId', '==', ask.id).get();
 console.log(`ask task finished after ${runs.size} runs`);
 if (runs.size !== 2) fail(`expected 2 runs, got ${runs.size}`);
 
+// 3. A task stuck behind a dead worker is released when the user comments.
+const stuck = await db.collection('tasks').add({
+  title: 'E2E: stuck',
+  titleSource: 'user',
+  description: 'Summarise: nothing happened.',
+  status: 'in_progress',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true },
+  summary: '',
+  externalRefs: {},
+  activeRunId: 'dead-run',
+  createdAt: now,
+  updatedAt: now,
+});
+await db.doc('runs/dead-run').set({
+  taskId: stuck.id,
+  device: 'gcp',
+  model: 'gemini-2.5-flash',
+  state: 'running',
+  trigger: 'new',
+  generation: 1,
+  interrupt: false,
+  attempts: 1,
+  spent: 0,
+  steps: 0,
+  lease: { owner: 'run:dead-run', expiresAt: now - 10 * 60_000 },
+  createdAt: now - 20 * 60_000,
+  updatedAt: now - 10 * 60_000,
+});
+await db
+  .collection(`tasks/${stuck.id}/messages`)
+  .add({ author: 'user', body: 'Still there?', createdAt: Date.now() });
+await until(
+  'stuck task to recover',
+  async () => {
+    const d = (await stuck.get()).data();
+    return d.status === 'review' && !d.activeRunId ? d : undefined;
+  },
+  120_000,
+);
+const dead = (await db.doc('runs/dead-run').get()).data();
+if (dead.state !== 'failed' || dead.endReason !== 'lease_lost')
+  fail(`dead run not reaped: ${dead.state}`);
+console.log('stuck task recovered');
+
 console.log('E2E OK');
 worker.kill();
 process.exit(0);

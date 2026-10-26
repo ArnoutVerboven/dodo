@@ -21,7 +21,7 @@ import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
-import { finish, heartbeat, requestInput, start } from './run-control.js';
+import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
@@ -205,7 +205,11 @@ export const onMessageWritten = onDocumentWritten(
     const before = event.data?.before.exists ? event.data.before.data() : undefined;
     const after = event.data?.after.exists ? event.data.after.data() : undefined;
     if (!after) return;
-    const deps = { db, log: logger.info };
+    const deps = {
+      db,
+      log: logger.info,
+      reap: (runId: string) => reapIfStale(controlDeps(), runId),
+    };
     if (!before) {
       await onUserMessage(deps, event.params.taskId, after as { author: string; input?: unknown });
     } else {

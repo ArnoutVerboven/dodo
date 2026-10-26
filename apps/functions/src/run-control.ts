@@ -195,7 +195,10 @@ const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
 /** Any end other than ask_user: archive, settle, release the task, revoke the identity. */
 export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishRequest, 'runId'>) {
   const now = (deps.now ?? Date.now)();
-  const sessionPath = await saveSession(deps, run.id, req.session);
+  // A run reaped without a session (worker died) keeps whatever session it started from.
+  const sessionPath = req.session.length
+    ? await saveSession(deps, run.id, req.session)
+    : run.sessionPath;
   const tracePath = await archiveTrace(deps, run.id);
   const state: Run['state'] =
     req.reason === 'finished' || req.reason === 'max_steps'
@@ -309,4 +312,54 @@ async function archiveTrace(deps: RunControlDeps, runId: string): Promise<string
   for (const d of events.docs) batch.delete(d.ref);
   await batch.commit();
   return path;
+}
+
+/**
+ * Lease sweep: a worker that died (OOM, crash, cancelled execution) never calls finish. Runs
+ * whose lease expired a while ago are ended as `lease_lost`, which releases the task and
+ * settles the open infra reservation. Runs stuck in `claimed` (never started) are included.
+ */
+/** Reap one run if its lease expired; returns whether it was reaped. Used before enqueueing. */
+export async function reapIfStale(
+  deps: RunControlDeps,
+  runId: string,
+  graceMs = 2 * LEASE_MS,
+): Promise<boolean> {
+  const now = (deps.now ?? Date.now)();
+  const snap = await deps.db.doc(paths.run(runId)).get();
+  if (!snap.exists) return false;
+  const run = { id: snap.id, ...snap.data() } as Run;
+  if (!['claimed', 'running', 'dispatching', 'queued'].includes(run.state)) return false;
+  const deadline = run.lease?.expiresAt ?? run.updatedAt;
+  if (deadline + graceMs > now) return false;
+  await finish(deps, run, {
+    reason: 'lease_lost',
+    error: 'The worker stopped responding.',
+    session: [],
+  });
+  return true;
+}
+
+export async function reapStaleRuns(
+  deps: RunControlDeps,
+  graceMs = 2 * LEASE_MS,
+): Promise<string[]> {
+  const now = (deps.now ?? Date.now)();
+  const live = await deps.db
+    .collection(paths.runs())
+    .where('state', 'in', ['claimed', 'running'])
+    .get();
+  const reaped: string[] = [];
+  for (const d of live.docs) {
+    const run = { id: d.id, ...d.data() } as Run;
+    const deadline = run.lease?.expiresAt ?? run.updatedAt;
+    if (deadline + graceMs > now) continue;
+    await finish(deps, run, {
+      reason: 'lease_lost',
+      error: 'The worker stopped responding.',
+      session: [],
+    });
+    reaped.push(run.id);
+  }
+  return reaped;
 }
