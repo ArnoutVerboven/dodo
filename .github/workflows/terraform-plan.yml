@@ -1,0 +1,60 @@
+# Read-only plan of infra/terraform on every PR that touches it. The workflow name matters:
+# the Workload Identity provider lets non-main runs in only under this name, and only as
+# the read-only dodo-planner account (see infra/bootstrap.sh).
+name: terraform-plan
+
+on:
+  pull_request:
+    paths:
+      - infra/terraform/**
+      - apps/web/.env.production
+      - .github/workflows/terraform-*.yml
+
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    if: vars.GCP_WIF_PROVIDER != ''
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.7
+          terraform_wrapper: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: dodo-planner@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+      - run: terraform fmt -check -diff
+      - name: Init
+        # The planner may only read the state bucket, and the gcs backend writes an empty state
+        # when there is none. Before the first apply, plan against an empty local state instead.
+        run: |
+          BUCKET="${{ vars.GCP_PROJECT_ID }}-tfstate"
+          if gcloud storage ls "gs://$BUCKET/dodo/default.tfstate" >/dev/null 2>&1; then
+            terraform init -input=false -backend-config="bucket=$BUCKET"
+          else
+            echo "No state yet: planning against an empty local state"
+            printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf
+            terraform init -input=false
+          fi
+      - run: ./lookup.sh "${{ vars.GCP_PROJECT_ID }}" >> "$GITHUB_ENV"
+      - name: Plan
+        # No state lock: the planner may only read the state bucket.
+        run: |
+          terraform plan -input=false -lock=false -no-color -out=tfplan
+          {
+            echo '### Terraform plan'
+            echo '```'
+            terraform show -no-color tfplan | grep -E '^(Plan:|No changes|  # )' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
