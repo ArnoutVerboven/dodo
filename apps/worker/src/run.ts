@@ -1,6 +1,8 @@
-import { mkdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { execTools, runAgent, taskTools } from '@dodo/agent';
 import { Project, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
@@ -15,6 +17,36 @@ import {
 } from './adapters.js';
 
 const HEARTBEAT_MS = 15_000;
+const execFileP = promisify(execFile);
+
+/**
+ * The project's repository is checked out into the task folder before the run. Only public
+ * GitHub repos work until the credential vault (phase 5) provides a token. Configured by the
+ * user on the project, so it needs no approval; later pushes still go through the policy.
+ */
+async function checkout(
+  workdir: string,
+  repo: string,
+  log: (m: string) => void,
+): Promise<string | undefined> {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return `repo "${repo}" is not owner/name`;
+  if ((await readdir(workdir)).length > 0) return undefined; // already there (same container)
+  try {
+    await execFileP(
+      'git',
+      ['clone', '--depth', '50', '--quiet', `https://github.com/${repo}.git`, '.'],
+      {
+        cwd: workdir,
+        timeout: 120_000,
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', HOME: workdir },
+      },
+    );
+    log(`checked out ${repo}`);
+    return undefined;
+  } catch (err) {
+    return `checkout of ${repo} failed: ${(err as Error).message.split('\n')[0]}`;
+  }
+}
 
 /** One run, start to finish. Used by the Cloud Run entrypoint and the emulator dev loop. */
 export async function executeRun(env: WorkerEnv): Promise<string> {
@@ -43,11 +75,19 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const workdir = path.join(os.tmpdir(), 'dodo-work', task.id);
   await mkdir(workdir, { recursive: true });
   const policy = new PolicyEngine(started.policy);
+  const repo = task.ai.repo ?? project?.defaults.repo;
+  const checkoutNote = repo ? await checkout(workdir, repo, (m) => console.log(m)) : undefined;
+  const taskForRun = repo
+    ? {
+        ...task,
+        description: `${task.description}\n\n(Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.)`,
+      }
+    : task;
 
   const result = await runAgent(
     {
       runId: env.runId,
-      task,
+      task: taskForRun,
       project,
       model: started.model,
       trigger: started.trigger,
