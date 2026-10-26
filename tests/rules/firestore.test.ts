@@ -30,7 +30,18 @@ describe.skipIf(!enabled)('firestore.rules', () => {
         input: { kind: 'text', prompt: 'q' },
       });
       await setDoc(doc(db, 'budgets/task_t1'), { reserved: 0, spent: 1 });
-      await setDoc(doc(db, 'runs/r1'), { taskId: 't1', state: 'running', interrupt: false });
+      await setDoc(doc(db, 'runs/r1'), {
+        taskId: 't1',
+        state: 'running',
+        interrupt: false,
+        generation: 2,
+      });
+      await setDoc(doc(db, 'runs/r9'), {
+        taskId: 't1',
+        state: 'succeeded',
+        interrupt: false,
+        generation: 1,
+      });
     });
   });
 
@@ -38,6 +49,8 @@ describe.skipIf(!enabled)('firestore.rules', () => {
   const stranger = () =>
     env.authenticatedContext('someone', { email: 'x@example.com' }).firestore();
   const anon = () => env.unauthenticatedContext().firestore();
+  const run = (runId = 'r1', generation = 2, taskId = 't1') =>
+    env.authenticatedContext(`run:${runId}`, { run: runId, taskId, generation }).firestore();
 
   it('lets only the owner read and write tasks', async () => {
     await assertSucceeds(getDoc(doc(owner(), 'tasks/t1')));
@@ -71,6 +84,48 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertSucceeds(updateDoc(doc(owner(), 'runs/r1'), { interrupt: true }));
     await assertFails(updateDoc(doc(owner(), 'runs/r1'), { state: 'succeeded' }));
     await assertFails(setDoc(doc(owner(), 'runs/r2'), { taskId: 't1' }));
+  });
+
+  it('lets a live run write its trace and its task summary, status, messages and artifacts', async () => {
+    await assertSucceeds(getDoc(doc(run(), 'tasks/t1')));
+    await assertSucceeds(
+      updateDoc(doc(run(), 'tasks/t1'), { summary: 's', statusLine: { text: 'x' }, updatedAt: 1 }),
+    );
+    await assertFails(updateDoc(doc(run(), 'tasks/t1'), { title: 'renamed' }));
+    await assertFails(updateDoc(doc(run(), 'tasks/t1'), { ai: { budget: 1e9 } }));
+    await assertSucceeds(
+      setDoc(doc(run(), 'runs/r1/events/e1'), { runId: 'r1', seq: 0, type: 'run_started' }),
+    );
+    await assertFails(setDoc(doc(run(), 'runs/r9/events/e1'), { runId: 'r9', seq: 0 }));
+    await assertSucceeds(
+      setDoc(doc(run(), 'tasks/t1/messages/m5'), { author: 'agent', runId: 'r1', body: 'hi' }),
+    );
+    await assertFails(
+      setDoc(doc(run(), 'tasks/t1/messages/m6'), { author: 'user', runId: 'r1', body: 'spoof' }),
+    );
+    await assertFails(
+      setDoc(doc(run(), 'tasks/t1/messages/m7'), {
+        author: 'agent',
+        runId: 'r1',
+        body: 'q',
+        input: { kind: 'text', prompt: 'q' },
+      }),
+    );
+    await assertSucceeds(
+      setDoc(doc(run(), 'tasks/t1/artifacts/a1'), { createdBy: 'agent', kind: 'text', name: 'n' }),
+    );
+    await assertFails(updateDoc(doc(run(), 'runs/r1'), { state: 'succeeded' }));
+    await assertFails(updateDoc(doc(run(), 'runs/r1'), { interrupt: true }));
+    await assertFails(getDoc(doc(run(), 'settings/global')));
+    await assertFails(getDoc(doc(run(), 'budgets/task_t1')));
+  });
+
+  it('rejects a run whose lease generation is stale, ended, or on another task', async () => {
+    await assertFails(updateDoc(doc(run('r1', 1), 'tasks/t1'), { summary: 'stale' }));
+    await assertFails(setDoc(doc(run('r1', 1), 'runs/r1/events/e2'), { runId: 'r1', seq: 1 }));
+    await assertFails(updateDoc(doc(run('r9', 1), 'tasks/t1'), { summary: 'ended' }));
+    await assertFails(updateDoc(doc(run('r1', 2, 't2'), 'tasks/t1'), { summary: 'other task' }));
+    await assertFails(getDoc(doc(run('r1', 2, 't2'), 'tasks/t1')));
   });
 
   it('denies unknown collections', async () => {

@@ -26,7 +26,7 @@ jobs:
       - run: pnpm build
       - name: Install function runtime dependencies
         # firebase deploy resolves firebase-functions from the functions source dir.
-        run: cd apps/functions/lib && npm install --omit=dev --no-package-lock --no-audit --no-fund
+        run: cd apps/functions/lib && rm -rf node_modules && npm install --omit=dev --no-package-lock --no-audit --no-fund
       - name: Write function parameters
         # Non-interactive deploys need a value for every param, defaults included.
         run: |
@@ -45,3 +45,22 @@ jobs:
         run: >
           pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force
           --only hosting,firestore:rules,firestore:indexes,storage,functions
+      - name: Build and push the worker image
+        env:
+          REGISTRY: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo
+        run: |
+          gcloud artifacts repositories describe dodo --location=europe-west1 >/dev/null 2>&1 ||
+            gcloud artifacts repositories create dodo --repository-format=docker --location=europe-west1
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+          docker build -f apps/worker/Dockerfile -t "$REGISTRY/worker:${GITHUB_SHA}" -t "$REGISTRY/worker:latest" .
+          docker push --all-tags "$REGISTRY/worker"
+      - name: Deploy the worker Cloud Run Job
+        run: |
+          set -a; . apps/web/.env.production; set +a
+          gcloud run jobs deploy dodo-worker \
+            --image "europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo/worker:${GITHUB_SHA}" \
+            --region europe-west1 \
+            --service-account "dodo-worker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --max-retries 0 --task-timeout 3600 --cpu 1 --memory 1Gi --tasks 1 \
+            --set-env-vars "FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY,FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID,FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID,FUNCTIONS_REGION=europe-west1" \
+            --quiet

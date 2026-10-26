@@ -6,6 +6,10 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.token.dodo_owner == true
         && request.resource.size < 25 * 1024 * 1024;
     }
+    // Archived sessions and traces: written by the control plane, readable by the owner.
+    match /runs/{runId}/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.token.dodo_owner == true;
+    }
     match /{allPaths=**} {
       allow read, write: if false;
     }

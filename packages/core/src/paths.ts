@@ -10,6 +10,9 @@ export const paths = {
   runs: () => 'runs',
   run: (id: string) => `runs/${id}`,
   runEvents: (runId: string) => `runs/${runId}/events`,
+  /** Storage paths. */
+  sessionBlob: (runId: string) => `runs/${runId}/session.json`,
+  traceBlob: (runId: string) => `runs/${runId}/trace.json`,
   ledger: () => 'ledger',
   reservations: () => 'reservations',
   budgets: () => 'budgets',

@@ -24,3 +24,5 @@ jobs:
       - run: pnpm build
       - name: Unit, emulator and security rules tests
         run: pnpm test:emulator
+      - name: End-to-end on the emulators (fake model)
+        run: pnpm test:e2e

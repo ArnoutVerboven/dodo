@@ -23,6 +23,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { parseTags } from '@/components/NewTaskDialog';
+import { RunPanel } from '@/components/RunPanel';
 import { PRIORITIES, STATUSES } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -76,6 +77,7 @@ function TaskView({ task }: { task: Task }) {
           <StatusCard task={task} />
           <SummaryCard task={task} />
           <DescriptionCard task={task} />
+          <RunPanel taskId={task.id} />
           <Thread taskId={task.id} />
         </div>
         <aside className="space-y-4">

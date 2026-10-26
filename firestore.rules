@@ -1,8 +1,11 @@
 rules_version = '2';
 
-// Only the owner (custom claim set by infra/grant-owner.mjs) can use the app.
-// Budget state (budgets, reservations, ledger) is written only by trusted server code
-// through the Admin SDK, which bypasses these rules; the owner can read it.
+// Three identities:
+//  - the owner (custom claim dodo_owner, granted by the claimOwnership function);
+//  - a run (uid run:{runId}, claims run/taskId/generation, minted by the dispatcher): may only
+//    write its own trace, and its task's summary/status/messages/artifacts, while its lease
+//    generation is current;
+//  - trusted server code (Admin SDK, bypasses rules): budgets, ledger, run state.
 service cloud.firestore {
   match /databases/{database}/documents {
     function isOwner() {
@@ -11,35 +14,64 @@ service cloud.firestore {
     function onlyChanges(fields) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
+    function runDoc(runId) {
+      return get(/databases/$(database)/documents/runs/$(runId)).data;
+    }
+    // A run identity whose lease generation still matches the run document.
+    function isLiveRun(runId) {
+      return request.auth != null
+        && request.auth.uid == 'run:' + runId
+        && request.auth.token.run == runId
+        && request.auth.token.generation == runDoc(runId).generation
+        && runDoc(runId).state in ['claimed', 'running'];
+    }
+    function isRunOnTask(taskId) {
+      return request.auth != null
+        && request.auth.token.run is string
+        && request.auth.token.taskId == taskId
+        && isLiveRun(request.auth.token.run);
+    }
 
     match /settings/global {
       allow read, write: if isOwner();
     }
 
     match /projects/{projectId} {
-      allow read, write: if isOwner();
+      allow read: if isOwner() || (request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run));
+      allow write: if isOwner();
     }
 
     match /tasks/{taskId} {
       allow read, write: if isOwner();
+      allow read: if isRunOnTask(taskId);
+      // The agent keeps the top-down Summary and Status; nothing else on the task.
+      allow update: if isRunOnTask(taskId) && onlyChanges(['summary', 'statusLine', 'updatedAt']);
 
       match /messages/{messageId} {
-        allow read: if isOwner();
+        allow read: if isOwner() || isRunOnTask(taskId);
         // The owner writes only their own messages and answers to input requests.
         allow create: if isOwner() && request.resource.data.author == 'user';
         allow update: if isOwner() && onlyChanges(['input']);
+        // The agent posts plain messages; input requests go through the control plane.
+        allow create: if isRunOnTask(taskId)
+          && request.resource.data.author == 'agent'
+          && request.resource.data.runId == request.auth.token.run
+          && !('input' in request.resource.data);
       }
       match /artifacts/{artifactId} {
         allow read, write: if isOwner();
+        allow read: if isRunOnTask(taskId);
+        allow create: if isRunOnTask(taskId) && request.resource.data.createdBy == 'agent';
       }
     }
 
     match /runs/{runId} {
-      allow read: if isOwner();
+      allow read: if isOwner() || isLiveRun(runId);
       // The owner can only request an interrupt.
       allow update: if isOwner() && onlyChanges(['interrupt']) && request.resource.data.interrupt == true;
       match /events/{eventId} {
-        allow read: if isOwner();
+        allow read: if isOwner() || isLiveRun(runId);
+        allow create: if isLiveRun(runId) && request.resource.data.runId == runId;
       }
     }
 

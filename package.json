@@ -13,9 +13,10 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test:emulator": "firebase emulators:exec --only firestore,auth,storage --project demo-dodo 'pnpm -r test'",
-    "emulators": "firebase emulators:start --only auth,firestore,storage --project demo-dodo",
+    "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-dodo",
     "seed": "node scripts/seed-emulator.mjs",
-    "dev": "pnpm --filter @dodo/core build && pnpm --filter @dodo/web dev:emulators"
+    "dev": "pnpm --filter @dodo/core build && pnpm --filter @dodo/web dev:emulators",
+    "test:e2e": "firebase emulators:exec --only auth,firestore,storage,functions --project demo-dodo 'node scripts/e2e-emulator.mjs'"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
