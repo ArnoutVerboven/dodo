@@ -28,7 +28,15 @@ jobs:
         # firebase deploy resolves firebase-functions from the functions source dir.
         run: cd apps/functions/lib && npm install --omit=dev --no-package-lock --no-audit --no-fund
       - name: Write function parameters
-        run: printf 'OWNER_EMAIL=%s\n' "${{ vars.OWNER_EMAIL }}" > apps/functions/lib/.env
+        # Non-interactive deploys need a value for every param, defaults included.
+        run: |
+          cat > apps/functions/lib/.env <<EOF
+          OWNER_EMAIL=${{ vars.OWNER_EMAIL }}
+          BUDGET_HALT_AT=${{ vars.BUDGET_HALT_AT || '40' }}
+          BUDGET_DETACH_AT=${{ vars.BUDGET_DETACH_AT || '45' }}
+          BUDGET_CURRENCY=${{ vars.BUDGET_CURRENCY || 'EUR' }}
+          MODEL_BACKEND=${{ vars.MODEL_BACKEND || 'vertex' }}
+          EOF
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
