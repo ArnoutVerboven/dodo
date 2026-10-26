@@ -39,7 +39,7 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [priority, setPriority] = useState<TaskPriority>('none');
   const [dueDate, setDueDate] = useState('');
   const [projectId, setProjectId] = useState('');
-  const [ai, setAi] = useState<Partial<AiConfig>>({ enabled: false });
+  const [ai, setAi] = useState<Partial<AiConfig>>({ enabled: true });
   const [showAi, setShowAi] = useState(false);
   const [saving, setSaving] = useState(false);
   const ptt = usePushToTalk((text) => setDescription((d) => (d ? `${d} ${text}` : text)));
@@ -56,7 +56,7 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
         priority,
         dueDate: dueDate || undefined,
         projectId: projectId || undefined,
-        ai: { enabled: false, ...ai },
+        ai: { enabled: true, ...ai },
       });
       onDone();
       navigate(`/tasks/${id}`);
@@ -134,7 +134,7 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
           <label className="flex items-center gap-2 text-sm font-medium">
             <input
               type="checkbox"
-              checked={ai.enabled ?? false}
+              checked={ai.enabled ?? true}
               onChange={(e) => setAi({ ...ai, enabled: e.target.checked })}
             />
             Let AI work on this

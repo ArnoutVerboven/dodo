@@ -119,6 +119,11 @@ grant "$GATEWAY_SA" roles/firebaseauth.admin        # mint/revoke per-run identi
 grant "$GATEWAY_SA" roles/run.developer             # start worker executions
 grant "$GATEWAY_SA" roles/eventarc.eventReceiver
 grant "$GATEWAY_SA" roles/run.invoker
+grant "$GATEWAY_SA" roles/storage.objectAdmin        # archive run sessions and traces
+# createCustomToken in Cloud Functions signs with the IAM signBlob API: the account must be
+# allowed to create tokens as itself.
+gcloud iam service-accounts add-iam-policy-binding "$GATEWAY_SA" --project "$PROJECT" \
+  --member "serviceAccount:$GATEWAY_SA" --role roles/iam.serviceAccountTokenCreator -q >/dev/null
 # Worker: deliberately NO roles. Any process in the container can read its token.
 ensure_sa dodo-worker "dodo worker (no roles by design)"
 WORKER_SA="dodo-worker@${PROJECT}.iam.gserviceaccount.com"
@@ -136,7 +141,7 @@ for role in roles/firebase.admin roles/cloudfunctions.admin roles/run.admin \
   roles/artifactregistry.admin roles/serviceusage.serviceUsageConsumer \
   roles/cloudbuild.builds.editor roles/eventarc.admin roles/pubsub.editor roles/secretmanager.viewer \
   roles/storage.admin roles/monitoring.alertPolicyEditor roles/monitoring.notificationChannelEditor \
-  roles/secretmanager.admin roles/cloudscheduler.admin; do
+  roles/secretmanager.admin roles/cloudscheduler.admin roles/serviceusage.apiKeysAdmin; do
   grant "$DEPLOY_SA" "$role"
 done
 # The deployer may act only as the runtime accounts it deploys, not as any account in the
