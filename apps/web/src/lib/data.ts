@@ -5,6 +5,8 @@ import {
   type NewTask,
   Project,
   paths,
+  Run,
+  RunEvent,
   Task,
   type TaskStatus,
   ThreadMessage,
@@ -104,6 +106,21 @@ export const useArtifacts = (taskId: string) =>
     Artifact,
     [taskId],
   );
+
+export const useRuns = (taskId: string) =>
+  useLiveQuery(
+    query(collection(db, paths.runs()), where('taskId', '==', taskId), orderBy('createdAt', 'desc'), limit(20)),
+    Run,
+    [taskId],
+  );
+
+export const useRunEvents = (runId: string) =>
+  useLiveQuery(query(collection(db, paths.runEvents(runId)), orderBy('seq', 'asc')), RunEvent, [runId]);
+
+/** The only write the owner may make on a run: ask it to stop at the next step. */
+export async function interruptRun(runId: string) {
+  await updateDoc(doc(db, paths.run(runId)), { interrupt: true });
+}
 
 export const useProjects = () =>
   useLiveQuery(query(collection(db, paths.projects()), orderBy('name')), Project, []);

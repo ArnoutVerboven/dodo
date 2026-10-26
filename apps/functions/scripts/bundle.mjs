@@ -1,7 +1,7 @@
 // Bundles the functions into lib/ with workspace packages inlined, and writes a
 // package.json that lists only registry dependencies, so `firebase deploy` can
 // install it without knowing about the pnpm workspace.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -33,4 +33,9 @@ await writeFile(
     2,
   ),
 );
+// The emulator resolves firebase-functions from lib/; point it at the workspace install.
+// The deploy workflow replaces this link with a real `npm install`.
+const link = new URL('../lib/node_modules', import.meta.url);
+await rm(link, { recursive: true, force: true });
+await symlink('../node_modules', link, 'dir');
 console.log('functions bundled to lib/');

@@ -70,6 +70,8 @@ export const Task = z.object({
   ai: AiConfig.default({ enabled: false }),
   summary: z.string().default(''),
   statusLine: StatusLine.optional(),
+  /** The run currently queued or working on this task; at most one. */
+  activeRunId: z.string().optional(),
   externalRefs: z.record(z.string(), z.string()).default({}),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -147,6 +149,7 @@ export type Artifact = z.infer<typeof Artifact>;
 
 export const RunState = z.enum([
   'queued',
+  'dispatching',
   'claimed',
   'running',
   'waiting_input',
@@ -165,9 +168,23 @@ export const Run = z.object({
   model: z.string(),
   state: RunState,
   trigger: z.enum(['new', 'comment', 'resume']),
+  /** Lease generation: every worker write carries it and is rejected when it changed. */
+  generation: z.number().int().nonnegative().default(0),
   lease: z.object({ owner: z.string(), expiresAt: Timestamp }).optional(),
   interrupt: z.boolean().default(false),
   attempts: z.number().int().nonnegative().default(0),
+  /** Cloud Run execution (remote) or process id (local) started for this run. */
+  execution: z.string().optional(),
+  /** Storage path of the serialised session once the run ended; input for resumes. */
+  sessionPath: z.string().optional(),
+  /** Storage path of the archived trace once the run ended. */
+  tracePath: z.string().optional(),
+  endReason: z.string().optional(),
+  error: z.string().optional(),
+  spent: MicroEur.default(0),
+  steps: z.number().int().nonnegative().default(0),
+  startedAt: Timestamp.optional(),
+  endedAt: Timestamp.optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

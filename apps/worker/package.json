@@ -1,0 +1,25 @@
+{
+  "name": "@dodo/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "dev:emulators": "node --env-file=.env.emulator dist/dev.js"
+  },
+  "dependencies": {
+    "@dodo/agent": "workspace:*",
+    "@dodo/core": "workspace:*",
+    "firebase": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0"
+  }
+}
