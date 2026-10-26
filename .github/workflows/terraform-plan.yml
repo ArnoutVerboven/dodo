@@ -35,7 +35,18 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: dodo-planner@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
       - run: terraform fmt -check -diff
-      - run: terraform init -input=false -backend-config="bucket=${{ vars.GCP_PROJECT_ID }}-tfstate"
+      - name: Init
+        # The planner may only read the state bucket, and the gcs backend writes an empty state
+        # when there is none. Before the first apply, plan against an empty local state instead.
+        run: |
+          BUCKET="${{ vars.GCP_PROJECT_ID }}-tfstate"
+          if gcloud storage ls "gs://$BUCKET/dodo/default.tfstate" >/dev/null 2>&1; then
+            terraform init -input=false -backend-config="bucket=$BUCKET"
+          else
+            echo "No state yet: planning against an empty local state"
+            printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf
+            terraform init -input=false
+          fi
       - run: ./lookup.sh "${{ vars.GCP_PROJECT_ID }}" >> "$GITHUB_ENV"
       - name: Plan
         # No state lock: the planner may only read the state bucket.
