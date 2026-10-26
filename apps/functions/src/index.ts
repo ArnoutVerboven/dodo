@@ -43,7 +43,7 @@ const MODEL_BACKEND = defineString('MODEL_BACKEND', { default: 'vertex' });
  * region; set a region (e.g. europe-west4) only if EU-only processing matters more. */
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'global';
 const TELEGRAM_BOT_TOKEN = defineString('TELEGRAM_BOT_TOKEN', { default: '' });
-const APP_URL = defineString('APP_URL', { default: 'https://dodo-512722.web.app' });
+const APP_URL = defineString('APP_URL', { default: 'https://dodo-tasks.web.app' });
 const REGION = 'europe-west1';
 const WORKER_JOB = 'dodo-worker';
 const GATEWAY_SA = 'dodo-gateway@';
