@@ -8,6 +8,8 @@ import { saveSettings, useSettings } from '@/lib/data';
 
 const toEur = (micro: number) => String(micro / 1e6);
 const toMicro = (v: string) => Math.round(Number(v) * 1e6);
+const newCode = () =>
+  Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
 
 export function SettingsPage() {
   const { data: settings, loading } = useSettings();
@@ -140,6 +142,59 @@ export function SettingsPage() {
             These caps are what stops spending. Keep the lifetime cap below 40 EUR: the GCP safety
             net halts everything at 40 EUR of total GCP spend and detaches billing at 45 EUR.
           </p>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Telegram notifications" />
+        <CardBody className="space-y-2 text-sm">
+          {settings.telegram?.chatId ? (
+            <>
+              <p>Paired. Approval cards and results are sent to your Telegram chat.</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  saveSettings({ telegram: { chatId: undefined, pairingCode: newCode() } })
+                }
+              >
+                Unpair
+              </Button>
+            </>
+          ) : settings.telegram?.pairingCode ? (
+            <>
+              <p>
+                Open your bot in Telegram and send:{' '}
+                <code className="rounded bg-muted px-1">
+                  /start {settings.telegram.pairingCode}
+                </code>
+              </p>
+              <p className="text-muted-foreground">
+                The code expires when you pair or when you generate a new one.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => saveSettings({ telegram: { pairingCode: newCode() } })}
+              >
+                New code
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-muted-foreground">
+                Not paired. Create a bot with BotFather, set its token as the{' '}
+                <code>TELEGRAM_BOT_TOKEN</code> repository secret, then pair here.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => saveSettings({ telegram: { pairingCode: newCode() } })}
+              >
+                Generate pairing code
+              </Button>
+            </>
+          )}
         </CardBody>
       </Card>
 

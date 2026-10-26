@@ -169,6 +169,44 @@ if (dead.state !== 'failed' || dead.endReason !== 'lease_lost')
   fail(`dead run not reaped: ${dead.state}`);
 console.log('stuck task recovered');
 
+// 4. A tool that needs approval parks the task with an approval card; "yes" resumes and runs it.
+const fetchTask = await db.collection('tasks').add({
+  title: 'E2E: fetch',
+  titleSource: 'user',
+  description: 'Please fetch http://127.0.0.1:4400/ and summarise it.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true },
+  summary: '',
+  externalRefs: {},
+  createdAt: now,
+  updatedAt: now,
+});
+const approval = await until('approval request', async () => {
+  const m = await db
+    .collection(`tasks/${fetchTask.id}/messages`)
+    .where('author', '==', 'agent')
+    .get();
+  return m.docs.find((d) => d.get('input')?.kind === 'approval');
+});
+const card = approval.get('input');
+console.log('approval requested:', card.prompt);
+if (card.suggestedRule !== 'Http(domain:127.0.0.1)') fail(`unexpected rule ${card.suggestedRule}`);
+await approval.ref.update({ 'input.answer': { value: 'yes', answeredAt: Date.now() } });
+const fetched = await until(
+  'fetch task to finish',
+  async () => {
+    const d = (await fetchTask.get()).data();
+    return d.status === 'review' && !d.activeRunId ? d : undefined;
+  },
+  120_000,
+);
+if (!fetched.summary.includes('Fake summary')) fail('fetch task summary missing');
+const fetchRuns = await db.collection('runs').where('taskId', '==', fetchTask.id).get();
+if (fetchRuns.size !== 2) fail(`expected 2 runs for the fetch task, got ${fetchRuns.size}`);
+console.log('approval flow ok');
+
 console.log('E2E OK');
 worker.kill();
 process.exit(0);

@@ -47,6 +47,8 @@ export const AiConfig = z.object({
   folder: z.string().optional(),
   tools: z.array(z.string()).optional(),
   budget: MicroEur.optional(),
+  /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
+  profile: z.enum(['agent-decides', 'untrusted']).optional(),
 });
 export type AiConfig = z.infer<typeof AiConfig>;
 
@@ -202,5 +204,13 @@ export const GlobalSettings = z.object({
   /** Set by the kill switch or by hand. While true no cost can be reserved. */
   halted: z.boolean().default(false),
   haltReason: z.string().optional(),
+  /** Telegram pairing: the code is shown in Settings, the chat id is set by the webhook. */
+  telegram: z
+    .object({
+      chatId: z.number().optional(),
+      pairingCode: z.string().optional(),
+      pairedAt: Timestamp.optional(),
+    })
+    .optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

@@ -1,4 +1,5 @@
 import type { Content, Part, RunEndReason } from '@dodo/core';
+import type { PolicyEngine } from '@dodo/policy';
 import {
   type ControlPlane,
   GatewayBudgetError,
@@ -16,6 +17,8 @@ export interface LoopOptions {
   store: TaskStore;
   trace: TraceSink;
   tools: ToolDef[];
+  policy?: PolicyEngine;
+  workdir?: string;
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -55,7 +58,13 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     ]);
     session.push(user(taskContext(input.task, messages, artifacts)));
   } else if (input.trigger === 'resume' && input.answer) {
-    session.push(user(`Answer to your question "${input.answer.prompt}":\n${input.answer.value}`));
+    const a = input.answer;
+    // An approval answered "yes" (without "always allow", which is already a stored rule)
+    // permits that exact call once.
+    if (a.suggestedRule && !a.alwaysAllow && /^(y|yes|ok|approve|allow)/i.test(a.value.trim())) {
+      opts.policy?.allowOnce(a.suggestedRule);
+    }
+    session.push(user(`Answer to your question "${a.prompt}":\n${a.value}`));
   } else if (input.trigger === 'comment') {
     const messages = await store.recentMessages(5);
     const latest = messages.filter((m) => m.author === 'user').at(-1);
@@ -80,6 +89,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
 
   let steps = 0;
   let nudges = 0;
+  let pendingInput: Parameters<ControlPlane['requestInput']>[0] | undefined;
   let end:
     | { reason: RunEndReason; outcome?: 'done' | 'review' | 'blocked'; error?: string }
     | undefined;
@@ -211,7 +221,43 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
             };
           } else {
             try {
-              const outcome = await tool.execute(parsed.data, { store });
+              const ctx = { store, policy: opts.policy, workdir: opts.workdir };
+              const claim = tool.policy?.(parsed.data, ctx);
+              const decision = claim
+                ? (opts.policy?.decide(claim) ?? { kind: 'deny' as const, by: 'no policy engine' })
+                : { kind: 'allow' as const };
+              if (decision.kind === 'deny') {
+                result = { error: `Not allowed (${decision.by}).` };
+                responses.push(functionResponse(fc, result));
+                await trace.emit({
+                  type: 'tool_result',
+                  summary: `${fc.name} denied by ${decision.by}`,
+                  data: { name: fc.name },
+                });
+                continue;
+              }
+              if (decision.kind === 'ask') {
+                result = {
+                  ok: false,
+                  note: 'Needs approval; the run pauses until the user answers.',
+                };
+                responses.push(functionResponse(fc, result));
+                session.push({ role: 'user', parts: responses });
+                await trace.emit({
+                  type: 'tool_result',
+                  summary: `${fc.name} needs approval: ${decision.suggestedRule}`,
+                  data: { name: fc.name },
+                });
+                pendingInput = {
+                  kind: 'approval',
+                  prompt: `Allow \`${decision.suggestedRule}\`? ${decision.reason}`,
+                  suggestedRule: decision.suggestedRule,
+                  session,
+                };
+                finishWith('waiting_input');
+                break;
+              }
+              const outcome = await tool.execute(parsed.data, ctx);
               result = outcome.result;
               if ('askUser' in outcome) {
                 responses.push(functionResponse(fc, result));
@@ -221,7 +267,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                   summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}`,
                   data: { name: fc.name },
                 });
-                await control.requestInput({ ...outcome.askUser, session });
+                pendingInput = { ...outcome.askUser, session };
                 finishWith('waiting_input');
                 break;
               }
@@ -270,7 +316,10 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     summary: `Run ended: ${final.reason}`,
     data: { steps, outcome: final.outcome },
   });
-  if (final.reason !== 'waiting_input') {
+  // The trace event above must be written while the run is still live; state changes last.
+  if (pendingInput) {
+    await control.requestInput(pendingInput);
+  } else if (final.reason !== 'waiting_input') {
     try {
       await control.finish({
         reason: final.reason,

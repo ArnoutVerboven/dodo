@@ -73,8 +73,8 @@ export interface RunInput {
   trigger: 'new' | 'comment' | 'resume';
   /** Restored conversation for resumes and comment runs; empty for a new run. */
   session: Content[];
-  /** The user's answer when resuming after `ask_user`. */
-  answer?: { value: string; prompt: string };
+  /** The user's answer when resuming after `ask_user` or an approval card. */
+  answer?: { value: string; prompt: string; suggestedRule?: string; alwaysAllow?: boolean };
 }
 
 export type { Content };

@@ -16,7 +16,8 @@
   "dependencies": {
     "@dodo/agent": "workspace:*",
     "@dodo/core": "workspace:*",
-    "firebase": "^13.1.0"
+    "firebase": "^13.1.0",
+    "@dodo/policy": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -88,6 +88,8 @@ export class FakeProvider implements ModelProvider {
       functionCall: { name, args },
     });
     let parts: Content['parts'];
+    const transcript = JSON.stringify(req.contents);
+    const wantsFetch = /fetch http/i.test(transcript);
     if (!req.tools?.length) {
       parts = [{ text: `Fake title for ${lastUser.slice(0, 30)}` }];
     } else if (/ask me|question/i.test(lastUser) && turns === 0) {
@@ -98,11 +100,21 @@ export class FakeProvider implements ModelProvider {
           options: ['A', 'B'],
         }),
       ];
+    } else if (
+      wantsFetch &&
+      !/"status":\d+|"text":"[^"]*fetched/.test(transcript) &&
+      !/Not allowed/.test(transcript)
+    ) {
+      // Keeps asking for the fetch until it ran (approval flow) or was denied.
+      const url =
+        /fetch (https?:\/\/\S+)/i.exec(transcript)?.[1]?.replace(/[\\"']+$/, '') ??
+        'https://example.com/';
+      parts = [call('http_fetch', { url })];
     } else if (turns === 0) {
       parts = [
         call('set_status', { text: 'Fake model: reading the task', nextAction: 'write summary' }),
       ];
-    } else if (turns === 1) {
+    } else if (turns === 1 || (wantsFetch && turns === 2)) {
       parts = [
         call('update_summary', {
           markdown: `## Fake summary\n\nThe fake model read: ${lastUser.slice(0, 80)}`,

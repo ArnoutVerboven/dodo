@@ -22,11 +22,20 @@ import {
   WORKER_VCPU,
 } from './runtime.js';
 
+export type Notify = (n: {
+  title: string;
+  body: string;
+  taskId: string;
+  input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+}) => Promise<void>;
+
 export interface RunControlDeps {
   db: Firestore;
   auth: Auth;
   storage: Storage;
   costGate: CostGate;
+  /** Push a "needs you" / "finished" notice to the user's channels. Never throws. */
+  notify?: Notify;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -35,9 +44,16 @@ export interface StartResponse {
   task: Record<string, unknown>;
   project: Record<string, unknown> | undefined;
   session: Content[];
-  answer?: { prompt: string; value: string };
+  answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
   trigger: Run['trigger'];
   model: string;
+  /** Merged permission rules: task, project and global. */
+  policy: {
+    profile: 'agent-decides' | 'untrusted';
+    allow: string[];
+    deny: string[];
+    allowedHosts: string[];
+  };
 }
 
 /** First call of a worker: claimed → running, and the context it needs (session comes from Storage). */
@@ -50,6 +66,25 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     : undefined;
   const session = run.sessionPath ? await loadSession(deps, run.sessionPath).catch(() => []) : [];
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
+  const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  const t = task as Record<string, unknown>;
+  const ai = (t.ai ?? {}) as Record<string, unknown>;
+  const pdefaults = ((project as Record<string, unknown> | undefined)?.defaults ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const policy: StartResponse['policy'] = {
+    profile: (ai.profile ?? pdefaults.profile ?? 'agent-decides') as 'agent-decides' | 'untrusted',
+    allow: [...list(settings.allowRules), ...list(project?.allowRules), ...list(t.allowRules)],
+    deny: [...list(settings.denyRules), ...list(project?.denyRules), ...list(t.denyRules)],
+    allowedHosts: [
+      ...list(settings.allowedHosts),
+      ...list(project?.allowedHosts),
+      ...list(t.allowedHosts),
+    ],
+  };
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,
@@ -68,6 +103,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     answer: raw.answer as StartResponse['answer'],
     trigger: run.trigger,
     model: run.model,
+    policy,
   };
 }
 
@@ -146,8 +182,9 @@ export async function requestInput(
   const now = (deps.now ?? Date.now)();
   const sessionPath = await saveSession(deps, run.id, req.session);
   const batch = deps.db.batch();
+  const messageRef = deps.db.collection(paths.messages(run.taskId)).doc();
   batch.create(
-    deps.db.collection(paths.messages(run.taskId)).doc(),
+    messageRef,
     stripUndefined({
       author: 'agent',
       body: req.prompt,
@@ -179,6 +216,13 @@ export async function requestInput(
   });
   await batch.commit();
   await endRun(deps, run);
+  const title = (await deps.db.doc(paths.task(run.taskId)).get()).get('title') as string;
+  await deps.notify?.({
+    title: `Needs you: ${title}`,
+    body: req.prompt,
+    taskId: run.taskId,
+    input: { messageId: messageRef.id, kind: req.kind, options: req.options },
+  });
 }
 
 const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
@@ -259,6 +303,18 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   }
   await batch.commit();
   await endRun(deps, run);
+  const title = (await taskRef.get()).get('title') as string;
+  const headline =
+    req.reason === 'finished'
+      ? `${req.outcome === 'done' ? 'Done' : req.outcome === 'blocked' ? 'Blocked' : 'Ready for review'}: ${title}`
+      : req.reason === 'budget_exhausted'
+        ? `Budget used up: ${title}`
+        : req.reason === 'interrupted' || req.reason === 'halted'
+          ? `Stopped: ${title}`
+          : `Run failed: ${title}`;
+  const summary =
+    ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
+  await deps.notify?.({ title: headline, body: req.error ?? summary, taskId: run.taskId });
 }
 
 /** Shared tail: settle the infra slice and make the run identity worthless. */

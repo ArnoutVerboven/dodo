@@ -1,4 +1,5 @@
 import type { FunctionDeclaration } from '@dodo/core';
+import type { ActionCategory, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
 import type { TaskStore } from './control-plane.js';
 
@@ -9,6 +10,17 @@ import type { TaskStore } from './control-plane.js';
  */
 export interface ToolContext {
   store: TaskStore;
+  /** Decides allow / ask / deny for tools that declare a policy. Absent: only task tools run. */
+  policy?: PolicyEngine;
+  /** The run's task folder; exec tools are confined to it. */
+  workdir?: string;
+}
+
+/** What a call does, for the policy engine: the rule tool name, the key rules match, the category. */
+export interface PolicyClaim {
+  tool: string;
+  key: string;
+  category: ActionCategory;
 }
 
 /** What a tool returns to the model, plus control-flow signals for the loop. */
@@ -30,10 +42,12 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
   description: string;
   schema: S;
+  /** Absent for task tools: they cannot reach anything outside the task. */
+  policy?: (args: z.infer<S>, ctx: ToolContext) => PolicyClaim;
   execute(args: z.infer<S>, ctx: ToolContext): Promise<ToolOutcome>;
 }
 
-const define = <S extends z.ZodType>(t: ToolDef<S>): ToolDef<S> => t;
+export const define = <S extends z.ZodType>(t: ToolDef<S>): ToolDef<S> => t;
 
 export const taskTools = [
   define({

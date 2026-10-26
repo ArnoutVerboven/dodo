@@ -36,6 +36,8 @@ jobs:
           BUDGET_DETACH_AT=${{ vars.BUDGET_DETACH_AT || '45' }}
           BUDGET_CURRENCY=${{ vars.BUDGET_CURRENCY || 'EUR' }}
           MODEL_BACKEND=${{ vars.MODEL_BACKEND || 'vertex' }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          APP_URL=https://${{ vars.GCP_PROJECT_ID }}.web.app
           EOF
       - uses: google-github-actions/auth@v2
         with:
@@ -45,6 +47,15 @@ jobs:
         run: >
           pnpm exec firebase deploy --project ${{ vars.GCP_PROJECT_ID }} --non-interactive --force
           --only hosting,firestore:rules,firestore:indexes,storage,functions
+      - name: Register the Telegram webhook
+        if: env.TOKEN != ''
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          SECRET=$(printf 'dodo-webhook:%s' "$TOKEN" | sha256sum | cut -c1-64)
+          curl -sS -X POST "https://api.telegram.org/bot$TOKEN/setWebhook" \
+            -d "url=https://europe-west1-${{ vars.GCP_PROJECT_ID }}.cloudfunctions.net/telegramWebhook" \
+            -d "secret_token=$SECRET" -d "allowed_updates=[\"message\",\"callback_query\"]" | sed 's/.*"description":"\([^"]*\)".*/\1/'
       - name: Build and push the worker image
         env:
           REGISTRY: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo

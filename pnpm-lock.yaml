@@ -114,6 +114,9 @@ importers:
       "@dodo/core":
         specifier: workspace:*
         version: link:../../packages/core
+      "@dodo/policy":
+        specifier: workspace:*
+        version: link:../../packages/policy
       firebase:
         specifier: ^13.1.0
         version: 13.1.0
@@ -130,6 +133,9 @@ importers:
       "@dodo/core":
         specifier: workspace:*
         version: link:../core
+      "@dodo/policy":
+        specifier: workspace:*
+        version: link:../policy
       zod:
         specifier: ^4.1.0
         version: 4.6.7
@@ -153,6 +159,12 @@ importers:
       zod:
         specifier: ^4.1.0
         version: 4.6.7
+
+  packages/policy:
+    dependencies:
+      "@dodo/core":
+        specifier: workspace:*
+        version: link:../core
 
   tests/rules:
     devDependencies:

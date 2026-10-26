@@ -20,6 +20,8 @@ The UI breadth (kanban, projects, budget page) was built before this plan was re
 
 ## Phase 2 — First agent runs (remote, task tools only)
 
+**Status (2026-10-26): built and merged (#3).** Deviations from the plan below: the gateway is not streaming yet; Cloud Monitoring alert policies are not created yet (they need one more bootstrap run); the exit criterion (ledger vs. Vertex console) waits for the first real smoke test.
+
 Agents in this phase can only use the task tools (summary, status, message, ask, artifacts, finish). **No bash, HTTP or browser** until the policy engine exists.
 
 - Own agent loop behind `AgentRuntime` (decided 2026-10-25; ADK is a later optional adapter).
@@ -42,6 +44,8 @@ The headline use case (your own accounts in your own browser) comes before the r
 - **Exit:** the agent downloaded your latest energy bill from a site you were logged into, asking before anything outside the allowlist.
 
 ## Phase 4 — Remote tools and notifications
+
+**Status (2026-10-26): policy engine, bash, files, HTTP fetch, git checkout per task/project and Telegram notifications built (#4), ahead of phase 3 because they needed no Mac.** The policy engine from phase 3 moved here; phase 3 now reuses it. Still open in this phase: web search, the in-container egress proxy, tool cost models, FCM web push, and the exit criterion (a PR opened after an approval from your phone).
 
 - Remote container tools: bash, files, git checkout per project, HTTP fetch, web search, all behind the policy engine and the in-container egress proxy.
 - Tool cost models; one paid API end to end (Maps).
