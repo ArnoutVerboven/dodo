@@ -204,5 +204,13 @@ export const GlobalSettings = z.object({
   /** Set by the kill switch or by hand. While true no cost can be reserved. */
   halted: z.boolean().default(false),
   haltReason: z.string().optional(),
+  /** Telegram pairing: the code is shown in Settings, the chat id is set by the webhook. */
+  telegram: z
+    .object({
+      chatId: z.number().optional(),
+      pairingCode: z.string().optional(),
+      pairedAt: Timestamp.optional(),
+    })
+    .optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

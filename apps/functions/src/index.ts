@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   FinishRequest,
   GenerateRequest,
@@ -14,7 +15,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { defineInt, defineString } from 'firebase-functions/params';
 import { logger, setGlobalOptions } from 'firebase-functions/v2';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
-import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { claimOwnership as claim } from './claim-ownership.js';
 import { dispatch, type Executor } from './dispatcher.js';
@@ -23,6 +24,7 @@ import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
+import { handleTelegramUpdate, notifyTelegram, telegramApi } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
 
@@ -35,10 +37,15 @@ const CURRENCY = defineString('BUDGET_CURRENCY', { default: 'EUR' });
 const OWNER_EMAIL = defineString('OWNER_EMAIL', { default: '' });
 /** `fake` runs the scripted model (emulator, tests); anything else uses Vertex AI. */
 const MODEL_BACKEND = defineString('MODEL_BACKEND', { default: 'vertex' });
+const TELEGRAM_BOT_TOKEN = defineString('TELEGRAM_BOT_TOKEN', { default: '' });
+const APP_URL = defineString('APP_URL', { default: 'https://dodo-512722.web.app' });
 const REGION = 'europe-west1';
 const WORKER_JOB = 'dodo-worker';
 const GATEWAY_SA = 'dodo-gateway@';
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
+
+const webhookSecret = (token: string) =>
+  createHash('sha256').update(`dodo-webhook:${token}`).digest('hex').slice(0, 64);
 
 const projectId = () => {
   const id = process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT;
@@ -55,6 +62,16 @@ const provider = (): ModelProvider => {
   return providerInstance;
 };
 
+const telegramDeps = () => {
+  const token = TELEGRAM_BOT_TOKEN.value() || undefined;
+  return {
+    db: getFirestore(),
+    token,
+    send: token ? telegramApi(token) : async () => undefined,
+    log: logger.warn,
+  };
+};
+
 const controlDeps = () => {
   const db = getFirestore();
   return {
@@ -63,6 +80,11 @@ const controlDeps = () => {
     storage: getStorage(),
     costGate: costGateFor(db),
     log: logger.warn,
+    notify: async (n: Omit<Parameters<typeof notifyTelegram>[1], 'appUrl'>) => {
+      await notifyTelegram(telegramDeps(), { ...n, appUrl: APP_URL.value() }).catch((err) =>
+        logger.warn('notify failed', { err: String(err) }),
+      );
+    },
   };
 };
 
@@ -262,6 +284,27 @@ export const onRunCreated = onDocumentCreated(
       event.params.runId,
     );
     logger.info('dispatch', { runId: event.params.runId, result });
+  },
+);
+
+/* -------------------------- notifications ------------------------ */
+
+/** Telegram webhook. The secret token in the header is the bot token's hash, set by setWebhook. */
+export const telegramWebhook = onRequest(
+  { maxInstances: 2, invoker: 'public' },
+  async (req, res) => {
+    const token = TELEGRAM_BOT_TOKEN.value();
+    const expected = token ? webhookSecret(token) : '';
+    if (!token || req.get('x-telegram-bot-api-secret-token') !== expected) {
+      res.status(403).send('forbidden');
+      return;
+    }
+    try {
+      await handleTelegramUpdate(telegramDeps(), req.body ?? {});
+    } catch (err) {
+      logger.warn('telegram update failed', { err: String(err) });
+    }
+    res.status(200).send('ok');
   },
 );
 
