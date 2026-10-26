@@ -456,16 +456,19 @@ dodo status                     # online, current run, last errors
 
 ## 14. Decisions
 
-| Date       | Decision                                                                                                                                                                                 |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI).                                                                                                                                  |
-| 2026-10-25 | Billing in EUR, region `europe-west1`.                                                                                                                                                   |
-| 2026-10-25 | Bitwarden (dedicated agent vault) as the secret provider.                                                                                                                                |
-| 2026-10-25 | Telegram as a second notification channel next to web push (free).                                                                                                                       |
-| 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review).                                                                               |
-| 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic _ask_; `agent-decides` only for sandbox-confined actions (from the architecture review).                       |
-| 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly.                                         |
-| 2026-10-25 | Workers are untrusted clients with a per-run Firebase identity; the worker service account has no IAM roles; all budget writes and model calls happen in callables (second review pass). |
-| 2026-10-25 | A comment during a run steers it at the next model call instead of aborting it (second review pass).                                                                                     |
-
-| 2026-10-25 | **Own agent loop first** as the first `AgentRuntime` adapter; ADK and the Claude Agent SDK as optional adapters later (decided by Arnout). |
+| Date       | Decision                                                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-25 | TypeScript everywhere (UI, functions, worker, Mac CLI).                                                                                                                                            |
+| 2026-10-25 | Billing in EUR, region `europe-west1`.                                                                                                                                                             |
+| 2026-10-25 | Bitwarden (dedicated agent vault) as the secret provider.                                                                                                                                          |
+| 2026-10-25 | Telegram as a second notification channel next to web push (free).                                                                                                                                 |
+| 2026-10-25 | Model gateway: all model calls server-side, Mac holds no model credentials (from the architecture review).                                                                                         |
+| 2026-10-25 | Egress, writes outside the folder and anything outbound are deterministic _ask_; `agent-decides` only for sandbox-confined actions (from the architecture review).                                 |
+| 2026-10-25 | The 50 EUR GCP cap is a **lifetime total**: the billing budget covers a fixed period from setup to the end of 2030 instead of resetting monthly.                                                   |
+| 2026-10-25 | Workers are untrusted clients with a per-run Firebase identity; the worker service account has no IAM roles; all budget writes and model calls happen in callables (second review pass).           |
+| 2026-10-25 | A comment during a run steers it at the next model call instead of aborting it (second review pass).                                                                                               |
+| 2026-10-25 | **Own agent loop first** as the first `AgentRuntime` adapter; ADK and the Claude Agent SDK as optional adapters later (decided by Arnout).                                                         |
+| 2026-10-26 | Stale runs are reaped on demand (before a new run is enqueued) instead of by Cloud Scheduler, which would need extra deployer roles. Revisit if a stuck task ever matters before the next comment. |
+| 2026-10-26 | The gateway is non-streaming for now; the output cap comes from the remaining budget, so the worst case is one over-long answer, not a runaway. Streaming is a phase 7 refinement.                 |
+| 2026-10-26 | The Telegram bot token is a functions `.env` value written by the deploy workflow from a repo secret; move to Secret Manager once the deployer has `secretmanager.admin`.                          |
+| 2026-10-26 | Repo checkout clones public GitHub repos only (`git clone --depth 50`); private repos wait for the credential work in phase 5.                                                                     |
