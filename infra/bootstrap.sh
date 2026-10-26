@@ -97,6 +97,8 @@ grant() {
     --condition=None --quiet >/dev/null
 }
 
+COMPUTE_SA_EARLY="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
 say "Kill switch service account"
 ensure_sa dodo-killswitch "dodo kill switch"
 KILL_SA="dodo-killswitch@${PROJECT}.iam.gserviceaccount.com"
@@ -119,6 +121,12 @@ grant "$GATEWAY_SA" roles/run.invoker
 # Worker: deliberately NO roles. Any process in the container can read its token.
 ensure_sa dodo-worker "dodo worker (no roles by design)"
 WORKER_SA="dodo-worker@${PROJECT}.iam.gserviceaccount.com"
+
+say "Service agents needed by Cloud Functions (2nd gen) deploys"
+# The deployer may not change project IAM, so these must be set here, once.
+grant "service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com" roles/iam.serviceAccountTokenCreator
+grant "$COMPUTE_SA_EARLY" roles/run.invoker
+grant "$COMPUTE_SA_EARLY" roles/eventarc.eventReceiver
 
 say "Deployer service account for GitHub Actions"
 ensure_sa dodo-deployer "dodo deployer (GitHub Actions)"
