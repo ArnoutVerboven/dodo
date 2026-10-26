@@ -17,4 +17,7 @@ export const paths = {
   reservations: () => 'reservations',
   budgets: () => 'budgets',
   budget: (scopeKey: string) => `budgets/${scopeKey}`,
+  /** Web push registrations, one document per FCM token (the token is the id). */
+  pushTokens: () => 'pushTokens',
+  pushToken: (token: string) => `pushTokens/${token}`,
 } as const;
