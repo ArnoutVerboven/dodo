@@ -1,6 +1,6 @@
 # dodo — One-time setup (what you do by hand)
 
-Everything else is scripted in `infra/` and deployed from GitHub Actions. No service account keys are created.
+Everything else is in `infra/` (Terraform for GCP) and deployed from GitHub Actions. No service account keys are created.
 
 ## 1. Firebase (about 5 minutes)
 
@@ -14,7 +14,7 @@ Everything else is scripted in `infra/` and deployed from GitHub Actions. No ser
 
 ## 2. GCP access for deployments (about 10 minutes)
 
-Run the bootstrap script once in **Cloud Shell** (<https://shell.cloud.google.com>, logged in as the project owner) when phase 1 lands:
+The GCP side is Terraform in [`infra/terraform`](../infra/terraform), planned on every PR and applied from `main` by GitHub Actions. Run the bootstrap script once in **Cloud Shell** (<https://shell.cloud.google.com>, logged in as the project owner) for the few things Terraform needs before it can run:
 
 ```sh
 git clone https://github.com/ArnoutVerboven/dodo && cd dodo
@@ -23,18 +23,21 @@ git clone https://github.com/ArnoutVerboven/dodo && cd dodo
 
 It will:
 
-- enable the needed APIs (Firestore, Cloud Run, Cloud Functions, Pub/Sub, Vertex AI, Billing Budgets, Artifact Registry, IAM Credentials);
-- create the **50 EUR lifetime budget** (from setup to the end of 2030) with Pub/Sub alerts, and the kill-switch service account (needs you to be _Billing Account Administrator_ on the billing account, which you are if you created it);
-- create a `dodo-deployer` service account and a **Workload Identity Federation** pool that trusts only GitHub Actions runs from `ArnoutVerboven/dodo` on `main`. The deployer may act only as the specific runtime accounts.
+- check that billing is linked and enable the handful of APIs Terraform itself needs;
+- create the Terraform state bucket `gs://dodo-512722-tfstate`;
+- create three service accounts for GitHub Actions: `dodo-deployer` (deploys the app), `dodo-terraform` (applies Terraform; it manages IAM, so it is as powerful as an owner) and `dodo-planner` (read-only, plans PRs). The last two need you to be _Billing Account Administrator_ on the billing account, which you are if you created it;
+- set up a **Workload Identity Federation** pool that trusts only GitHub Actions runs from `ArnoutVerboven/dodo`: on `main`, plus the read-only `terraform-plan` workflow on PRs. Each account is bound to one workflow by name (`Deploy`, `terraform-apply`, `terraform-plan`). No service account keys are created.
 
 Then add the GitHub repo variables (Settings → Secrets and variables → Actions → _Variables_) printed at the end of the script: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, plus `OWNER_EMAIL` (the Google account you sign in with; the first sign-in with that email becomes the owner, nothing to run by hand).
 
-After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, created by the deploy workflow), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
+On a new project, run the **terraform-apply** workflow once (Actions tab → terraform-apply → Run workflow) before the first Deploy. It enables the APIs and creates the runtime service accounts and roles, the **50 EUR lifetime budget** (from setup to the end of 2030) with Pub/Sub alerts for the kill switch, the Artifact Registry repo, the worker Cloud Run Job and its API key. After that it runs by itself whenever `infra/terraform` changes on `main`.
+
+After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, managed by Terraform), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
 
 What I need from you, in short:
 
 - [ ] Firebase steps above, and the `firebaseConfig` in the thread.
-- [ ] The bootstrap script run once, and the two repo variables set.
+- [ ] The bootstrap script run once, the repo variables set, and terraform-apply run once.
 - [ ] Once the first deploy is live: run `./infra/test-kill-switch.sh dodo-512722` once. It sends a fake 46 EUR alert, checks that billing really got detached, and re-links it. This proves the kill switch works before any agent can spend money.
 
 ## 3. Later phases

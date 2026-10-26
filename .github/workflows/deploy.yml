@@ -152,10 +152,9 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
       - uses: docker/setup-buildx-action@v3
-      - name: Prepare the image registry
+      - name: Sign in to the image registry
+        # The registry itself is managed by infra/terraform.
         run: |
-          gcloud artifacts repositories describe dodo --location=europe-west1 >/dev/null 2>&1 ||
-            gcloud artifacts repositories create dodo --repository-format=docker --location=europe-west1
           gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
       - name: Build and push the worker image
         # Layers (the apt-get install in particular) are cached in the GitHub Actions cache.
@@ -169,31 +168,6 @@ jobs:
             ${{ env.REGISTRY }}/worker:latest
           cache-from: type=gha,scope=worker
           cache-to: type=gha,scope=worker,mode=max
-      - name: Worker API key
-        # The browser key is restricted to the web app's domains, which blocks sign-in from
-        # Cloud Run. The worker gets its own key, restricted by API instead of by website.
-        id: worker_key
-        run: |
-          NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
-          if [ -z "$NAME" ]; then
-            gcloud services api-keys create --display-name=dodo-worker \
-              --api-target=service=identitytoolkit.googleapis.com \
-              --api-target=service=securetoken.googleapis.com \
-              --api-target=service=firestore.googleapis.com \
-              --api-target=service=firebasestorage.googleapis.com --quiet
-            NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
-          fi
-          KEY=$(gcloud services api-keys get-key-string "$NAME" --format='value(keyString)')
-          echo "::add-mask::$KEY"
-          echo "key=$KEY" >> "$GITHUB_OUTPUT"
-      - name: Deploy the worker Cloud Run Job
-        run: |
-          set -a; . apps/web/.env.production; set +a
-          WORKER_KEY='${{ steps.worker_key.outputs.key }}'
-          gcloud run jobs deploy dodo-worker \
-            --image "$REGISTRY/worker:${GITHUB_SHA}" \
-            --region europe-west1 \
-            --service-account "dodo-worker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --max-retries 0 --task-timeout 3600 --cpu 1 --memory 1Gi --tasks 1 \
-            --set-env-vars "FIREBASE_API_KEY=$WORKER_KEY,FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID,FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID,FUNCTIONS_REGION=europe-west1" \
-            --quiet
+      - name: Point the worker Cloud Run Job at the new image
+        # The job's settings and its API key are managed by infra/terraform, which ignores the image.
+        run: gcloud run jobs update dodo-worker --image "$REGISTRY/worker:${GITHUB_SHA}" --region europe-west1 --quiet
