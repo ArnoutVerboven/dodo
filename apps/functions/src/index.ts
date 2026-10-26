@@ -134,17 +134,25 @@ export const gatewayGenerate = onCall(
     const req = parseOr<GenerateRequest>(GenerateRequest, request.data);
     const db = getFirestore();
     const run = await loadRunForCaller(db, caller(request.auth), req.runId);
-    return generateWithBudget(
-      { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
-      {
-        scopes: scopesForRun(run),
-        taskId: run.taskId,
-        projectId: run.projectId,
-        runId: run.id,
-        description: `model call (${req.model})`,
-      },
-      req,
-    );
+    try {
+      return await generateWithBudget(
+        { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
+        {
+          scopes: scopesForRun(run),
+          taskId: run.taskId,
+          projectId: run.projectId,
+          runId: run.id,
+          description: `model call (${req.model})`,
+        },
+        req,
+      );
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      // A provider failure would otherwise reach the worker as a bare INTERNAL [500]; the
+      // message is what you need to see on the run.
+      logger.error('gateway failed', { runId: run.id, model: req.model, err: String(err) });
+      throw new HttpsError('unknown', `Model call failed: ${String(err).slice(0, 500)}`);
+    }
   },
 );
 
