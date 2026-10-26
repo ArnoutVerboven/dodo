@@ -65,13 +65,31 @@ jobs:
           gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
           docker build -f apps/worker/Dockerfile -t "$REGISTRY/worker:${GITHUB_SHA}" -t "$REGISTRY/worker:latest" .
           docker push --all-tags "$REGISTRY/worker"
+      - name: Worker API key
+        # The browser key is restricted to the web app's domains, which blocks sign-in from
+        # Cloud Run. The worker gets its own key, restricted by API instead of by website.
+        id: worker_key
+        run: |
+          NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
+          if [ -z "$NAME" ]; then
+            gcloud services api-keys create --display-name=dodo-worker \
+              --api-target=service=identitytoolkit.googleapis.com \
+              --api-target=service=securetoken.googleapis.com \
+              --api-target=service=firestore.googleapis.com \
+              --api-target=service=firebasestorage.googleapis.com --quiet
+            NAME=$(gcloud services api-keys list --filter='displayName=dodo-worker' --format='value(name)' | head -1)
+          fi
+          KEY=$(gcloud services api-keys get-key-string "$NAME" --format='value(keyString)')
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Deploy the worker Cloud Run Job
         run: |
           set -a; . apps/web/.env.production; set +a
+          WORKER_KEY='${{ steps.worker_key.outputs.key }}'
           gcloud run jobs deploy dodo-worker \
             --image "europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/dodo/worker:${GITHUB_SHA}" \
             --region europe-west1 \
             --service-account "dodo-worker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
             --max-retries 0 --task-timeout 3600 --cpu 1 --memory 1Gi --tasks 1 \
-            --set-env-vars "FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY,FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID,FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID,FUNCTIONS_REGION=europe-west1" \
+            --set-env-vars "FIREBASE_API_KEY=$WORKER_KEY,FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID,FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID,FUNCTIONS_REGION=europe-west1" \
             --quiet

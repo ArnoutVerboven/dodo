@@ -29,7 +29,7 @@ It will:
 
 Then add the GitHub repo variables (Settings → Secrets and variables → Actions → _Variables_) printed at the end of the script: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, plus `OWNER_EMAIL` (the Google account you sign in with; the first sign-in with that email becomes the owner, nothing to run by hand).
 
-After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites.
+After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, created by the deploy workflow), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
 
 What I need from you, in short:
 

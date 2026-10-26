@@ -9,6 +9,8 @@ import {
 import {
   ArrowLeft,
   Bot,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   FileText,
   Link2,
@@ -74,9 +76,9 @@ function TaskView({ task }: { task: Task }) {
       <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-4">
           <TitleEditor task={task} />
+          <DescriptionCard task={task} />
           <StatusCard task={task} />
           <SummaryCard task={task} />
-          <DescriptionCard task={task} />
           <RunPanel taskId={task.id} />
           <Thread taskId={task.id} />
         </div>
@@ -164,19 +166,43 @@ function DescriptionCard({ task }: { task: Task }) {
   useEffect(() => {
     setText(task.description);
   }, [task.description]);
+  // Collapsed by default: the summary and status above it are the top-down view; the
+  // description is what you wrote at the start.
+  const [open, setOpen] = useState(false);
   return (
-    <Card>
-      <CardHeader
-        title="Description"
-        action={
-          !editing && (
-            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-              Edit
-            </Button>
-          )
-        }
-      />
-      <CardBody className="prose-sm text-sm">
+    <details
+      className="rounded-lg border bg-card"
+      open={open || editing}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm font-semibold">
+        <span className="flex items-center gap-1">
+          {open || editing ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+          Description
+          {!open && !editing && task.description && (
+            <span className="ml-2 max-w-[60ch] truncate font-normal text-muted-foreground">
+              {task.description}
+            </span>
+          )}
+        </span>
+        {!editing && (open || editing) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={(e) => {
+              e.preventDefault();
+              setEditing(true);
+            }}
+          >
+            Edit
+          </Button>
+        )}
+      </summary>
+      <div className="prose-sm border-t p-4 text-sm">
         {editing ? (
           <div className="space-y-2">
             <Textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} />
@@ -206,8 +232,8 @@ function DescriptionCard({ task }: { task: Task }) {
         ) : (
           <p className="text-muted-foreground">No description.</p>
         )}
-      </CardBody>
-    </Card>
+      </div>
+    </details>
   );
 }
 

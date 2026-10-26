@@ -49,17 +49,18 @@ export async function dispatch(
   if (!claimed) return 'skipped';
   if (claimed === 'deferred') return 'deferred';
 
-  const remaining = await deps.costGate.available(scopesForRun(claimed, now));
-  const timeoutSeconds = Math.max(
-    MIN_TIMEOUT_S,
-    Math.min(MAX_TIMEOUT_S, affordableSeconds(remaining, WORKER_VCPU, WORKER_GIB)),
-  );
-  const token = await deps.auth.createCustomToken(runUid(runId), {
-    run: runId,
-    taskId: claimed.taskId,
-    generation: claimed.generation,
-  });
   try {
+    const remaining = await deps.costGate.available(scopesForRun(claimed, now));
+    const timeoutSeconds = Math.max(
+      MIN_TIMEOUT_S,
+      Math.min(MAX_TIMEOUT_S, affordableSeconds(remaining, WORKER_VCPU, WORKER_GIB)),
+    );
+    // Needs roles/iam.serviceAccountTokenCreator on the gateway account itself (signBlob).
+    const token = await deps.auth.createCustomToken(runUid(runId), {
+      run: runId,
+      taskId: claimed.taskId,
+      generation: claimed.generation,
+    });
     const execution = await deps.executor.start(
       claimed,
       { DODO_RUN_ID: runId, DODO_RUN_TOKEN: token, DODO_TIMEOUT_S: String(timeoutSeconds) },
