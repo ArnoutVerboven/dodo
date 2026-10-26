@@ -1,0 +1,3 @@
+# Only the bundled worker goes into the image (see apps/worker/Dockerfile).
+*
+!apps/worker/dist/index.js
