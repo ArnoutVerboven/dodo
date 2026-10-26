@@ -1,5 +1,6 @@
 import {
   type AiConfig,
+  type Run,
   resolveAiConfig,
   type Task,
   type TaskPriority,
@@ -16,12 +17,14 @@ import {
   FileText,
   Folder,
   Link2,
+  Loader2,
   type LucideIcon,
   Paperclip,
   Pencil,
   Plus,
   Send,
   Settings2,
+  Square,
   Trash2,
   User,
   X,
@@ -32,7 +35,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { parseTags } from '@/components/NewTaskDialog';
-import { RunPanel } from '@/components/RunPanel';
+import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import {
   dueTone,
   formatDue,
@@ -51,12 +54,14 @@ import {
   answerInput,
   deleteArtifact,
   deleteTask,
+  interruptRun,
   postUserMessage,
   updateTask,
   useArtifacts,
   useBudgets,
   useMessages,
   useProjects,
+  useRuns,
   useSettings,
   useTask,
 } from '@/lib/data';
@@ -104,14 +109,13 @@ function TaskView({ task }: { task: Task }) {
         <div className="min-w-0 space-y-4">
           <div className="space-y-2">
             <TitleEditor task={task} />
+            <Description task={task} />
             <PropertyBar task={task} />
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <StatusCard task={task} />
             <SummaryCard task={task} />
           </div>
-          <DescriptionCard task={task} />
-          <RunPanel taskId={task.id} />
           <Thread taskId={task.id} />
         </div>
         <aside className="space-y-4">
@@ -420,95 +424,115 @@ function SummaryCard({ task }: { task: Task }) {
   );
 }
 
-function DescriptionCard({ task }: { task: Task }) {
+/** The description sits right under the title as plain text; long ones fold to a few lines. */
+function Description({ task }: { task: Task }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(task.description);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setText(task.description);
   }, [task.description]);
-  // Collapsed by default: the summary and status above it are the top-down view; the
-  // description is what you wrote at the start.
-  const [open, setOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text changes
+  useEffect(() => {
+    const el = body.current;
+    if (el) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [task.description, editing]);
   const save = () => updateTask(task.id, { description: text }).then(() => setEditing(false));
-  return (
-    <details
-      className="group rounded-lg border bg-card"
-      open={open || editing}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 py-2 hover:bg-accent/40">
-        <span className="flex min-w-0 items-center gap-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {open || editing ? (
-            <ChevronDown className="h-4 w-4 shrink-0" />
-          ) : (
-            <ChevronRight className="h-4 w-4 shrink-0" />
-          )}
-          Description
-          {!open && !editing && task.description && (
-            <span className="ml-2 truncate font-normal tracking-normal normal-case">
-              {task.description}
-            </span>
-          )}
-        </span>
-        {!editing && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="-my-1 h-7 text-muted-foreground"
-            onClick={(e) => {
-              e.preventDefault();
-              setEditing(true);
-            }}
-          >
-            <Pencil className="h-3.5 w-3.5" /> Edit
+  const cancel = () => {
+    setText(task.description);
+    setEditing(false);
+  };
+  if (editing)
+    return (
+      <div className="space-y-2">
+        <Textarea
+          autoFocus
+          rows={6}
+          aria-label="Description"
+          className="field-sizing-content"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
+            if (e.key === 'Escape') cancel();
+          }}
+        />
+        <div className="flex items-center justify-end gap-2">
+          <span className="mr-auto text-xs text-muted-foreground">⌘/Ctrl+Enter to save</span>
+          <Button size="sm" variant="ghost" onClick={cancel}>
+            Cancel
           </Button>
-        )}
-      </summary>
-      <div className="prose-sm px-4 pb-4 text-sm">
-        {editing ? (
-          <div className="space-y-2">
-            <Textarea
-              autoFocus
-              rows={6}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
-                if (e.key === 'Escape') {
-                  setText(task.description);
-                  setEditing(false);
-                }
-              }}
-            />
-            <div className="flex items-center justify-end gap-2">
-              <span className="mr-auto text-xs text-muted-foreground">⌘/Ctrl+Enter to save</span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setText(task.description);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button size="sm" onClick={save}>
-                Save
-              </Button>
-            </div>
-          </div>
-        ) : task.description ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
-        ) : (
-          <p className="text-muted-foreground">No description.</p>
-        )}
+          <Button size="sm" onClick={save}>
+            Save
+          </Button>
+        </div>
       </div>
-    </details>
+    );
+  return (
+    <div className="group relative">
+      {task.description ? (
+        <div
+          ref={body}
+          className={cn(
+            'prose-sm pr-16 text-sm text-muted-foreground',
+            !expanded && 'line-clamp-4',
+          )}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="text-sm text-muted-foreground hover:text-foreground"
+          onClick={() => setEditing(true)}
+        >
+          Add a description…
+        </button>
+      )}
+      {(overflows || expanded) && (
+        <button
+          type="button"
+          className="mt-0.5 inline-flex items-center gap-0.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <>
+              <ChevronDown className="h-3.5 w-3.5 rotate-180" /> Show less
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" /> Show more
+            </>
+          )}
+        </button>
+      )}
+      {task.description && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="absolute top-0 right-0 h-7 text-muted-foreground opacity-60 group-hover:opacity-100"
+          onClick={() => setEditing(true)}
+        >
+          <Pencil className="h-3.5 w-3.5" /> Edit
+        </Button>
+      )}
+    </div>
   );
 }
 
+type TimelineItem =
+  | { kind: 'message'; at: number; message: ThreadMessage }
+  | { kind: 'run'; at: number; run: Run };
+
+/**
+ * Messages and agent runs as one timeline. Clicking an agent message opens the steps behind
+ * it; a run that ended without a message gets its own row, and a running one sits at the end.
+ */
 function Thread({ taskId }: { taskId: string }) {
   const { data: messages, loading } = useMessages(taskId);
+  const { data: runs } = useRuns(taskId);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const end = useRef<HTMLDivElement>(null);
@@ -521,6 +545,18 @@ function Thread({ taskId }: { taskId: string }) {
     }
     seen.current = messages.length;
   }, [loading, messages.length]);
+
+  const runById = new Map(runs.map((r) => [r.id, r]));
+  const byRun = new Map<string, ThreadMessage[]>();
+  for (const m of messages) if (m.runId) byRun.set(m.runId, [...(byRun.get(m.runId) ?? []), m]);
+  const liveRun = runs.find(isLive);
+  const items: TimelineItem[] = [
+    ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, message: m })),
+    ...runs
+      .filter((r) => !isLive(r) && !byRun.has(r.id))
+      .map((r) => ({ kind: 'run' as const, at: r.endedAt ?? r.updatedAt, run: r })),
+  ].sort((a, b) => a.at - b.at);
+
   const send = async () => {
     const text = body.trim();
     if (!text || sending) return;
@@ -539,10 +575,30 @@ function Thread({ taskId }: { taskId: string }) {
     <Card>
       <CardHeader title="Thread" />
       <CardBody className="space-y-1">
-        {messages.length === 0 && <p className="text-sm text-muted-foreground">No messages yet.</p>}
-        {messages.map((m) => (
-          <MessageView key={m.id} taskId={taskId} message={m} />
-        ))}
+        {items.length === 0 && !liveRun && (
+          <p className="text-sm text-muted-foreground">No messages yet.</p>
+        )}
+        {items.map((item) => {
+          if (item.kind === 'run') return <RunRow key={item.run.id} run={item.run} />;
+          const m = item.message;
+          const run = m.runId ? runById.get(m.runId) : undefined;
+          // The steps behind a message are those since the run's previous message.
+          const siblings = (m.runId && byRun.get(m.runId)) || [];
+          const i = siblings.indexOf(m);
+          const from = i > 0 ? siblings[i - 1]?.createdAt : undefined;
+          const to = i === siblings.length - 1 ? undefined : m.createdAt;
+          return (
+            <MessageView
+              key={m.id}
+              taskId={taskId}
+              message={m}
+              run={run}
+              traceFrom={from}
+              traceTo={to}
+            />
+          );
+        })}
+        {liveRun && <RunRow run={liveRun} />}
         <div ref={end} />
         <form
           onSubmit={(e) => {
@@ -555,7 +611,9 @@ function Thread({ taskId }: { taskId: string }) {
             <Textarea
               rows={1}
               className="max-h-48 min-h-9 resize-none border-0 field-sizing-content focus-visible:ring-0"
-              placeholder="Reply or steer the agent…"
+              placeholder={
+                liveRun ? 'Steer the agent while it works…' : 'Reply or steer the agent…'
+              }
               aria-label="Reply"
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -586,14 +644,57 @@ function Thread({ taskId }: { taskId: string }) {
   );
 }
 
-function MessageView({ taskId, message: m }: { taskId: string; message: ThreadMessage }) {
+/** Clicks on links, buttons, fields or selected text should not toggle the trace. */
+function isPlainClick(e: React.MouseEvent): boolean {
+  if (window.getSelection()?.toString()) return false;
+  return !(e.target as HTMLElement).closest('a,button,input,select,textarea,pre');
+}
+
+function StepsToggle({ run, open, onClick }: { run: Run; open: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      title={open ? 'Hide steps' : 'Show the steps behind this'}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded px-1 hover:bg-muted hover:text-foreground',
+        !open && 'opacity-70 group-hover:opacity-100',
+      )}
+    >
+      <ChevronRight className={cn('h-3 w-3 transition', open && 'rotate-90')} />
+      {runStats(run)}
+    </button>
+  );
+}
+
+function MessageView({
+  taskId,
+  message: m,
+  run,
+  traceFrom,
+  traceTo,
+}: {
+  taskId: string;
+  message: ThreadMessage;
+  run?: Run;
+  traceFrom?: number;
+  traceTo?: number;
+}) {
+  const [open, setOpen] = useState(false);
   const Icon = m.author === 'user' ? User : Bot;
   const pending = !!m.input && !m.input.answer;
+  const toggle = run ? () => setOpen((v) => !v) : undefined;
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a shortcut for the steps button in the header
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the steps button in the header is the keyboard path
     <div
+      onClick={(e) => toggle && isPlainClick(e) && toggle()}
       className={cn(
         'group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60',
         pending && 'bg-attention-bg/50',
+        run && 'cursor-pointer',
+        open && 'bg-accent/40',
       )}
     >
       <div
@@ -605,21 +706,74 @@ function MessageView({ taskId, message: m }: { taskId: string; message: ThreadMe
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
             {m.author === 'user' ? 'You' : m.author === 'agent' ? 'Agent' : 'System'}
           </span>
           <time title={new Date(m.createdAt).toLocaleString()}>{timeAgo(m.createdAt)}</time>
-          {m.runId && (
-            <span className="rounded bg-muted px-1.5 opacity-0 transition group-hover:opacity-100">
-              run {m.runId.slice(0, 6)}
-            </span>
-          )}
+          {run && toggle && <StepsToggle run={run} open={open} onClick={toggle} />}
         </div>
-        <div className="prose-sm text-sm">
+        <div className="prose-sm cursor-auto text-sm">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
+        {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
         {m.input && <InputRequestView taskId={taskId} message={m} />}
+      </div>
+    </div>
+  );
+}
+
+/** A run with no message of its own: the one working now, or one that ended silently. */
+function RunRow({ run }: { run: Run }) {
+  const [open, setOpen] = useState(false);
+  const live = isLive(run);
+  const failed = run.state === 'failed';
+  return (
+    <div className="group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+        {live ? (
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+        ) : (
+          <Bot className="h-4 w-4" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <span
+            className={cn(
+              'font-medium',
+              live
+                ? 'text-blue-600 dark:text-blue-400'
+                : failed
+                  ? 'text-danger'
+                  : 'text-foreground',
+            )}
+          >
+            Agent · {RUN_STATE_LABEL[run.state]}
+            {live && '…'}
+          </span>
+          <time title={new Date(run.updatedAt).toLocaleString()}>
+            {timeAgo(run.endedAt ?? run.updatedAt)}
+          </time>
+          <StepsToggle run={run} open={open} onClick={() => setOpen((v) => !v)} />
+          {live && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-6 px-2 text-xs"
+              onClick={() => interruptRun(run.id)}
+              disabled={run.interrupt}
+            >
+              <Square className="h-3 w-3" /> {run.interrupt ? 'Stopping…' : 'Stop'}
+            </Button>
+          )}
+        </div>
+        {!live && (run.error || run.endReason) && (
+          <p className={cn('text-sm', failed ? 'text-danger' : 'text-muted-foreground')}>
+            {run.error ?? `Ended: ${run.endReason?.replace('_', ' ')}.`}
+          </p>
+        )}
+        {open && <RunTrace run={run} />}
       </div>
     </div>
   );

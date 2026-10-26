@@ -1,0 +1,7 @@
+[
+  {
+    "origin": ["https://dodo-512722.web.app", "https://dodo-512722.firebaseapp.com"],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600
+  }
+]
