@@ -32,7 +32,12 @@ Then add the GitHub repo variables (Settings → Secrets and variables → Actio
 
 On a new project, run the **terraform-apply** workflow once (Actions tab → terraform-apply → Run workflow) before the first Deploy. It enables the APIs and creates the runtime service accounts and roles, the **50 EUR lifetime budget** (from setup to the end of 2030) with Pub/Sub alerts for the kill switch, the Artifact Registry repo, the worker Cloud Run Job and its API key. After that it runs by itself whenever `infra/terraform` changes on `main`.
 
-After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, managed by Terraform), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
+After the first deploy, restrict the web API key in [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=dodo-512722): edit "Browser key (auto created by Firebase)" → Application restrictions → Websites → add `dodo-tasks.web.app`, `dodo-512722.web.app`, `dodo-512722.firebaseapp.com` and `localhost`. The key is public by design; this stops it being used from other sites. The worker on Cloud Run uses its own key (`dodo-worker`, restricted by API, managed by Terraform), so the website restriction does not affect it. Ignore the console's warning about Static Maps; dodo does not use it.
+
+The app is served at <https://dodo-tasks.web.app>, a second Firebase Hosting site the deploy workflow creates; the project's default site (`dodo-512722.web.app`) only redirects there (`firebase.json`). Google sign-in runs through that same domain (`VITE_FIREBASE_AUTH_DOMAIN=dodo-tasks.web.app`), so browsers that partition third-party storage don't lose the sign-in state. For that to work:
+
+- In the same Credentials page, edit "Web client (auto created by Google Service)": add `https://dodo-tasks.web.app/__/auth/handler` under Authorized redirect URIs and `https://dodo-tasks.web.app` under Authorized JavaScript origins. Without it, Google shows `redirect_uri_mismatch` on sign-in.
+- In Firebase Console → Authentication → Settings → Authorized domains, make sure `dodo-tasks.web.app` is listed.
 
 What I need from you, in short:
 
