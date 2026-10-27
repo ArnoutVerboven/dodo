@@ -32,6 +32,9 @@ import { sandboxReport } from './sandbox.js';
 
 const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
 
+  dodo setup <code> [folder...] [--name "My Mac"] [--foreground]
+                         everything below in one go: pair, add the folders, check, and keep
+                         the daemon running in the background (launchd on macOS)
   dodo login <code> [--name "My Mac"] [--project <id>] [--emulator]
                          pair this Mac with the code from Settings › Your Macs
   dodo daemon [--once]   wait for runs addressed to this Mac and execute them
@@ -170,9 +173,13 @@ async function folders(action: string | undefined, target: string | undefined) {
   for (const f of config.folders) console.log(f);
 }
 
-async function doctor() {
-  const ok = (label: string, good: boolean, note = '') =>
+/** Returns whether every check passed. */
+async function doctor(): Promise<boolean> {
+  let all = true;
+  const ok = (label: string, good: boolean, note = '') => {
+    all &&= good;
     console.log(`${good ? 'ok  ' : 'FAIL'} ${label}${note ? `: ${note}` : ''}`);
+  };
   const major = Number(process.versions.node.split('.')[0]);
   ok('node 22 or newer', major >= 22, process.versions.node);
   const config = readConfig();
@@ -193,7 +200,7 @@ async function doctor() {
       ? `${process.platform === 'darwin' ? 'Seatbelt' : 'bubblewrap'}${sandbox.warnings.length ? `; ${sandbox.warnings.join('; ')}` : ''}`
       : [...sandbox.problems, ...sandbox.warnings].join('; '),
   );
-  if (!config) return;
+  if (!config) return false;
   try {
     const clients = connect(config, store);
     const user = await currentUser(clients);
@@ -214,12 +221,50 @@ async function doctor() {
       agentInstalled(),
       agentInstalled() ? 'installed' : 'not installed (dodo daemon install)',
     );
+  return all;
+}
+
+/** The whole setup in one command: pair (once), add the folders, check, run the daemon. */
+async function setup(
+  code: string | undefined,
+  folderArgs: string[],
+  flags: Flags,
+): Promise<number> {
+  const existing = readConfig();
+  if (existing) console.log(`Already paired as "${existing.name}"; keeping that pairing.`);
+  else {
+    if (!code)
+      throw new Error(
+        'Usage: dodo setup <code> [folder...]  (the code is in Settings › Your Macs)',
+      );
+    await login(code, flags);
+  }
+  for (const f of folderArgs) await folders('add', f);
+  console.log('');
+  const healthy = await doctor();
+  console.log('');
+  if (!healthy) {
+    console.log('Fix the FAIL lines above, then run `pnpm dodo setup` again (no code needed).');
+    return 1;
+  }
+  const config = requireConfig();
+  if (flags.foreground === true || process.platform !== 'darwin') {
+    console.log('Setup complete. Starting the daemon here; stop it with Ctrl-C.');
+    const reason = await runDaemon(config, {});
+    return reason === 'once' ? 0 : 1;
+  }
+  const plist = installAgent(fileURLToPath(import.meta.url));
+  console.log(`Setup complete. The daemon runs in the background and starts at login (${plist}).`);
+  console.log(`Log: ${logPath()}. Check it any time with \`pnpm dodo status\`.`);
+  return 0;
 }
 
 async function main(argv: string[]): Promise<number> {
   const { args, flags } = parse(argv);
   const [cmd, sub, third] = args;
   switch (cmd) {
+    case 'setup':
+      return setup(sub, args.slice(2), flags);
     case 'login':
       await login(sub, flags);
       return 0;
