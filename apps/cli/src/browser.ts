@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 /**
  * The agent's browser on a Mac is a real Chrome window on your screen, driven by Playwright MCP,
@@ -125,6 +127,13 @@ export interface BrowserServer {
   url: string;
   /** False once the server process is gone; the next run starts a fresh one. */
   running(): boolean;
+  /**
+   * Make sure the window is open and held before a run: Playwright MCP closes the browser when
+   * its last client leaves, and the worker leaves at the end of every run. The daemon stays
+   * connected as a client of its own, so the window and its tabs outlive the run and a login
+   * you did for the agent is still there when the next run picks the task up.
+   */
+  hold(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -148,10 +157,50 @@ export interface BrowserServerOptions {
   log: (message: string) => void;
 }
 
+/** The daemon's own seat at the server; see `BrowserServer.hold`. */
+class KeepAlive {
+  private client?: Client;
+  private connecting?: Promise<void>;
+  constructor(
+    private url: string,
+    private log: (message: string) => void,
+  ) {}
+
+  async hold(): Promise<void> {
+    if (!this.client) {
+      this.connecting ??= this.connect().finally(() => {
+        this.connecting = undefined;
+      });
+      await this.connecting;
+    }
+    // Any tool call does it: the server only takes a seat at the browser on the first call, and
+    // takes it again after the window was closed by hand.
+    await this.client?.callTool({ name: 'browser_tabs', arguments: { action: 'list' } });
+  }
+
+  private async connect(): Promise<void> {
+    const client = new Client({ name: 'dodo-daemon', version: '0.1.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(this.url)));
+    client.onclose = () => {
+      if (this.client === client) {
+        this.client = undefined;
+        this.log('browser: lost the hold on the window; taking it again on the next run');
+      }
+    };
+    this.client = client;
+  }
+
+  async close(): Promise<void> {
+    const client = this.client;
+    this.client = undefined;
+    await client?.close().catch(() => {});
+  }
+}
+
 /**
- * Start Playwright MCP on a free localhost port. Chrome itself is only touched on the first
- * tool call: dodo's own window opens then, or the extension's connect page does and either
- * connects on the token or waits for you to click Allow.
+ * Start Playwright MCP on a free localhost port and take a seat at the browser: dodo's own
+ * window opens, or the extension's connect page does and either connects on the token or waits
+ * for you to click Allow.
  */
 export function startBrowserServer({
   mode,
@@ -208,11 +257,24 @@ export function startBrowserServer({
       if (m) {
         settled = true;
         clearTimeout(timer);
-        resolve({
-          url: `${m[1]}/mcp`,
+        const url = `${m[1]}/mcp`;
+        const keepAlive = new KeepAlive(url, log);
+        const server: BrowserServer = {
+          url,
           running: () => child.exitCode === null && child.signalCode === null,
-          stop,
-        });
+          hold: () => keepAlive.hold(),
+          stop: async () => {
+            await keepAlive.close();
+            await stop();
+          },
+        };
+        keepAlive.hold().then(
+          () => resolve(server),
+          (err: Error) => {
+            void server.stop();
+            reject(new Error(`browser server: ${err.message}`));
+          },
+        );
       }
     };
     child.stdout?.on('data', relay);

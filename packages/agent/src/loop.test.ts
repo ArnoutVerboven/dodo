@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GatewayBudgetError } from './control-plane.js';
+import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
 import { runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { taskTools, toDeclarations } from './tools.js';
@@ -112,9 +112,17 @@ describe('runAgent', () => {
     expect(control.finishes[0]?.reason).toBe('interrupted');
   });
 
-  it('stops when the gateway refuses for budget', async () => {
-    const { run } = setup([{ error: new GatewayBudgetError() }]);
+  it('stops when the gateway refuses for budget, and passes on which cap it was', async () => {
+    const why = "budget_exhausted(project): the project's monthly budget has €0.01 left";
+    const { control, run } = setup([{ error: new GatewayBudgetError(why) }]);
     expect((await run()).reason).toBe('budget_exhausted');
+    expect(control.finishes[0]?.error).toBe(why);
+  });
+
+  it('ends the run as an error, not a budget, when the hourly cap is reached', async () => {
+    const { control, run } = setup([{ error: new GatewayRateLimitError('the hourly cap') }]);
+    expect((await run()).reason).toBe('error');
+    expect(control.finishes[0]?.error).toBe('the hourly cap');
   });
 
   it('returns validation errors to the model instead of crashing', async () => {

@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@dodo/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/mcp": "0.0.83",
     "firebase": "^13.1.0"
   },

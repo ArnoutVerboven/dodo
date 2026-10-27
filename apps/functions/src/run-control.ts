@@ -293,20 +293,35 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   batch.update(taskRef, taskUpdate);
 
   if (req.reason === 'budget_exhausted') {
-    const topUp = 500_000;
-    batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
-      author: 'system',
-      body: 'This task has used its budget.',
-      runId: run.id,
-      input: {
-        kind: 'approval',
-        prompt: 'This task has used its budget. Top it up by 0.50 EUR and continue?',
-        costEstimate: topUp,
-        topUp,
-      },
-      createdAt: now,
-    });
-    taskUpdate.statusLine = { text: 'Budget used up. Top up to continue?', needsYou: true };
+    const cap = exhaustedCap(req.error);
+    if (cap.kind === 'task') {
+      // Enough for the call that was refused, at least 0.50 EUR, so one top-up gets it going.
+      const topUp = Math.max(500_000, Math.ceil((cap.needed ?? 0) / 100_000) * 100_000);
+      const eur = (topUp / 1_000_000).toFixed(2);
+      batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
+        author: 'system',
+        body: `This task has used its budget${cap.why ? `: ${cap.why}` : ''}.`,
+        runId: run.id,
+        input: {
+          kind: 'approval',
+          prompt: `This task has used its budget. Top it up by ${eur} EUR and continue?`,
+          costEstimate: topUp,
+          topUp,
+        },
+        createdAt: now,
+      });
+      taskUpdate.statusLine = { text: 'Budget used up. Top up to continue?', needsYou: true };
+    } else {
+      // A cap a task top-up cannot move: say which, and where it is raised.
+      const where = cap.kind === 'project' ? 'on the project' : 'under Settings › Budget';
+      batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
+        author: 'system',
+        body: `Budget cap reached: ${cap.why}. Raise it ${where}, then comment to continue.`,
+        runId: run.id,
+        createdAt: now,
+      });
+      taskUpdate.statusLine = { text: 'Budget cap reached. Raise it to continue?', needsYou: true };
+    }
     batch.update(taskRef, taskUpdate);
   } else if (req.reason === 'error') {
     batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
@@ -330,6 +345,25 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   const summary =
     ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
   await deps.notify?.({ title: headline, body: req.error ?? summary, taskId: run.taskId });
+}
+
+/**
+ * What the gateway said when it refused: `budget_exhausted(<kind>): <why>` (see gateway.ts).
+ * A worker from before that message, or a heartbeat refusal, gives no error: the task's budget.
+ */
+export function exhaustedCap(error: string | undefined): {
+  kind: 'total' | 'monthly' | 'project' | 'job' | 'task';
+  why?: string;
+  needed?: number;
+} {
+  const m = /^budget_exhausted\((total|monthly|project|job|task)\):\s*(.*)$/s.exec(error ?? '');
+  if (!m) return { kind: 'task' };
+  const needs = /needs €(\d+(?:\.\d+)?)/.exec(m[2] ?? '');
+  return {
+    kind: m[1] as 'total' | 'monthly' | 'project' | 'job' | 'task',
+    why: m[2],
+    needed: needs ? Math.round(Number(needs[1]) * 1_000_000) : undefined,
+  };
 }
 
 /** Shared tail: settle the infra slice and make the run identity worthless. */

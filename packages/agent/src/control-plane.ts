@@ -60,6 +60,12 @@ export class GatewayBudgetError extends Error {
     super(message);
   }
 }
+/** The gateway's hourly cap across all runs is reached; not a budget, over at the top of the hour. */
+export class GatewayRateLimitError extends Error {
+  constructor(message = 'Hourly spending cap reached') {
+    super(message);
+  }
+}
 export class GatewayHaltedError extends Error {
   constructor(message = 'Processing halted') {
     super(message);
