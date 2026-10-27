@@ -99,7 +99,7 @@ async function login(code: string | undefined, flags: Flags) {
     folders: [],
   };
   const store = credentialStore();
-  const clients = connect(config, store, 'dodo-login-device');
+  const clients = connect(config, store);
   await signInWithCustomToken(clients.auth, res.data.token);
   writeConfig(config);
   console.log(

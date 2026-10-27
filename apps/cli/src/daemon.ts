@@ -30,7 +30,7 @@ export type StopReason = 'revoked' | 'update_needed' | 'signed_out' | 'once';
  */
 export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Promise<StopReason> {
   const log = opts.log ?? ((m: string) => console.log(`${new Date().toISOString()} ${m}`));
-  const clients = connect(config, credentialStore(), 'dodo-daemon');
+  const clients = connect(config, credentialStore());
   await currentUser(clients.auth).catch((err) => {
     throw new Error(`${(err as Error).message} (${config.name})`);
   });

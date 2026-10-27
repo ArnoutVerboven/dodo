@@ -60,12 +60,17 @@ export interface Clients {
   functions: Functions;
 }
 
+/**
+ * The SDK keys the persisted user by API key and app name, so every command uses this one name:
+ * a sign-in made under another name is invisible to the next process.
+ */
+const APP_NAME = 'dodo-device';
+
 export function connect(
   config: Pick<CliConfig, 'firebase' | 'region' | 'emulatorHost'>,
   store: CredentialStore,
-  name = 'dodo-cli',
 ): Clients {
-  const app = initializeApp(config.firebase, name);
+  const app = initializeApp(config.firebase, APP_NAME);
   const auth = initializeAuth(app, { persistence: storePersistence(store) });
   const db = getFirestore(app);
   const functions = getFunctions(app, config.region);
