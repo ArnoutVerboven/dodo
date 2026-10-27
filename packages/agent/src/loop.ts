@@ -4,6 +4,7 @@ import {
   type ControlPlane,
   GatewayBudgetError,
   GatewayHaltedError,
+  GatewayRateLimitError,
   LeaseLostError,
   type RunInput,
   type TaskStore,
@@ -162,7 +163,11 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         });
       } catch (err) {
         if (err instanceof GatewayBudgetError) {
-          finishWith('budget_exhausted');
+          finishWith('budget_exhausted', { error: err.message });
+          break;
+        }
+        if (err instanceof GatewayRateLimitError) {
+          finishWith('error', { error: err.message });
           break;
         }
         if (err instanceof GatewayHaltedError) {

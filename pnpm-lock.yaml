@@ -32,6 +32,9 @@ importers:
       '@dodo/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.2
+        version: 1.32.2(zod@4.6.7)
       '@playwright/mcp':
         specifier: 0.0.83
         version: 0.0.83

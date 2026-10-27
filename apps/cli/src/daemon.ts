@@ -190,7 +190,14 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
                 log(`run ${runId}: ${(err as Error).message}; running without the browser`);
               }
             }
-            browserUrl = browserServer?.url;
+            if (browserServer) {
+              try {
+                await browserServer.hold();
+                browserUrl = browserServer.url;
+              } catch (err) {
+                log(`run ${runId}: browser: ${(err as Error).message}; running without it`);
+              }
+            }
           }
           const code = await execute(
             config,

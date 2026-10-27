@@ -2,6 +2,7 @@ import {
   type ControlPlane,
   GatewayBudgetError,
   GatewayHaltedError,
+  GatewayRateLimitError,
   LeaseLostError,
   type TaskStore,
   type TraceSink,
@@ -85,7 +86,12 @@ function translate(err: unknown): Error {
   const e = err as { code?: string; message?: string };
   const code = e.code ?? '';
   const msg = e.message ?? '';
-  if (code.endsWith('resource-exhausted')) return new GatewayBudgetError(msg);
+  if (code.endsWith('resource-exhausted')) {
+    const rate = /^rate_governor:\s*/.exec(msg);
+    return rate
+      ? new GatewayRateLimitError(msg.slice(rate[0].length))
+      : new GatewayBudgetError(msg);
+  }
   if (code.endsWith('unavailable') && /halted/.test(msg)) return new GatewayHaltedError(msg);
   if (code.endsWith('failed-precondition')) return new LeaseLostError(msg);
   if (code.endsWith('permission-denied')) return new LeaseLostError(msg);
