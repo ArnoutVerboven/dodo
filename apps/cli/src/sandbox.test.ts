@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sandboxConfig, workerHosts } from './sandbox.js';
+import { proxyBypass, sandboxConfig, workerHosts } from './sandbox.js';
 
 const inputs = {
   homeDir: '/Users/me',
@@ -51,5 +51,12 @@ describe('sandboxConfig', () => {
     expect(workerHosts('demo-dodo', 'europe-west1', '127.0.0.1')).toEqual(
       expect.arrayContaining(['localhost', '127.0.0.1']),
     );
+  });
+});
+
+describe('proxyBypass', () => {
+  it('exempts only the proxy, in every spelling node compares against', () => {
+    expect(proxyBypass(3128)).toBe('localhost:3128,127.0.0.1:3128,::1:3128,[::1]:3128');
+    expect(proxyBypass(undefined)).toBeUndefined();
   });
 });

@@ -157,9 +157,11 @@ const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export interface SandboxedOptions {
   /**
-   * The runtime exempts loopback from its proxy (`NO_PROXY=localhost,127.0.0.1,…`), and inside the
-   * network namespace a direct loopback connection goes nowhere. With the emulators on the host,
-   * loopback traffic has to go through the proxy like any other host, so drop the exemption.
+   * Route loopback through the sandbox's proxy. The runtime exempts loopback from its proxy
+   * (`NO_PROXY=localhost,127.0.0.1,…`); inside the Linux network namespace a direct loopback
+   * connection goes nowhere, so with the emulators on the host the exemption has to go. Only the
+   * proxy's own address stays exempt: node proxies `http.request` too, and grpc-js reaches the
+   * proxy with one, which the proxy would otherwise be asked to tunnel to itself.
    */
   proxyLoopback?: boolean;
 }
@@ -171,12 +173,13 @@ export async function sandboxedArgv(
   commandId: string,
   options: SandboxedOptions = {},
 ): Promise<string[]> {
-  const inner = argv.map(quote).join(' ');
-  const command = options.proxyLoopback
-    ? `env -u NO_PROXY -u no_proxy -u no_grpc_proxy ${inner}`
-    : inner;
+  const command = argv.map(quote).join(' ');
+  const bypass = options.proxyLoopback ? proxyBypass(sandboxProxyPort()) : undefined;
+  const inner = bypass
+    ? `env NO_PROXY=${quote(bypass)} no_proxy=${quote(bypass)} -u no_grpc_proxy ${command}`
+    : command;
   const wrapped = await SandboxManager.wrapWithSandboxArgv(
-    command,
+    inner,
     undefined,
     undefined,
     undefined,
@@ -184,6 +187,20 @@ export async function sandboxedArgv(
     { commandId, commandText: command },
   );
   return wrapped.argv;
+}
+
+/** Where the sandboxed command finds the proxy: a fixed relay port on Linux, the proxy itself elsewhere. */
+function sandboxProxyPort(): number | undefined {
+  return process.platform === 'linux' ? 3128 : SandboxManager.getProxyPort();
+}
+
+/**
+ * A `NO_PROXY` that exempts only the proxy at `localhost:port`, in the spellings node's
+ * `http.request` (`::1:port`) and its `fetch` (`[::1]:port`) compare against.
+ */
+export function proxyBypass(port: number | undefined): string | undefined {
+  if (!port) return undefined;
+  return ['localhost', '127.0.0.1', '::1', '[::1]'].map((h) => `${h}:${port}`).join(',');
 }
 
 /** What the sandbox refused during a command, one line each, and release the command's mounts. */
