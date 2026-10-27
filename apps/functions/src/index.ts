@@ -69,6 +69,13 @@ const GOOGLE_OAUTH_CLIENT_ID = defineString('GOOGLE_OAUTH_CLIENT_ID', { default:
 const GOOGLE_OAUTH_CLIENT_SECRET = defineString('GOOGLE_OAUTH_CLIENT_SECRET', { default: '' });
 const REGION = 'europe-west1';
 const JOBS_SA = 'dodo-jobs@';
+/**
+ * Cloud Scheduler needs the full address: the Firebase CLI expands the `name@` shorthand for
+ * the function itself but passes it to the scheduler job unchanged, which rejects it (400).
+ * The CLI sets GCLOUD_PROJECT while it loads the code for deploy.
+ */
+const PROJECT_ID = process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT ?? '';
+const JOBS_SA_EMAIL = PROJECT_ID ? `dodo-jobs@${PROJECT_ID}.iam.gserviceaccount.com` : JOBS_SA;
 const WORKER_JOB = 'dodo-worker';
 const GATEWAY_SA = 'dodo-gateway@';
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
@@ -477,7 +484,7 @@ const ownerOnly = (auth: { token: Record<string, unknown> } | undefined) => {
 export const jobsTick = onSchedule(
   {
     schedule: 'every 15 minutes',
-    serviceAccount: JOBS_SA,
+    serviceAccount: JOBS_SA_EMAIL,
     timeoutSeconds: 540,
     memory: '512MiB',
     maxInstances: 1,
