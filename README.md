@@ -44,14 +44,21 @@ A task whose device is your Mac is picked up by a small daemon on it; the agent 
 
 ```sh
 git clone https://github.com/ArnoutVerboven/dodo && cd dodo
-pnpm install && pnpm build
-pnpm dodo login <code>          # the code is in Settings › Your Macs › Add a Mac
-pnpm dodo folders add ~/code    # folders the agent may work in (none by default)
-pnpm dodo daemon                # or: pnpm dodo daemon install  (launchd, starts at login)
-pnpm dodo status                # online? queued runs? log location
+pnpm mac setup <code> ~/code    # the code is in Settings › Your Macs › Add a Mac;
+                                # ~/code is a folder the agent may work in (any number)
 ```
 
-`pnpm dodo doctor` checks the setup. Revoke a Mac in Settings; `pnpm dodo logout` forgets the pairing on the Mac itself. The device sign-in lives in the macOS Keychain; the daemon never holds model or cloud keys.
+`pnpm mac` installs, builds and runs the CLI in one go; `setup` pairs the Mac, adds the folders, runs the checks and keeps the daemon running in the background (launchd, starts at login). After that, `pnpm dodo status` shows whether it is online and what is queued. The steps one by one:
+
+```sh
+pnpm install && pnpm build
+pnpm dodo login <code>
+pnpm dodo folders add ~/code    # folders the agent may work in (none by default)
+pnpm dodo doctor                # checks node, pairing, sign-in, worker build and sandbox
+pnpm dodo daemon                # in the foreground; or: pnpm dodo daemon install
+```
+
+Revoke a Mac in Settings; `pnpm dodo logout` forgets the pairing on the Mac itself. The device sign-in lives in the macOS Keychain; the daemon never holds model or cloud keys.
 
 **What a task may touch on your Mac.** Each run is a separate process inside [Anthropic's sandbox runtime](https://github.com/anthropic-experimental/sandbox-runtime) (Seatbelt on macOS, bubblewrap on Linux), the same mechanism Claude Code uses:
 
