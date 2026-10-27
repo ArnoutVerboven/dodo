@@ -5,6 +5,7 @@ import {
   decideThread,
   type Generate,
 } from './agent.js';
+import { type EventProposal, eventTimes, postEventCard } from './events.js';
 import { type GmailThread, GoogleAuthError } from './google.js';
 import {
   inboxQuery,
@@ -25,7 +26,7 @@ import {
   type RunEntry,
 } from './model.js';
 import type { JobStore, Notifier, TaskSink } from './ports.js';
-import { localDay, type Slot } from './slots.js';
+import { formatLocal, localDay, type Slot, zonedTime } from './slots.js';
 
 /** Gmail and Calendar as the job uses them (the REST clients, or fakes in tests). */
 export interface GmailLike {
@@ -382,6 +383,10 @@ async function handleThread(
     entry.reason = d.reason;
     entry.title = d.title;
     entry.draft = d.reply?.slice(0, 2000);
+    if (d.event) {
+      const [date, time] = d.event.start.split('T') as [string, string];
+      entry.event = `${d.event.title}, ${formatLocal(zonedTime(date, time, ctx.timeZone), ctx.timeZone)}`;
+    }
 
     if (d.action === 'ignore') {
       run.counts.ignored++;
@@ -478,6 +483,15 @@ async function handleThread(
         })
         .catch(() => undefined);
     }
+    const event = d.event
+      ? await proposeEvent(ctx, {
+          taskId,
+          threadId,
+          event: d.event,
+          previous: known2?.event,
+          notify: !approval,
+        })
+      : undefined;
     await deps.store.setThread(jobId, {
       id: threadId,
       taskId,
@@ -486,6 +500,7 @@ async function handleThread(
       subject: thread.subject.slice(0, 200),
       updatedAt: ctx.now(),
       ...(approval ? { approval } : {}),
+      ...(event ? { event } : {}),
     });
     pushEntry(run, entry);
     return false;
@@ -514,6 +529,57 @@ async function handleThread(
     if (!(err instanceof AgentError)) ctx.log('item failed', { threadId, err: String(err) });
     return false;
   }
+}
+
+/** Puts an "Add to calendar?" card on the task; the event is only created on approval. */
+async function proposeEvent(
+  ctx: RunContext,
+  a: {
+    taskId: string;
+    threadId: string;
+    event: EventProposal;
+    previous?: { taskId: string; messageId: string };
+    notify: boolean;
+  },
+): Promise<{ taskId: string; messageId: string }> {
+  const { deps, opts } = ctx;
+  if (a.previous) {
+    await deps.tasks.transition(
+      a.previous.taskId,
+      a.previous.messageId,
+      ['pending'],
+      'superseded',
+      {},
+      'Replaced by a newer proposal',
+    );
+  }
+  const proposal = {
+    jobId: opts.jobId,
+    threadId: a.threadId,
+    title: a.event.title,
+    start: a.event.start,
+    durationMinutes: a.event.durationMinutes,
+    timeZone: ctx.timeZone,
+    location: a.event.location,
+    account: ctx.account,
+  };
+  const { start, end } = eventTimes(proposal);
+  const clash = await deps.calendar
+    .busy(new Date(start), new Date(end))
+    .then((b) => b.some((x) => x.start < end && x.end > start))
+    .catch(() => false);
+  const messageId = await postEventCard(deps.tasks, { ...proposal, taskId: a.taskId, clash });
+  if (a.notify && ctx.config.notify) {
+    await deps.notify
+      ?.notify({
+        title: 'Add to your calendar?',
+        body: `${a.event.title}, ${formatLocal(start, ctx.timeZone)}`,
+        taskId: a.taskId,
+        input: { messageId, kind: 'approval' },
+      })
+      .catch(() => undefined);
+  }
+  return { taskId: a.taskId, messageId };
 }
 
 /** Creates (or updates) the Gmail draft and puts an approval card with it on the task. */

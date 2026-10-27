@@ -120,7 +120,7 @@ function GoogleCard() {
             <SourceIcon source={{ kind: 'gmail' }} />
             Connected as <b>{connector.email ?? 'your account'}</b>
             <span className="text-xs text-muted-foreground">
-              · Gmail (read, drafts) and Calendar (free/busy)
+              · Gmail (read, drafts) and Calendar (free/busy, events you approve)
             </span>
           </p>
         ) : (
@@ -505,6 +505,7 @@ function RunRow({ run }: { run: JobRun }) {
                   {e.draft}
                 </pre>
               )}
+              {e.event && <p className="text-muted-foreground">Calendar: {e.event}</p>}
             </div>
           ))}
         </div>

@@ -9,7 +9,7 @@ import type {
 import { z } from 'zod';
 import type { MailThread } from './mail.js';
 import { LIMITS, type WorkingHours } from './model.js';
-import { formatLocal, freeSlots, type Slot } from './slots.js';
+import { formatLocal, freeSlots, localDay, type Slot, zonedTime } from './slots.js';
 
 /**
  * The agent step of a job: one short tool loop that reads one thread and decides what to do.
@@ -30,6 +30,16 @@ export const Decision = z.object({
   dueDate: z.iso.date().optional(),
   tags: z.array(z.string().max(30)).max(3).optional(),
   reply: z.string().max(5000).optional(),
+  /** An appointment the thread settles, to offer for the user's calendar. */
+  event: z
+    .object({
+      title: z.string().min(1).max(120),
+      /** Local wall-clock time in the user's time zone. */
+      start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'start must be YYYY-MM-DDTHH:MM'),
+      durationMinutes: z.number().int().min(5).max(720).default(60),
+      location: z.string().max(300).optional(),
+    })
+    .optional(),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -74,6 +84,13 @@ Decide with the decide tool (always end with it):
   wants what, by when, and the suggested next step.
 - update: the thread already has a task (given below), or search_tasks found the open task
   this is about. Use its taskId. The summary then says what is new.
+
+Appointments: when the thread settles a concrete appointment (the other side confirmed a
+time, or the reply you draft accepts one time they offered), fill "event" with a short title
+(e.g. "House visit Kerkstraat 12"), the local start time, the length and the place if known.
+The user is asked before anything goes into their calendar. Use create or update for such a
+thread, not ignore, even when it is only a confirmation. Leave "event" empty while the time is
+still open (for example when you propose several slots).
 
 Priority: urgent only for same-day deadlines, high for this week or blocking someone, else
 medium or low. Set dueDate when a date is stated or clearly implied.
@@ -135,6 +152,17 @@ const declarations: FunctionDeclaration[] = [
         dueDate: { type: 'string', description: 'YYYY-MM-DD' },
         tags: { type: 'array', items: { type: 'string' } },
         reply: { type: 'string', description: 'The reply draft, plain text, no subject line.' },
+        event: {
+          type: 'object',
+          description: 'Only when the thread settles one concrete appointment.',
+          properties: {
+            title: { type: 'string' },
+            start: { type: 'string', description: 'Local start, YYYY-MM-DDTHH:MM' },
+            durationMinutes: { type: 'integer' },
+            location: { type: 'string' },
+          },
+          required: ['title', 'start'],
+        },
       },
       required: ['action', 'reason'],
     },
@@ -236,7 +264,16 @@ function normalise(d: Decision, ctx: AgentContext): Decision {
   if (d.action === 'update' && !d.taskId) d.action = 'create';
   if (d.action === 'create' && !d.title) d.title = ctx.thread.subject.slice(0, 120);
   if (!ctx.draftReplies) d.reply = undefined;
+  if (d.event && (d.action === 'ignore' || !eventInFuture(d.event.start, ctx))) d.event = undefined;
   return d;
+}
+
+/** Only appointments from now up to a year ahead; anything else is a misread date. */
+function eventInFuture(start: string, ctx: Pick<AgentContext, 'now' | 'timeZone'>): boolean {
+  const [date, time] = start.split('T') as [string, string];
+  const at = zonedTime(date, time, ctx.timeZone);
+  if (!Number.isFinite(at) || localDay(at, ctx.timeZone).date !== date) return false;
+  return at > ctx.now && at < ctx.now + 366 * 86_400_000;
 }
 
 const respond = (

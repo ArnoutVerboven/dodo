@@ -121,6 +121,8 @@ export const JobThread = z.object({
   subject: z.string().optional(),
   /** The reply approval card waiting for an answer, if any. */
   approval: z.object({ taskId: z.string(), messageId: z.string() }).optional(),
+  /** The calendar event card waiting for an answer, if any. */
+  event: z.object({ taskId: z.string(), messageId: z.string() }).optional(),
   updatedAt: Timestamp,
 });
 export type JobThread = z.infer<typeof JobThread>;
@@ -134,6 +136,8 @@ export const RunEntry = z.object({
   title: z.string().optional(),
   taskId: z.string().optional(),
   draft: z.string().optional(),
+  /** The calendar event offered, e.g. "House visit, Tue 4 Nov 14:00". */
+  event: z.string().optional(),
 });
 export type RunEntry = z.infer<typeof RunEntry>;
 
@@ -198,6 +202,8 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.compose',
   'https://www.googleapis.com/auth/calendar.readonly',
+  // Create events, only after you approve them on the task.
+  'https://www.googleapis.com/auth/calendar.events',
 ] as const;
 
 /** Which connector each job needs. */

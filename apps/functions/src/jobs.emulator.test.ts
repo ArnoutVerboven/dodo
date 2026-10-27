@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { GenerateResponse, Part } from '@dodo/core';
 import {
   BudgetStop,
+  type EventAction,
   type Generate,
   type GmailMessage,
   type GmailThread,
+  handleEventAnswer,
   handleReplyAnswer,
   type ReplyAction,
   runGmailJob,
@@ -333,5 +335,76 @@ describe.skipIf(!enabled)('Gmail follow-up job (emulator)', () => {
     expect((await runGmailJob(deps(generate), { jobId, trigger: 'schedule' })).error).toBe(
       'Job is off',
     );
+  });
+  it('offers a confirmed appointment for the calendar and adds it once on approval', async () => {
+    const { db, jobId, gmail, store, tasks, deps, notify } = await setup();
+    const thread = `e-${randomUUID().slice(0, 8)}`;
+    gmail.add(thread, `Arnout <${ME}>`, 5, 'Donderdag 14u past mij.', ['SENT']);
+    gmail.add(thread, '"Jan Peeters" <jan@immo.be>', 2, 'Perfect, tot donderdag om 14u!');
+    const generate = vi.fn<Generate>().mockResolvedValue(
+      decide({
+        action: 'create',
+        reason: 'The visit is confirmed',
+        title: 'House visit Kerkstraat 12',
+        event: {
+          title: 'House visit Kerkstraat 12',
+          start: '2026-10-29T14:00',
+          location: 'Kerkstraat 12',
+        },
+      }),
+    );
+    const busy = vi.fn(async () => [
+      { start: Date.UTC(2026, 9, 29, 13, 30), end: Date.UTC(2026, 9, 29, 14) },
+    ]);
+    const run = await runGmailJob(
+      { ...deps(generate), calendar: { timeZone: async () => 'Europe/Brussels', busy } },
+      { jobId, trigger: 'manual' },
+    );
+    const entry = run.entries.find((e) => e.threadId === thread);
+    expect(entry?.event).toBe('House visit Kerkstraat 12, Thu 29 Oct, 14:00');
+    const taskId = entry?.taskId as string;
+    const messages = await db.collection(`tasks/${taskId}/messages`).get();
+    const card = messages.docs.find((m) => m.get('action.type') === 'jobs.event');
+    expect(card?.get('action')).toMatchObject({
+      state: 'pending',
+      start: '2026-10-29T14:00',
+      durationMinutes: 60,
+      timeZone: 'Europe/Brussels',
+    });
+    // 13:30–14:00 UTC is 14:30–15:00 in Brussels: it overlaps the visit.
+    expect(card?.get('body')).toContain('already has something');
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Add to your calendar?',
+        input: { messageId: card?.id, kind: 'approval' },
+      }),
+    );
+    expect((await store.getThread(jobId, thread))?.event).toEqual({ taskId, messageId: card?.id });
+
+    const insertEvent = vi.fn(async () => ({
+      id: 'ev1',
+      htmlLink: 'https://calendar.google.com/e/1',
+    }));
+    const eventDeps = { tasks, store, calendar: { insertEvent } };
+    const action = card?.get('action') as EventAction;
+    expect(await handleEventAnswer(eventDeps, taskId, card?.id as string, action, 'approve')).toBe(
+      'created',
+    );
+    expect(await handleEventAnswer(eventDeps, taskId, card?.id as string, action, 'approve')).toBe(
+      'noop',
+    );
+    expect(insertEvent).toHaveBeenCalledOnce();
+    expect(insertEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'House visit Kerkstraat 12',
+        start: '2026-10-29T14:00:00',
+        end: '2026-10-29T15:00:00',
+        timeZone: 'Europe/Brussels',
+      }),
+    );
+    expect(
+      (await db.doc(`tasks/${taskId}/messages/${card?.id}`).get()).get('action'),
+    ).toMatchObject({ state: 'created', eventUrl: 'https://calendar.google.com/e/1' });
+    expect((await store.getThread(jobId, thread))?.event).toBeUndefined();
   });
 });

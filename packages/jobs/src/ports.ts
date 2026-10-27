@@ -72,10 +72,13 @@ export interface JobStore {
   /** Gives the message back (nothing was done with it), e.g. when the budget ran out. */
   releaseItem(jobId: string, itemId: string): Promise<void>;
   getThread(jobId: string, threadId: string): Promise<JobThread | undefined>;
-  /** `approval: null` removes the pending card. */
+  /** `approval: null` / `event: null` remove the pending card. */
   setThread(
     jobId: string,
-    thread: Omit<JobThread, 'approval'> & { approval?: JobThread['approval'] | null },
+    thread: Omit<JobThread, 'approval' | 'event'> & {
+      approval?: JobThread['approval'] | null;
+      event?: JobThread['event'] | null;
+    },
   ): Promise<void>;
   openThreads(jobId: string, limit: number): Promise<JobThread[]>;
   /** Counts a new task against the daily cap; false when the cap is reached. */

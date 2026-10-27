@@ -58,6 +58,12 @@ When the agent step decides a reply is needed, the job creates a real **Gmail dr
 - Sending happens once: the card's state moves `pending → sending → sent` in a transaction before the Gmail call.
 - If you reply in Gmail yourself, the next run sees it and marks the task done.
 
+**Calendar events.** When a thread settles an appointment (the other side confirms a time, or
+the drafted reply accepts one), the job puts an "Add to your calendar?" card on the task, with
+a note when the slot clashes with something already in your calendar. Approving it inserts the
+event once on your primary calendar (a fixed event id per thread and start, `sendUpdates=none`,
+no attendees); denying it does nothing.
+
 ## 4. Connectors
 
 ### Gmail and Google Calendar (OAuth, built first)
@@ -69,6 +75,7 @@ One Google OAuth client for both. "Connect Google" in the Jobs tab runs the stan
 | `gmail.readonly`    | read inbox threads                                           |
 | `gmail.compose`     | create, update and send drafts (replies only after approval) |
 | `calendar.readonly` | free/busy and time zone, to propose slots                    |
+| `calendar.events`   | add an event you approved on the task (nobody is invited)   |
 | `openid email`      | show which account is connected                              |
 
 No `gmail.modify`: jobs never archive, label or delete mail. The app stays unverified for personal use; publishing the consent screen "In production" avoids the 7-day refresh-token expiry of testing mode.
@@ -93,7 +100,7 @@ The Jobs tab holds per-job settings (threshold, lookback, interval, caps, monthl
 
 ## 6. Setup (once)
 
-1. Google Cloud console › Google Auth Platform: the consent screen already exists (Google sign-in). Under **Data access** add the scopes `gmail.readonly`, `gmail.compose`, `calendar.readonly`. Under **Audience**, **Publish app** (to "In production"): unverified is fine for your own account and avoids refresh tokens that expire after 7 days in testing mode.
+1. Google Cloud console › Google Auth Platform: the consent screen already exists (Google sign-in). Under **Data access** add the scopes `gmail.readonly`, `gmail.compose`, `calendar.readonly`, `calendar.events`. Under **Audience**, **Publish app** (to "In production"): unverified is fine for your own account and avoids refresh tokens that expire after 7 days in testing mode.
 2. **Clients**: create an OAuth client of type _Web application_ (or reuse the existing web client) with the redirect URI `https://europe-west1-dodo-512722.cloudfunctions.net/jobsGoogleCallback`.
 3. GitHub › repository secrets: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, then re-run the Deploy workflow.
 4. dodo › Jobs › **Connect Google**; on the "Google hasn't verified this app" screen choose Advanced › Go to dodo, and tick every box.
