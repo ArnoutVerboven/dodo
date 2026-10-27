@@ -22,6 +22,7 @@
   "devDependencies": {
     "@dodo/budget": "workspace:*",
     "@dodo/core": "workspace:*",
+    "@dodo/jobs": "workspace:*",
     "@dodo/policy": "workspace:*",
     "esbuild": "^0.25.0"
   }

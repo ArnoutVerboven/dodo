@@ -22,11 +22,23 @@ import { logger, setGlobalOptions } from 'firebase-functions/v2';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { claimOwnership as claim } from './claim-ownership.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import { createApiToken, handleApiRequest, IngestError } from './ingest.js';
+import {
+  completeGoogleConnect,
+  disconnectGoogle,
+  FirestoreTokenStore,
+  type JobsShared,
+  onReplyAnswered,
+  runJob,
+  SecretManagerTokenStore,
+  startGoogleConnect,
+  tick,
+} from './jobs.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
@@ -52,7 +64,11 @@ const TELEGRAM_BOT_TOKEN = defineString('TELEGRAM_BOT_TOKEN', { default: '' });
 const APP_URL = defineString('APP_URL', { default: 'https://dodo-app.web.app' });
 /** The API-restricted worker key (Terraform), handed to a Mac when it pairs. */
 const DEVICE_API_KEY = defineString('DEVICE_API_KEY', { default: '' });
+/** Google OAuth client for Jobs (Gmail, Calendar); empty until set up (docs/JOBS.md). */
+const GOOGLE_OAUTH_CLIENT_ID = defineString('GOOGLE_OAUTH_CLIENT_ID', { default: '' });
+const GOOGLE_OAUTH_CLIENT_SECRET = defineString('GOOGLE_OAUTH_CLIENT_SECRET', { default: '' });
 const REGION = 'europe-west1';
+const JOBS_SA = 'dodo-jobs@';
 const WORKER_JOB = 'dodo-worker';
 const GATEWAY_SA = 'dodo-gateway@';
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
@@ -424,6 +440,112 @@ export const apiTokenCreate = onCall(
       if (err instanceof IngestError) throw new HttpsError('invalid-argument', err.message);
       throw err;
     }
+  },
+);
+
+/* ------------------------------ jobs ----------------------------- */
+
+const jobsShared = (): JobsShared => {
+  const db = getFirestore();
+  const id = GOOGLE_OAUTH_CLIENT_ID.value();
+  const secret = GOOGLE_OAUTH_CLIENT_SECRET.value();
+  const callback = isEmulator
+    ? `http://127.0.0.1:5001/${projectId()}/${REGION}/jobsGoogleCallback`
+    : `https://${REGION}-${projectId()}.cloudfunctions.net/jobsGoogleCallback`;
+  return {
+    db,
+    gateway: () => ({
+      db,
+      costGate: costGateFor(db),
+      provider: provider(),
+      hourlyCap: DEFAULT_HOURLY_CAP,
+    }),
+    tokens: isEmulator ? new FirestoreTokenStore(db) : new SecretManagerTokenStore(projectId()),
+    oauth: () =>
+      id && secret ? { clientId: id, clientSecret: secret, redirectUri: callback } : undefined,
+    notify: (n) => controlDeps().notify(n),
+    appUrl: () => (isEmulator ? 'http://localhost:5173' : APP_URL.value()),
+    log: (message, data) => logger.info(message, data),
+  };
+};
+
+const ownerOnly = (auth: { token: Record<string, unknown> } | undefined) => {
+  if (auth?.token.dodo_owner !== true) throw new HttpsError('permission-denied', 'Owner only');
+};
+
+/** Runs every enabled job that is due. Each job also has its own lease, budget and caps. */
+export const jobsTick = onSchedule(
+  {
+    schedule: 'every 15 minutes',
+    serviceAccount: JOBS_SA,
+    timeoutSeconds: 540,
+    memory: '512MiB',
+    maxInstances: 1,
+    retryCount: 0,
+  },
+  async () => tick(jobsShared()),
+);
+
+/** Jobs tab: Run now / Dry run. */
+export const jobsRunNow = onCall(
+  { serviceAccount: JOBS_SA, timeoutSeconds: 540, memory: '512MiB', maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { jobId, dryRun } = (request.data ?? {}) as { jobId?: string; dryRun?: boolean };
+    if (jobId !== 'gmail-followup') throw new HttpsError('invalid-argument', 'Unknown job');
+    const run = await runJob(jobsShared(), jobId, 'gmail-followup', 'manual', dryRun === true);
+    return { runId: run.id, state: run.state, error: run.error };
+  },
+);
+
+export const jobsGoogleConnect = onCall(
+  { serviceAccount: JOBS_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return startGoogleConnect(jobsShared(), request.auth?.uid ?? '');
+  },
+);
+
+/** Google's consent screen redirects here; the single-use state proves the flow started in the app. */
+export const jobsGoogleCallback = onRequest(
+  { serviceAccount: JOBS_SA, maxInstances: 1, invoker: 'public', timeoutSeconds: 30 },
+  async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const target = await completeGoogleConnect(jobsShared(), {
+      code: q.code,
+      state: q.state,
+      error: q.error,
+    });
+    res.redirect(302, target);
+  },
+);
+
+export const jobsGoogleDisconnect = onCall(
+  { serviceAccount: JOBS_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return disconnectGoogle(jobsShared());
+  },
+);
+
+/** An answered reply card on a job's task: send, rewrite or keep the draft. */
+export const jobsOnTaskMessage = onDocumentWritten(
+  {
+    document: 'tasks/{taskId}/messages/{messageId}',
+    serviceAccount: JOBS_SA,
+    timeoutSeconds: 120,
+    memory: '512MiB',
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() : undefined;
+    const after = event.data?.after.exists ? event.data.after.data() : undefined;
+    await onReplyAnswered(
+      jobsShared(),
+      event.params.taskId,
+      event.params.messageId,
+      before,
+      after,
+    ).catch((err) => logger.error('reply handling failed', { err: String(err) }));
   },
 );
 

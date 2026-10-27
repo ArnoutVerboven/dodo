@@ -67,6 +67,9 @@ importers:
       '@dodo/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@dodo/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@dodo/policy':
         specifier: workspace:*
         version: link:../../packages/policy
@@ -79,6 +82,9 @@ importers:
       '@dodo/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@dodo/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -182,6 +188,22 @@ importers:
       zod:
         specifier: ^4.1.0
         version: 4.6.7
+
+  packages/jobs:
+    dependencies:
+      '@dodo/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      firebase-admin:
+        specifier: ^13.5.0
+        version: 13.10.0(@firebase/app-compat@0.5.20)(@firebase/app@0.16.4)
 
   packages/policy:
     dependencies:

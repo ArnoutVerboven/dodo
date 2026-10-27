@@ -181,6 +181,62 @@ function view(t: Task): IngestTaskView {
   });
 }
 
+/**
+ * Open tasks of any origin whose title shares words with the query: read-only, in-process
+ * only (Jobs use it to find the task a thread is about). Not exposed over HTTP.
+ */
+export async function searchOpenTasks(
+  deps: IngestDeps,
+  query: string,
+  limit = 10,
+): Promise<IngestTaskView[]> {
+  const words = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length > 2);
+  if (!words.length) return [];
+  const snap = await deps.db.collection(paths.tasks()).where('status', 'in', OPEN).limit(500).get();
+  return snap.docs
+    .map((d) => ({ ...(d.data() as Task), id: d.id }))
+    .map((t) => ({ t, score: words.filter((w) => t.title?.toLowerCase().includes(w)).length }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || b.t.updatedAt - a.t.updatedAt)
+    .slice(0, limit)
+    .map((x) => view(x.t));
+}
+
+/**
+ * Moves the server-side `action` on an approval card from one of `from` to `to`, at most once
+ * (a transaction), optionally answering the card. Only system messages carry actions; the
+ * owner can answer cards but cannot write `action` (firestore.rules).
+ */
+export async function transitionMessageAction(
+  deps: IngestDeps,
+  taskId: string,
+  messageId: string,
+  from: string[],
+  to: string,
+  patch: Record<string, unknown> = {},
+  answer?: string,
+): Promise<Record<string, unknown> | undefined> {
+  const ref = deps.db.doc(`${paths.messages(taskId)}/${messageId}`);
+  const now = (deps.now ?? Date.now)();
+  return deps.db.runTransaction(async (t) => {
+    const snap = await t.get(ref);
+    const action = snap.get('action') as Record<string, unknown> | undefined;
+    if (!snap.exists || snap.get('author') !== 'system' || !action) return undefined;
+    if (!from.includes(String(action.state))) return undefined;
+    const update: Record<string, unknown> = {
+      action: JSON.parse(JSON.stringify({ ...action, ...patch, state: to, updatedAt: now })),
+    };
+    if (answer && !snap.get('input.answer')) {
+      update['input.answer'] = { value: answer, answeredAt: now, via: 'system' };
+    }
+    t.update(ref, update);
+    return action;
+  });
+}
+
 /* ------------------------------ tokens ------------------------------ */
 
 const RATE_PER_HOUR = 120;

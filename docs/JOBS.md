@@ -73,7 +73,7 @@ One Google OAuth client for both. "Connect Google" in the Jobs tab runs the stan
 
 No `gmail.modify`: jobs never archive, label or delete mail. The app stays unverified for personal use; publishing the consent screen "In production" avoids the 7-day refresh-token expiry of testing mode.
 
-### WhatsApp (harder, needs a decision)
+### WhatsApp (skipped for now, decided 2026-10-27)
 
 There is no official API for a personal WhatsApp account. The options:
 
@@ -87,7 +87,19 @@ There is no official API for a personal WhatsApp account. The options:
 
 `POST /v1/tasks` (and `GET /v1/tasks`, `POST /v1/tasks/{id}/messages`) on the `taskApi` function, with a bearer token per source created in Settings. Jobs use the same core in-process. Tasks carry a `source` (`gmail`, `whatsapp`, `api`, …) with a link to the original, shown as a logo on the board and a "Open in Gmail" link on the task.
 
-## 5. More jobs worth having
+## 5. Settings and context
+
+The Jobs tab holds per-job settings (threshold, lookback, interval, caps, monthly budget, project, tags, drafts on/off, notifications) and an **About you** text the agent reads with every email. Scheduling notes from the shared profile (`settings/profile`, field `schedulingNotes`, edited in Settings › Personal info) come first; the job's own text is added after. Proposed times stay inside the job's outer bounds (default 08:00–21:00, every day); the agent narrows them per activity, e.g. a viewing on Friday or the weekend, a short call on a weekday evening.
+
+## 6. Setup (once)
+
+1. Google Cloud console › Google Auth Platform: the consent screen already exists (Google sign-in). Under **Data access** add the scopes `gmail.readonly`, `gmail.compose`, `calendar.readonly`. Under **Audience**, **Publish app** (to "In production"): unverified is fine for your own account and avoids refresh tokens that expire after 7 days in testing mode.
+2. **Clients**: create an OAuth client of type _Web application_ (or reuse the existing web client) with the redirect URI `https://europe-west1-dodo-512722.cloudfunctions.net/jobsGoogleCallback`.
+3. GitHub › repository secrets: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, then re-run the Deploy workflow.
+4. dodo › Jobs › **Connect Google**; on the "Google hasn't verified this app" screen choose Advanced › Go to dodo, and tick every box.
+5. Try **Dry run**, then switch the job on.
+
+## 7. More jobs worth having
 
 1. **Waiting for a reply**: mail you sent with a question that got no answer in 3 days becomes "Follow up with X", with a polite nudge drafted.
 2. **Bills and invoices**: an invoice in the inbox becomes "Pay <supplier> €X" with the due date, amount and IBAN pulled out.

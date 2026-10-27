@@ -10,3 +10,9 @@ export function scopesForTask(taskId: string, projectId: string | undefined, now
   if (projectId) scopes.push({ kind: 'project', projectId, month });
   return scopes;
 }
+
+/** A job's model calls count against the lifetime total, the month and the job's own month. */
+export function scopesForJob(jobId: string, now: number): Scope[] {
+  const month = monthKey(now);
+  return [{ kind: 'total' }, { kind: 'global', month }, { kind: 'job', jobId, month }];
+}

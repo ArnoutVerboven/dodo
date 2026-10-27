@@ -36,7 +36,8 @@ const DEFAULT_THINKING = 1024;
 
 export interface GatewayContext {
   scopes: Scope[];
-  taskId: string;
+  /** Absent for job runs, which are charged to the job's scope instead of a task. */
+  taskId?: string;
   projectId?: string;
   runId?: string;
   description: string;
