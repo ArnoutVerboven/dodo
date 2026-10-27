@@ -87,14 +87,28 @@ export function sandboxInputsFor(
     stateDir: home(),
     workRoot: workRoot(),
     folders,
-    // The runtime's own helpers run inside the sandbox on Linux (they live under node_modules,
-    // which is usually under the home folder).
-    readable: [path.dirname(workerEntry), path.dirname(process.execPath), runtimePackageDir()],
+    // The checkout the worker runs from is usually under the home folder, which is denied: node
+    // reads the package.json files above its entry to pick the module type, and the runtime's
+    // own helpers run inside the sandbox on Linux (they live under node_modules).
+    readable: [
+      checkoutOf(workerEntry),
+      path.dirname(workerEntry),
+      path.dirname(process.execPath),
+      runtimePackageDir(),
+    ],
     tmpDir: os.tmpdir(),
     projectId: config.firebase.projectId,
     region: config.region,
     emulatorHost: config.emulatorHost,
   };
+}
+
+/** The repo the worker bundle was built in (`<repo>/apps/worker/dist/index.js`), else its folder. */
+export function checkoutOf(workerEntry: string): string {
+  const dir = path.dirname(workerEntry);
+  const parts = dir.split(path.sep);
+  const i = parts.lastIndexOf('apps');
+  return i > 0 && parts[i + 1] === 'worker' ? parts.slice(0, i).join(path.sep) || path.sep : dir;
 }
 
 function runtimePackageDir(): string {

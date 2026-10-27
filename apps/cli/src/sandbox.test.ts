@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { proxyBypass, sandboxConfig, workerHosts } from './sandbox.js';
+import { checkoutOf, proxyBypass, sandboxConfig, workerHosts } from './sandbox.js';
 
 const inputs = {
   homeDir: '/Users/me',
@@ -51,6 +51,13 @@ describe('sandboxConfig', () => {
     expect(workerHosts('demo-dodo', 'europe-west1', '127.0.0.1')).toEqual(
       expect.arrayContaining(['localhost', '127.0.0.1']),
     );
+  });
+});
+
+describe('checkoutOf', () => {
+  it('finds the repo above the worker bundle, else keeps the folder', () => {
+    expect(checkoutOf('/Users/me/dodo/apps/worker/dist/index.js')).toBe('/Users/me/dodo');
+    expect(checkoutOf('/opt/dodo-worker/index.js')).toBe('/opt/dodo-worker');
   });
 });
 
