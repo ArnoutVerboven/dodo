@@ -25,6 +25,8 @@ export const DeviceRegisterResponse = z.object({
   deviceId: z.string(),
   /** Custom token for the device identity; the daemon signs in with it once and keeps the refresh token. */
   token: z.string(),
+  /** Client config for the daemon's Firebase SDKs; absent on the emulator (demo key). */
+  firebase: z.object({ apiKey: z.string(), projectId: z.string() }).optional(),
 });
 export type DeviceRegisterResponse = z.infer<typeof DeviceRegisterResponse>;
 

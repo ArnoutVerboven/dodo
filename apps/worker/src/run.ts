@@ -72,7 +72,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const project = started.project ? Project.parse(started.project) : undefined;
   const store = new FirestoreTaskStore(clients.db, task.id, env.runId, project?.id);
   const trace = new FirestoreTrace(clients.db, env.runId);
-  const workdir = path.join(os.tmpdir(), 'dodo-work', task.id);
+  const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
   await mkdir(workdir, { recursive: true });
   const policy = new PolicyEngine(started.policy);
   const repo = task.ai.repo ?? project?.defaults.repo;
@@ -109,6 +109,26 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   return result.reason;
 }
 
+/**
+ * A task may name a folder, but only one the daemon allows (`dodo folders add`) counts; anything
+ * else, and every cloud run, gets a scratch folder. Resolved so `..` cannot escape.
+ */
+export function pickWorkdir(folder: string | undefined, taskId: string, env: WorkerEnv): string {
+  const root = env.workRoot ?? path.join(os.tmpdir(), 'dodo-work');
+  if (!folder || !env.allowedFolders?.length) return path.join(root, taskId);
+  const expanded =
+    folder === '~'
+      ? os.homedir()
+      : folder.startsWith('~/')
+        ? path.join(os.homedir(), folder.slice(2))
+        : folder;
+  const resolved = path.resolve(expanded);
+  const allowed = env.allowedFolders.some(
+    (a) => resolved === a || resolved.startsWith(`${a.replace(/\/$/, '')}${path.sep}`),
+  );
+  return allowed ? resolved : path.join(root, taskId);
+}
+
 export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   const need = (k: string) => {
     const v = process.env[k];
@@ -125,6 +145,10 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     },
     region: process.env.FUNCTIONS_REGION ?? 'europe-west1',
     emulatorHost: process.env.FIREBASE_EMULATOR_HOST || undefined,
+    workRoot: process.env.DODO_WORK_ROOT || undefined,
+    allowedFolders: process.env.DODO_FOLDERS
+      ? process.env.DODO_FOLDERS.split(':').filter(Boolean)
+      : undefined,
     ...overrides,
   };
 }
