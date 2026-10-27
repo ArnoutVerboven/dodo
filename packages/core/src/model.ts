@@ -59,6 +59,26 @@ export const StatusLine = z.object({
 });
 export type StatusLine = z.infer<typeof StatusLine>;
 
+/**
+ * Where a task came from when something other than you created it (the ingest API, a job).
+ * Shown as a logo on the board and as a link back to the original on the task page.
+ */
+export const TaskSourceKind = z.enum(['gmail', 'whatsapp', 'calendar', 'api']);
+export type TaskSourceKind = z.infer<typeof TaskSourceKind>;
+
+export const TaskSource = z.object({
+  kind: TaskSourceKind,
+  /** Opens the original (the Gmail thread, the chat). */
+  url: z.string().url().optional(),
+  /** Short label for the link, e.g. the sender. */
+  label: z.string().max(200).optional(),
+  /** The original's id in its own system, e.g. the Gmail thread id. */
+  ref: z.string().max(500).optional(),
+  /** The job that created the task, if any. */
+  jobId: z.string().optional(),
+});
+export type TaskSource = z.infer<typeof TaskSource>;
+
 export const Task = z.object({
   id: z.string(),
   title: z.string(),
@@ -75,6 +95,7 @@ export const Task = z.object({
   /** The run currently queued or working on this task; at most one. */
   activeRunId: z.string().optional(),
   externalRefs: z.record(z.string(), z.string()).default({}),
+  source: TaskSource.optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

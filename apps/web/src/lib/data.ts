@@ -1,4 +1,5 @@
 import {
+  ApiToken,
   Artifact,
   Device,
   eur,
@@ -27,10 +28,11 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import type { z } from 'zod';
-import { db, storage } from './firebase';
+import { db, functions, storage } from './firebase';
 
 export interface Live<T> {
   data: T;
@@ -39,7 +41,7 @@ export interface Live<T> {
 }
 
 /** Subscribe to a query and validate each document; invalid documents are skipped and logged. */
-function useLiveQuery<S extends z.ZodTypeAny>(
+export function useLiveQuery<S extends z.ZodTypeAny>(
   q: Query<DocumentData> | null,
   schema: S,
   deps: unknown[],
@@ -68,7 +70,7 @@ function useLiveQuery<S extends z.ZodTypeAny>(
   return state;
 }
 
-function useLiveDoc<S extends z.ZodTypeAny>(path: string | null, schema: S): Live<z.infer<S> | undefined> {
+export function useLiveDoc<S extends z.ZodTypeAny>(path: string | null, schema: S): Live<z.infer<S> | undefined> {
   const [state, setState] = useState<Live<z.infer<S> | undefined>>({ data: undefined, loading: true });
   useEffect(() => {
     if (!path) return;
@@ -132,6 +134,29 @@ export async function saveDevice(id: string, changes: Partial<Pick<Device, 'name
 
 export async function removeDevice(id: string) {
   await deleteDoc(doc(db, paths.device(id)));
+}
+
+export const useApiTokens = () =>
+  useLiveQuery(query(collection(db, paths.apiTokens()), orderBy('createdAt', 'desc')), ApiToken, []);
+
+/** The token is returned once by the function; only its hash is stored. */
+export async function createApiToken(
+  name: string,
+  source: ApiToken['source'],
+): Promise<{ id: string; token: string }> {
+  const res = await httpsCallable<unknown, { id: string; token: string }>(
+    functions,
+    'apiTokenCreate',
+  )({ name, source });
+  return res.data;
+}
+
+export async function revokeApiToken(id: string) {
+  await updateDoc(doc(db, paths.apiToken(id)), { revoked: true });
+}
+
+export async function deleteApiToken(id: string) {
+  await deleteDoc(doc(db, paths.apiToken(id)));
 }
 
 export const useProjects = () =>

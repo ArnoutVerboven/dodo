@@ -36,6 +36,7 @@ import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { parseTags } from '@/components/NewTaskDialog';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
+import { SourceLink } from '@/components/SourceIcon';
 import {
   dueTone,
   formatDue,
@@ -109,6 +110,7 @@ function TaskView({ task }: { task: Task }) {
         <div className="min-w-0 space-y-4">
           <div className="space-y-2">
             <TitleEditor task={task} />
+            {task.source && <SourceLink source={task.source} />}
             <Description task={task} />
             <PropertyBar task={task} />
           </div>

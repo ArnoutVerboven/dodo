@@ -26,6 +26,15 @@ resource "google_service_account" "worker" {
   depends_on                   = [google_project_service.this]
 }
 
+# Runs the Jobs functions (docs/JOBS.md). Its own account so the Google refresh token (Secret
+# Manager, granted on the secret itself by the deploy workflow) is readable by Jobs only.
+resource "google_service_account" "jobs" {
+  account_id                   = "dodo-jobs"
+  display_name                 = "dodo jobs (Gmail, Calendar, WhatsApp pipelines)"
+  create_ignore_already_exists = true
+  depends_on                   = [google_project_service.this]
+}
+
 # Created by bootstrap.sh (GitHub Actions needs it before Terraform runs); adopted here.
 resource "google_service_account" "deployer" {
   account_id                   = "dodo-deployer"
@@ -82,6 +91,16 @@ locals {
         "roles/serviceusage.apiKeysAdmin",
       ]
     }
+    jobs = {
+      member = google_service_account.jobs.member
+      roles = [
+        "roles/aiplatform.user", # the agent step, through the in-process gateway
+        "roles/datastore.user",  # job state, ledger, tasks through the ingest API
+        "roles/eventarc.eventReceiver",
+        "roles/run.invoker",                  # Cloud Scheduler calls jobsTick as this account
+        "roles/firebasecloudmessaging.admin", # web push for approval cards
+      ]
+    }
     # Service agents needed by Cloud Functions (2nd gen) deploys. The deployer may not change
     # project IAM, so they are granted here.
     pubsub_agent = {
@@ -124,6 +143,7 @@ locals {
     killswitch = google_service_account.killswitch.name
     gateway    = google_service_account.gateway.name
     worker     = google_service_account.worker.name
+    jobs       = google_service_account.jobs.name
     compute    = "projects/${var.project_id}/serviceAccounts/${local.compute_sa}"
     # The Firebase CLI checks ActAs on the App Engine default account for functions deploys.
     appspot = "projects/${var.project_id}/serviceAccounts/${local.appspot_sa}"

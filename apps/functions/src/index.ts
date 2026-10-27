@@ -26,6 +26,7 @@ import { claimOwnership as claim } from './claim-ownership.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
+import { createApiToken, handleApiRequest, IngestError } from './ingest.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
@@ -382,6 +383,47 @@ export const onRunCreated = onDocumentCreated(
       event.params.runId,
     );
     logger.info('dispatch', { runId: event.params.runId, result });
+  },
+);
+
+/* ---------------------------- task API --------------------------- */
+
+/** The task ingest API (docs/JOBS.md §4): token per source, checked before any other work. */
+export const taskApi = onRequest(
+  { maxInstances: 2, invoker: 'public', serviceAccount: GATEWAY_SA, timeoutSeconds: 30 },
+  async (req, res) => {
+    try {
+      const out = await handleApiRequest(
+        { db: getFirestore() },
+        {
+          method: req.method,
+          path: req.path,
+          query: req.query as Record<string, unknown>,
+          authorization: req.get('authorization'),
+          body: req.body,
+        },
+      );
+      res.status(out.status).json(out.body);
+    } catch (err) {
+      logger.error('taskApi failed', { err: String(err) });
+      res.status(500).json({ error: 'internal' });
+    }
+  },
+);
+
+/** Settings › Task API: a new token, shown once. */
+export const apiTokenCreate = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    if (request.auth?.token.dodo_owner !== true) {
+      throw new HttpsError('permission-denied', 'Owner only');
+    }
+    try {
+      return await createApiToken({ db: getFirestore() }, request.data);
+    } catch (err) {
+      if (err instanceof IngestError) throw new HttpsError('invalid-argument', err.message);
+      throw err;
+    }
   },
 );
 
