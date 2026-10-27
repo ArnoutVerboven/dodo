@@ -112,3 +112,28 @@ describe('hostAllowedBy', () => {
     ).toBeUndefined();
   });
 });
+
+describe('browser rules', () => {
+  it('lets allowed hosts open in the browser and asks for the rest', () => {
+    const engine = new PolicyEngine({
+      profile: 'agent-decides',
+      allow: ['Browser(navigate:my.energy.be)'],
+      deny: [],
+      allowedHosts: ['github.com'],
+    });
+    const nav = (host: string) =>
+      engine.decide({ tool: 'Browser', key: `navigate:${host}`, category: 'egress' });
+    expect(nav('github.com')).toEqual({ kind: 'allow', by: 'allowed host github.com' });
+    expect(nav('my.energy.be')).toEqual({ kind: 'allow', by: 'Browser(navigate:my.energy.be)' });
+    expect(nav('evil.test')).toMatchObject({
+      kind: 'ask',
+      suggestedRule: 'Browser(navigate:evil.test)',
+    });
+    expect(engine.decide({ tool: 'Browser', key: 'act:github.com', category: 'sandbox' })).toEqual({
+      kind: 'allow',
+    });
+    expect(
+      engine.decide({ tool: 'Browser', key: 'submit:github.com', category: 'outbound' }),
+    ).toMatchObject({ kind: 'ask' });
+  });
+});

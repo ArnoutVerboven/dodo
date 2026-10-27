@@ -14,6 +14,8 @@ export interface ToolContext {
   policy?: PolicyEngine;
   /** The run's task folder; exec tools are confined to it. */
   workdir?: string;
+  /** The vault (#25): resolves `{{vault:…}}` references for a host, and strips resolved values. */
+  secrets?: { resolve(ref: string, host: string): Promise<string>; redact(text: string): string };
 }
 
 /** What a call does, for the policy engine: the rule tool name, the key rules match, the category. */
@@ -42,6 +44,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
   description: string;
   schema: S;
+  /** The JSON schema the model sees, when it is not the zod schema's (tools proxied from MCP). */
+  parameters?: Record<string, unknown>;
   /** Absent for task tools: they cannot reach anything outside the task. */
   policy?: (args: z.infer<S>, ctx: ToolContext) => PolicyClaim;
   execute(args: z.infer<S>, ctx: ToolContext): Promise<ToolOutcome>;
@@ -159,6 +163,7 @@ export const taskTools = [
 
 export function toDeclarations(tools: ToolDef[]): FunctionDeclaration[] {
   return tools.map((t) => {
+    if (t.parameters) return { name: t.name, description: t.description, parameters: t.parameters };
     const schema = z.toJSONSchema(t.schema, { target: 'openapi-3.0', io: 'input' }) as Record<
       string,
       unknown
