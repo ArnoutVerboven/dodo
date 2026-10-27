@@ -254,7 +254,9 @@ async function execute(
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;
   if (process.env.TMPDIR) env.TMPDIR = process.env.TMPDIR;
   const argv = sandboxed
-    ? await sandboxedArgv([process.execPath, entry], workRoot(), runId)
+    ? await sandboxedArgv([process.execPath, entry], workRoot(), runId, {
+        proxyLoopback: !!config.emulatorHost,
+      })
     : [process.execPath, entry];
   return new Promise((resolve) => {
     const child = spawn(argv[0] as string, argv.slice(1), {

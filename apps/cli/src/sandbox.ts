@@ -155,13 +155,26 @@ export async function stopSandbox(): Promise<void> {
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
+export interface SandboxedOptions {
+  /**
+   * The runtime exempts loopback from its proxy (`NO_PROXY=localhost,127.0.0.1,…`), and inside the
+   * network namespace a direct loopback connection goes nowhere. With the emulators on the host,
+   * loopback traffic has to go through the proxy like any other host, so drop the exemption.
+   */
+  proxyLoopback?: boolean;
+}
+
 /** `node worker.js` as an argv to spawn, inside the sandbox; `commandId` keys its violations. */
 export async function sandboxedArgv(
   argv: string[],
   cwd: string,
   commandId: string,
+  options: SandboxedOptions = {},
 ): Promise<string[]> {
-  const command = argv.map(quote).join(' ');
+  const inner = argv.map(quote).join(' ');
+  const command = options.proxyLoopback
+    ? `env -u NO_PROXY -u no_proxy -u no_grpc_proxy ${inner}`
+    : inner;
   const wrapped = await SandboxManager.wrapWithSandboxArgv(
     command,
     undefined,
