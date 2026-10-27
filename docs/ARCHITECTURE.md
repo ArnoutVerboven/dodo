@@ -383,9 +383,9 @@ Text questions and choice menus use the same `inputRequests` mechanism. Answerin
 ### 9.1 Browser control
 
 - **Remote**: headless Chromium in the Cloud Run Job container, driven through Playwright MCP. Browser state per service (cookies, local storage) is saved as an encrypted Playwright `storageState` in Cloud Storage (not Firestore: 1 MiB limit) and restored next time.
-- **Local**: Playwright MCP attached to **your running Chrome** through its browser extension, so the agent reuses your logged-in sessions. You can log in by hand and tell the agent to continue in that same tab.
+- **Local** (built): the daemon runs Playwright MCP in extension mode, a server on localhost that drives **your running Chrome** through the Playwright Extension, in your profile with your logged-in sessions. The worker is an MCP client over streamable HTTP; the sandbox opens loopback only for runs the task asked for ("Browser: Your Chrome" on the task or as a project default) and only when the daemon reports the extension and its token (`dodo browser connect <token>`). The server stays up between runs, so you can log in by hand (itsme, MFA) in the tab the agent opened and tell it to continue. Downloads and screenshots land under `~/.dodo/work/browser`.
 - **Handoff**: a session you logged into locally can be exported to the remote session store, so remote runs can reuse it until it expires.
-- Every browser action goes through the policy engine (`Browser(navigate:domain)`, `Browser(submit:*)`, downloads, payments).
+- Every browser action goes through the policy engine, keyed by what it does on which site: `Browser(navigate:host)` is egress (allowed hosts and allow rules apply), `Browser(act:host)` reads and clicks on an open site, `Browser(submit:host)` is a click, Enter or typed submit on anything that reads like pay, order, confirm, send, delete or sign (always asks), `Browser(evaluate:host)` and `Browser(upload:host)` ask. Results are accessibility snapshots, cut to a fixed size and passed through the vault's redaction.
 
 ### 9.2 Credentials
 

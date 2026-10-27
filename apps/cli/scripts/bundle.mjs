@@ -13,7 +13,7 @@ await build({
   format: 'esm',
   sourcemap: true,
   // Ships its own helper binaries next to its code, so it stays a real dependency.
-  external: ['@anthropic-ai/sandbox-runtime'],
+  external: ['@anthropic-ai/sandbox-runtime', '@playwright/mcp'],
   banner: {
     js: "#!/usr/bin/env node\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },

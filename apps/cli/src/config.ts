@@ -12,6 +12,8 @@ export interface CliConfig {
   emulatorHost?: string;
   /** Folders the agent may work in on this Mac. Nothing until you add one. */
   folders: string[];
+  /** Your own Chrome through the Playwright Extension; the token skips its approval dialog. */
+  browser?: { token?: string };
 }
 
 export const VERSION = '0.1.0';

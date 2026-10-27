@@ -58,6 +58,13 @@ pnpm dodo doctor                # checks node, pairing, sign-in, worker build an
 pnpm dodo daemon                # in the foreground; or: pnpm dodo daemon install
 ```
 
+**Your own Chrome.** A task can use your Chrome, logged in as you, for sites that need your account (itsme, MFA, passkeys). Two steps, once:
+
+1. Install the [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) in Chrome, open it from the toolbar and copy the token it shows.
+2. `pnpm dodo browser connect <token>` and restart the daemon (`pnpm dodo daemon install`). `pnpm dodo doctor` shows "your Chrome: ready".
+
+Then set **Browser: Your Chrome** on a task (or as a project default). The agent gets a tab group in your Chrome; opening a site is an egress decision like any other, and anything that looks like pay, order, confirm, send, delete or sign asks first. When a login needs you, do it by hand in that tab and reply to the task; the agent continues in the same session. Files it saves land in `~/.dodo/work/browser`.
+
 Revoke a Mac in Settings; `pnpm dodo logout` forgets the pairing on the Mac itself. The device sign-in lives in the macOS Keychain; the daemon never holds model or cloud keys.
 
 **What a task may touch on your Mac.** Each run is a separate process inside [Anthropic's sandbox runtime](https://github.com/anthropic-experimental/sandbox-runtime) (Seatbelt on macOS, bubblewrap on Linux), the same mechanism Claude Code uses:

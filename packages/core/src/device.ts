@@ -35,6 +35,8 @@ export const DeviceClaimRequest = z.object({
   runId: z.string(),
   protocol: z.number().int().nonnegative(),
   version: z.string().max(40).optional(),
+  /** The daemon can offer the user's own Chrome to this run (extension installed). */
+  browser: z.boolean().optional(),
 });
 export type DeviceClaimRequest = z.infer<typeof DeviceClaimRequest>;
 
@@ -44,6 +46,8 @@ export const DeviceClaimResponse = z.object({
   taskId: z.string(),
   generation: z.number().int(),
   timeoutSeconds: z.number().int(),
+  /** The task asked for the user's Chrome and the daemon offered it: start the browser server. */
+  browser: z.boolean().optional(),
 });
 export type DeviceClaimResponse = z.infer<typeof DeviceClaimResponse>;
 

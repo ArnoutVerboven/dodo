@@ -146,7 +146,21 @@ export async function claimRun(
     taskId: claimed.taskId,
     generation: claimed.generation,
     timeoutSeconds: DEVICE_RUN_TIMEOUT_S,
+    browser: req.browser === true && (await wantsBrowser(deps.db, claimed.taskId)),
   };
+}
+
+/** Whether the task (or its project's defaults) asked for the user's own Chrome. */
+async function wantsBrowser(db: Firestore, taskId: string): Promise<boolean> {
+  const task = (await db.doc(paths.task(taskId)).get()).data() as
+    | { ai?: { browser?: string }; projectId?: string }
+    | undefined;
+  if (task?.ai?.browser) return task.ai.browser === 'chrome';
+  if (!task?.projectId) return false;
+  const project = (await db.doc(paths.project(task.projectId)).get()).data() as
+    | { defaults?: { browser?: string } }
+    | undefined;
+  return project?.defaults?.browser === 'chrome';
 }
 
 /** The run, when the caller is the approved device it is addressed to; an error otherwise. */

@@ -214,7 +214,7 @@ describe.skipIf(!enabled)('firestore.rules', () => {
   it('lets a Mac read and heartbeat only its own device document', async () => {
     await assertSucceeds(getDoc(doc(device(), 'devices/d1')));
     await assertSucceeds(
-      updateDoc(doc(device(), 'devices/d1'), { lastSeen: 2, folders: ['~/code'] }),
+      updateDoc(doc(device(), 'devices/d1'), { lastSeen: 2, folders: ['~/code'], browser: true }),
     );
     await assertFails(updateDoc(doc(device(), 'devices/d1'), { name: 'renamed' }));
     await assertFails(updateDoc(doc(device(), 'devices/d1'), { state: 'revoked', lastSeen: 3 }));

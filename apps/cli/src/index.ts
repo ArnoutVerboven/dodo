@@ -13,6 +13,7 @@ import { signInWithCustomToken } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { connect, currentUser } from './auth.js';
+import { browserReport, EXTENSION_URL } from './browser.js';
 import {
   type CliConfig,
   configPath,
@@ -42,8 +43,11 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo daemon uninstall
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
+  dodo browser [connect <token>|forget]
+                         let the agent use your own Chrome: install the Playwright Extension,
+                         then paste the token from the extension's page here
   dodo status            this Mac as the server sees it
-  dodo doctor            check node, pairing, sign-in, the worker build and the sandbox
+  dodo doctor            check node, pairing, sign-in, the worker build, the sandbox and Chrome
   dodo logout            forget the pairing on this Mac (revoke it in Settings too)
 `;
 
@@ -143,6 +147,9 @@ async function status() {
   console.log(`  working on: ${d.currentRunId ?? 'nothing'}`);
   console.log(`  queued:     ${queued} run(s) waiting for this Mac`);
   console.log(`  folders:    ${config.folders.join(', ') || '(none; add with dodo folders add)'}`);
+  console.log(
+    `  browser:    ${browserReport(config).state === 'ready' ? 'your Chrome' : 'none (dodo browser)'}`,
+  );
   console.log(`  launchd:    ${agentInstalled() ? 'installed' : 'not installed'}`);
   console.log(`  config:     ${configPath()}`);
   console.log(`  log:        ${logPath()}`);
@@ -171,6 +178,31 @@ async function folders(action: string | undefined, target: string | undefined) {
   if (config.folders.length === 0)
     console.log('No folders yet. The agent works in a scratch folder under ~/.dodo/work.');
   for (const f of config.folders) console.log(f);
+}
+
+/** The agent's browser is your Chrome: the extension does the driving, the token skips its dialog. */
+async function browser(action: string | undefined, token: string | undefined) {
+  const config = requireConfig();
+  if (action === 'connect') {
+    if (!token?.trim())
+      throw new Error(
+        `Usage: dodo browser connect <token>\n  Install the extension (${EXTENSION_URL}), open it from Chrome's toolbar and copy the token it shows.`,
+      );
+    config.browser = { token: token.trim() };
+    writeConfig(config);
+  } else if (action === 'forget') {
+    config.browser = undefined;
+    writeConfig(config);
+  } else if (action !== undefined) throw new Error('Usage: dodo browser [connect <token>|forget]');
+  const r = browserReport(config);
+  if (r.state === 'ready')
+    console.log(
+      `Ready: Chrome profile ${r.profiles.join(', ')} with the extension, token stored. Restart the daemon (pnpm dodo daemon install) to pick it up.`,
+    );
+  else {
+    console.log('Not ready:');
+    for (const p of r.problems) console.log(`  ${p}`);
+  }
 }
 
 /** Returns whether every check passed. */
@@ -215,6 +247,15 @@ async function doctor(): Promise<boolean> {
     ok('sign-in valid', false, (err as Error).message);
   }
   for (const f of config.folders) ok(`folder ${f}`, existsSync(expandFolder(f)));
+  const chrome = browserReport(config);
+  // Optional: the task form only offers "Your Chrome" when this is ready, so it does not fail.
+  console.log(
+    `${chrome.state === 'ready' ? 'ok  ' : 'info'} your Chrome: ${
+      chrome.state === 'ready'
+        ? `profile ${chrome.profiles.join(', ')}, token stored`
+        : `${chrome.problems.join('; ')} (optional: tasks that need your logins)`
+    }`,
+  );
   if (process.platform === 'darwin')
     ok(
       'launchd agent',
@@ -289,6 +330,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'folders':
       await folders(sub, third);
+      return 0;
+    case 'browser':
+      await browser(sub, third);
       return 0;
     case 'doctor':
       await doctor();
