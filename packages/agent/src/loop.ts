@@ -42,7 +42,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const log = opts.log ?? (() => {});
   const session: Content[] = [...input.session];
   const declarations = toDeclarations(tools);
-  const system = systemPrompt(input.task, input.project);
+  const system = systemPrompt(input.task, input.project, {
+    browser: tools.some((t) => t.name.startsWith('browser_')),
+  });
 
   await trace.emit({
     type: 'run_started',

@@ -52,6 +52,8 @@ export interface WorkerEnv {
   /** Mac daemon: where scratch task folders go, and the folders a task may name as its own. */
   workRoot?: string;
   allowedFolders?: string[];
+  /** Playwright MCP endpoint for the browser tools (the daemon's server on your Chrome). */
+  browserUrl?: string;
 }
 
 export interface Clients {
