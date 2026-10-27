@@ -1,6 +1,6 @@
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SandboxManager, type SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
 import { home, workRoot } from './config.js';
 
@@ -98,7 +98,7 @@ export function sandboxInputsFor(
 }
 
 function runtimePackageDir(): string {
-  const entry = createRequire(import.meta.url).resolve('@anthropic-ai/sandbox-runtime');
+  const entry = fileURLToPath(import.meta.resolve('@anthropic-ai/sandbox-runtime'));
   return path.dirname(path.dirname(entry));
 }
 
