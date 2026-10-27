@@ -159,7 +159,10 @@ export function SettingsPage() {
         <CardBody className="space-y-2 text-sm">
           {settings.telegram?.chatId ? (
             <>
-              <p>Paired. Approval cards and results are sent to your Telegram chat.</p>
+              <p>
+                Paired. Approval cards and results are sent to your Telegram chat. Reply to one to
+                comment on its task; a message sent without replying goes to the latest task.
+              </p>
               <Button
                 variant="outline"
                 size="sm"
