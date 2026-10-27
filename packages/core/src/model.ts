@@ -192,6 +192,27 @@ export const Run = z.object({
 });
 export type Run = z.infer<typeof Run>;
 
+export const DeviceState = z.enum(['approved', 'revoked']);
+export type DeviceState = z.infer<typeof DeviceState>;
+
+/** A Mac running the dodo daemon. Paired once from Settings; revoked there too. */
+export const Device = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  platform: z.string().default('darwin'),
+  state: DeviceState,
+  /** Daemon protocol version, reported on every claim; old daemons are refused. */
+  protocol: z.number().int().optional(),
+  version: z.string().optional(),
+  /** Folders the agent may work in on this Mac, as the daemon reports them. */
+  folders: z.array(z.string()).default([]),
+  lastSeen: Timestamp.optional(),
+  currentRunId: z.string().optional(),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+export type Device = z.infer<typeof Device>;
+
 export const GlobalSettings = z.object({
   connector: z.enum(['custom', 'notion', 'linear', 'github']).default('custom'),
   defaults: AiConfig.omit({ enabled: true }).default({}),
@@ -212,5 +233,7 @@ export const GlobalSettings = z.object({
       pairedAt: Timestamp.optional(),
     })
     .optional(),
+  /** One-time code shown in Settings; `dodo login <code>` consumes it. */
+  devicePairing: z.object({ code: z.string(), createdAt: Timestamp }).optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

@@ -39,7 +39,7 @@ Agents in this phase can only use the task tools (summary, status, message, ask,
 The headline use case (your own accounts in your own browser) comes before the remote browser.
 
 - Policy engine: allow / ask / deny at global, project, task; bash parser; deterministic ask for egress, writes outside the folder, git push, outbound messages; `untrusted` profile; "Always allow" with scope.
-- Tracked as #22 (Mac executor) and #23 (your Chrome).
+- Tracked as #22 (Mac executor) and #23 (your Chrome). **Status (2026-10-27):** device pairing, revoke and the claim callables built; CLI, daemon and sandbox next.
 - `dodo` CLI: device login, folders, launchd daemon, status; model calls via the gateway; sandboxed shell (sandbox-runtime) with egress allowlist and no Keychain access.
 - Playwright MCP attached to your Chrome: log in by hand, then the agent continues.
 - **Exit:** the agent downloaded your latest energy bill from a site you were logged into, asking before anything outside the allowlist.

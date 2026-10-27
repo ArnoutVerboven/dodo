@@ -5,6 +5,8 @@ rules_version = '2';
 //  - a run (uid run:{runId}, claims run/taskId/generation, minted by the dispatcher): may only
 //    write its own trace, and its task's summary/status/messages/artifacts, while its lease
 //    generation is current;
+//  - a Mac daemon (uid device:{id}, claim device, minted by deviceRegister): may read the queued
+//    runs addressed to it and report presence on its own device document, nothing else;
 //  - trusted server code (Admin SDK, bypasses rules): budgets, ledger, run state.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -24,6 +26,15 @@ service cloud.firestore {
         && request.auth.token.run == runId
         && request.auth.token.generation == runDoc(runId).generation
         && runDoc(runId).state in ['claimed', 'running'];
+    }
+    function isDevice(deviceId) {
+      return request.auth != null
+        && request.auth.uid == 'device:' + deviceId
+        && request.auth.token.device == deviceId;
+    }
+    function isApprovedDevice(deviceId) {
+      return isDevice(deviceId)
+        && get(/databases/$(database)/documents/devices/$(deviceId)).data.state == 'approved';
     }
     function isRunOnTask(taskId) {
       return request.auth != null
@@ -65,8 +76,22 @@ service cloud.firestore {
       }
     }
 
+    match /devices/{deviceId} {
+      allow read, write: if isOwner();
+      allow read: if isDevice(deviceId);
+      // The daemon reports presence and its folders on its own document; the owner decides the rest.
+      allow update: if isDevice(deviceId)
+        && resource.data.state == 'approved'
+        && onlyChanges(['lastSeen', 'version', 'protocol', 'folders', 'currentRunId', 'updatedAt']);
+    }
+
     match /runs/{runId} {
       allow read: if isOwner() || isLiveRun(runId);
+      // A Mac sees the runs addressed to it, so it knows when to claim one.
+      allow read: if request.auth != null
+        && request.auth.token.device is string
+        && resource.data.device == 'mac:' + request.auth.token.device
+        && isApprovedDevice(request.auth.token.device);
       // The owner can only request an interrupt.
       allow update: if isOwner() && onlyChanges(['interrupt']) && request.resource.data.interrupt == true;
       match /events/{eventId} {
