@@ -289,6 +289,66 @@ const daemonExit = await daemonExited;
 if (daemonExit !== 0) fail(`daemon --once exited ${daemonExit}`);
 console.log('mac flow ok');
 
+// 5b. The worker on the Mac runs inside the sandbox: it works in the task folder, but cannot read
+//     the daemon's own files and cannot reach a host the task's policy does not allow.
+const sandboxDaemon = spawn('node', ['apps/cli/dist/index.js', 'daemon', '--once'], {
+  env: macEnv,
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+const sandboxDaemonExited = new Promise((resolve) => sandboxDaemon.on('close', resolve));
+let sandboxDaemonOut = '';
+sandboxDaemon.stdout.on('data', (c) => {
+  sandboxDaemonOut += c;
+  process.stdout.write(`  daemon: ${c}`);
+});
+sandboxDaemon.stderr.on('data', (c) => {
+  sandboxDaemonOut += c;
+  process.stdout.write(`  daemon: ${c}`);
+});
+const probe = [
+  `cat ${path.join(macHome, 'auth.json')} && echo AUTH_READ`,
+  `cat ${path.join(macHome, 'config.json')} && echo CONFIG_READ`,
+  'curl -sS -m 15 https://example.com/ -o /dev/null && echo CURL_OK',
+  'echo ran > sandbox-marker.txt && echo MARKER_OK',
+].join('; ');
+const sandboxTask = await db.collection('tasks').add({
+  title: 'E2E: sandbox',
+  titleSource: 'user',
+  description: `Run: ${probe}`,
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true, device: `mac:${macConfig.deviceId}`, folder: macFolder },
+  allowRules: ['Bash'],
+  summary: '',
+  externalRefs: {},
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+const sandboxDone = await until(
+  'sandbox task to finish',
+  async () => {
+    const d = (await sandboxTask.get()).data();
+    return d.status === 'review' && !d.activeRunId ? d : undefined;
+  },
+  120_000,
+);
+if ((await sandboxDaemonExited) !== 0) fail(`sandbox daemon --once exited: ${sandboxDaemonOut}`);
+if (!/sandbox on/.test(sandboxDaemonOut))
+  fail(`daemon did not sandbox the worker: ${sandboxDaemonOut}`);
+const probeOut = sandboxDone.summary;
+console.log('sandbox probe:', probeOut.replace(/\s+/g, ' ').slice(0, 400));
+if (!probeOut.includes('MARKER_OK')) fail('the command did not run in the task folder');
+await readFile(path.join(macFolder, 'sandbox-marker.txt')).catch(() =>
+  fail('no write to the task folder'),
+);
+if (/AUTH_READ|CONFIG_READ|stsTokenManager|deviceId/.test(probeOut))
+  fail("the worker could read the daemon's files");
+if (/CURL_OK/.test(probeOut)) fail('the worker reached a host the policy does not allow');
+if (!/refused|403|denied/i.test(`${probeOut}\n${sandboxDaemonOut}`))
+  fail('no refusal was logged for example.com');
+console.log('sandbox ok');
+
 // 6. A revoked Mac cannot claim: its queued run waits and the task says so.
 await db.doc(`devices/${macConfig.deviceId}`).update({ state: 'revoked', updatedAt: Date.now() });
 const macStatus = await cli('status');

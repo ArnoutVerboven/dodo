@@ -59,7 +59,7 @@ export class PolicyEngine {
     if (this.onceAllowed.delete(exact)) return { kind: 'allow', by: 'approved once' };
     if (input.category === 'egress' && input.tool === 'Http') {
       const host = input.key.replace(/^domain:/, '');
-      if (this.config.allowedHosts?.some((h) => host === h || host.endsWith(`.${h}`))) {
+      if (hostMatches(host, this.config.allowedHosts ?? [])) {
         return { kind: 'allow', by: `allowed host ${host}` };
       }
     }
@@ -77,3 +77,46 @@ const REASONS: Record<ActionCategory, string> = {
   egress: 'This reaches a host that is not on the allowlist.',
   outbound: 'This sends something outside dodo on your behalf.',
 };
+
+/** `api.github.com` matches `api.github.com` and `github.com`, never `notgithub.com`. */
+export function hostMatches(host: string, allowedHosts: readonly string[]): boolean {
+  const h = host.toLowerCase();
+  return allowedHosts.some((a) => {
+    const x = a.toLowerCase().replace(/^\*\./, '');
+    return h === x || h.endsWith(`.${x}`);
+  });
+}
+
+/**
+ * Whether the policy lets a run open a connection to `host`, judged from the outside (the Mac
+ * sandbox asks this for every host the base allowlist does not cover). Allowed when the host
+ * is on the allowed-hosts list, when an allow rule names it (`Http(domain:host)`, or a command
+ * rule such as `Bash(curl https://host/...)` the user approved), and not when a deny rule names
+ * it. Returns what decided, or undefined for "nothing allows it".
+ */
+export function hostAllowedBy(
+  config: Pick<PolicyConfig, 'allow' | 'deny' | 'allowedHosts'>,
+  host: string,
+): string | undefined {
+  const names = (raw: string) => {
+    const rule = parseRule(raw);
+    if (!rule) return false;
+    if (rule.tool === 'Http') {
+      if (!rule.pattern) return true;
+      const value = rule.pattern.value.replace(/^domain:/, '');
+      return rule.pattern.kind === 'exact'
+        ? hostMatches(host, [value])
+        : host.toLowerCase().startsWith(value.toLowerCase());
+    }
+    return !!rule.pattern && mentionsHost(rule.pattern.value, host);
+  };
+  if (config.deny.some(names)) return undefined;
+  if (hostMatches(host, config.allowedHosts ?? [])) return `allowed host ${host}`;
+  return config.allow.find(names);
+}
+
+/** The host appears in the text as a whole name (`curl https://api.x.com/v1`, not `api.x.community`). */
+function mentionsHost(text: string, host: string): boolean {
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9.-])${escaped}(?![A-Za-z0-9-])`, 'i').test(text);
+}

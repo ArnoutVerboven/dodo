@@ -5,6 +5,8 @@ import {
   DEVICE_HEARTBEAT_MS,
   DEVICE_PROTOCOL,
   type DeviceClaimResponse,
+  type DeviceEgressRequest,
+  type DeviceEgressResponse,
   deviceChoice,
   paths,
 } from '@dodo/core';
@@ -13,6 +15,15 @@ import { httpsCallable } from 'firebase/functions';
 import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
 import { type CliConfig, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
+import {
+  finishSandboxed,
+  sandboxConfig,
+  sandboxedArgv,
+  sandboxInputsFor,
+  sandboxReport,
+  startSandbox,
+  stopSandbox,
+} from './sandbox.js';
 
 export interface DaemonOptions {
   /** Exit after the first run finishes (tests). */
@@ -21,7 +32,7 @@ export interface DaemonOptions {
 }
 
 /** Why the daemon stopped on its own; each one is something you fix, not a crash. */
-export type StopReason = 'revoked' | 'update_needed' | 'signed_out' | 'once';
+export type StopReason = 'revoked' | 'update_needed' | 'signed_out' | 'sandbox_missing' | 'once';
 
 /**
  * The daemon: sign in as the device, say hello every 30 s, and when a queued run addressed to
@@ -36,7 +47,52 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     throw new Error(`${(err as Error).message} (${config.name})`);
   });
   const me = deviceChoice(config.deviceId);
-  log(`${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, waiting for runs`);
+
+  // The sandbox first: without it the daemon does not take work.
+  const report = sandboxReport();
+  for (const w of report.warnings) log(`sandbox: ${w}`);
+  if (report.state === 'unavailable') {
+    log(`Cannot sandbox the worker on this machine: ${report.problems.join('; ')}`);
+    return 'sandbox_missing';
+  }
+  const entry = workerEntry();
+  if (!existsSync(entry)) throw new Error(`worker not built at ${entry}; run \`pnpm build\``);
+  let current: string | undefined;
+  const decided = new Map<string, DeviceEgressResponse>();
+  if (report.state === 'on') {
+    const folders = config.folders.map(expandFolder);
+    await startSandbox(
+      sandboxConfig(sandboxInputsFor(config, folders, entry)),
+      async (host, port) => {
+        const runId = current;
+        if (!runId) return 'no run is active on this Mac';
+        const key = `${runId} ${host}`;
+        let verdict = decided.get(key);
+        if (!verdict) {
+          try {
+            const r = await httpsCallable<DeviceEgressRequest, DeviceEgressResponse>(
+              clients.functions,
+              'deviceEgress',
+            )({ deviceId: config.deviceId, runId, host, port });
+            verdict = r.data;
+            decided.set(key, verdict);
+          } catch (err) {
+            log(`run ${runId}: could not ask about ${host}: ${(err as Error).message}`);
+            verdict = { allow: false, by: 'policy check failed' };
+          }
+          log(
+            `run ${runId}: ${verdict.allow ? 'allowed' : 'refused'} ${host} (${verdict.by ?? 'not on the allowlist'})`,
+          );
+        }
+        return verdict.allow
+          ? true
+          : `${host} is not on this task's allowlist: add it in Settings, or approve the command in the task`;
+      },
+    );
+  }
+  log(
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, waiting for runs`,
+  );
 
   return new Promise<StopReason>((resolve) => {
     const subs: Array<() => void> = [];
@@ -49,7 +105,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       log(why);
       for (const s of subs) s();
       clearInterval(beat);
-      resolve(reason);
+      void stopSandbox().then(() => resolve(reason));
     };
 
     // Presence. Firestore rules let the device write only these fields on its own document.
@@ -94,7 +150,10 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         const claimed = await claim(clients, config, runId);
         if (claimed) {
           log(`run ${runId}: claimed for task ${claimed.taskId}`);
-          const code = await execute(config, runId, claimed, log);
+          current = runId;
+          const code = await execute(config, runId, claimed, log, report.state === 'on');
+          current = undefined;
+          for (const k of [...decided.keys()]) if (k.startsWith(`${runId} `)) decided.delete(k);
           log(`run ${runId}: worker exited with ${code}`);
           if (opts.once) return stop('once', 'Done (--once).');
         }
@@ -165,19 +224,23 @@ export function workerEntry(): string {
   );
 }
 
-function execute(
+async function execute(
   config: CliConfig,
   runId: string,
   claimed: DeviceClaimResponse,
   log: (m: string) => void,
+  sandboxed: boolean,
 ): Promise<number | null> {
   const entry = workerEntry();
-  if (!existsSync(entry)) throw new Error(`worker not built at ${entry}; run \`pnpm build\``);
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: process.env.HOME ?? '/tmp',
     LANG: 'C.UTF-8',
+    // Inside the sandbox every connection goes through its proxy; node's fetch only follows the
+    // proxy variables when told to (the experimental-agent warning is noise).
+    NODE_USE_ENV_PROXY: '1',
+    NODE_OPTIONS: '--disable-warning=UNDICI-EHPA',
     DODO_RUN_ID: runId,
     DODO_RUN_TOKEN: claimed.token,
     DODO_TIMEOUT_S: String(claimed.timeoutSeconds),
@@ -189,8 +252,16 @@ function execute(
   };
   if (config.firebase.appId) env.FIREBASE_APP_ID = config.firebase.appId;
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;
+  if (process.env.TMPDIR) env.TMPDIR = process.env.TMPDIR;
+  const argv = sandboxed
+    ? await sandboxedArgv([process.execPath, entry], workRoot(), runId)
+    : [process.execPath, entry];
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [entry], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(argv[0] as string, argv.slice(1), {
+      env,
+      cwd: workRoot(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const relay = (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split('\n'))
         if (line.trim()) log(`  [${runId.slice(0, 6)}] ${line}`);
@@ -199,14 +270,19 @@ function execute(
     child.stderr.on('data', relay);
     // The worker guards its own timeout; this is the backstop if it hangs on exit.
     const killer = setTimeout(() => child.kill('SIGKILL'), (claimed.timeoutSeconds + 60) * 1000);
-    child.on('close', (code) => {
+    const done = (code: number | null) => {
       clearTimeout(killer);
+      if (sandboxed) {
+        const refused = finishSandboxed(runId);
+        for (const line of refused.slice(0, 20)) log(`run ${runId}: sandbox refused ${line}`);
+        if (refused.length > 20) log(`run ${runId}: …and ${refused.length - 20} more`);
+      }
       resolve(code);
-    });
+    };
+    child.on('close', done);
     child.on('error', (err) => {
-      clearTimeout(killer);
       log(`worker failed to start: ${err.message}`);
-      resolve(null);
+      done(null);
     });
   });
 }

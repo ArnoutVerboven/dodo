@@ -56,6 +56,38 @@ export interface StartResponse {
   };
 }
 
+/** The permission rules a run is judged by: global, then project, then task, in that order. */
+export function mergePolicy(
+  task: Record<string, unknown>,
+  project: Record<string, unknown> | undefined,
+  settings: Record<string, unknown>,
+): StartResponse['policy'] {
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  const ai = (task.ai ?? {}) as Record<string, unknown>;
+  const pdefaults = (project?.defaults ?? {}) as Record<string, unknown>;
+  return {
+    profile: (ai.profile ?? pdefaults.profile ?? 'agent-decides') as 'agent-decides' | 'untrusted',
+    allow: [...list(settings.allowRules), ...list(project?.allowRules), ...list(task.allowRules)],
+    deny: [...list(settings.denyRules), ...list(project?.denyRules), ...list(task.denyRules)],
+    allowedHosts: [
+      ...list(settings.allowedHosts),
+      ...list(project?.allowedHosts),
+      ...list(task.allowedHosts),
+    ],
+  };
+}
+
+/** Policy for a run that has not started yet (the sandbox asks before the worker's first call). */
+export async function policyForRun(db: Firestore, run: Run): Promise<StartResponse['policy']> {
+  const [task, project, settings] = await Promise.all([
+    db.doc(paths.task(run.taskId)).get(),
+    run.projectId ? db.doc(paths.project(run.projectId)).get() : undefined,
+    db.doc(paths.settings()).get(),
+  ]);
+  return mergePolicy(task.data() ?? {}, project?.data(), settings.data() ?? {});
+}
+
 /** First call of a worker: claimed → running, and the context it needs (session comes from Storage). */
 export async function start(deps: RunControlDeps, run: Run): Promise<StartResponse> {
   const now = (deps.now ?? Date.now)();
@@ -67,24 +99,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   const session = run.sessionPath ? await loadSession(deps, run.sessionPath).catch(() => []) : [];
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
-  const list = (v: unknown): string[] =>
-    Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
-  const t = task as Record<string, unknown>;
-  const ai = (t.ai ?? {}) as Record<string, unknown>;
-  const pdefaults = ((project as Record<string, unknown> | undefined)?.defaults ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const policy: StartResponse['policy'] = {
-    profile: (ai.profile ?? pdefaults.profile ?? 'agent-decides') as 'agent-decides' | 'untrusted',
-    allow: [...list(settings.allowRules), ...list(project?.allowRules), ...list(t.allowRules)],
-    deny: [...list(settings.denyRules), ...list(project?.denyRules), ...list(t.denyRules)],
-    allowedHosts: [
-      ...list(settings.allowedHosts),
-      ...list(project?.allowedHosts),
-      ...list(t.allowedHosts),
-    ],
-  };
+  const policy = mergePolicy(task, project, settings);
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,

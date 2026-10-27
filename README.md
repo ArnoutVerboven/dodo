@@ -53,6 +53,14 @@ pnpm dodo status                # online? queued runs? log location
 
 `pnpm dodo doctor` checks the setup. Revoke a Mac in Settings; `pnpm dodo logout` forgets the pairing on the Mac itself. The device sign-in lives in the macOS Keychain; the daemon never holds model or cloud keys.
 
+**What a task may touch on your Mac.** Each run is a separate process inside [Anthropic's sandbox runtime](https://github.com/anthropic-experimental/sandbox-runtime) (Seatbelt on macOS, bubblewrap on Linux), the same mechanism Claude Code uses:
+
+- Files: it can read anything outside your home folder, but inside it only the folders you added with `dodo folders add` and the daemon's work folder (`~/.dodo/work`). It can write only there and in the temp folder. Your `~/.ssh`, Keychain, documents and the pairing itself stay out of reach.
+- Network: only through the runtime's proxy, which allows the dodo backend, GitHub and the package registries. Any other host is checked against the task's policy (allowed hosts in Settings, allow rules, or the approval you just gave) and refused otherwise. The daemon log shows every refusal.
+- The agent still asks before commands that reach the network or write outside the task folder, as it does in the cloud; the sandbox is the backstop under that.
+
+The daemon refuses to run tasks when it cannot sandbox them (`dodo doctor` says why; on Linux install `bubblewrap socat ripgrep`). `DODO_SANDBOX=off` turns it off for development only.
+
 ## Deploy
 
 Pushes to `main` deploy through GitHub Actions with Workload Identity Federation (no keys). The repository variables `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER` and `GCP_DEPLOYER_SA` come from `infra/bootstrap.sh`.

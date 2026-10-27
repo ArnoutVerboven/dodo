@@ -55,3 +55,22 @@ export const deviceIdFromChoice = (choice: string): string | undefined =>
 
 export const isDeviceOnline = (lastSeen: number | undefined, now = Date.now()) =>
   lastSeen !== undefined && now - lastSeen < 3 * DEVICE_HEARTBEAT_MS;
+
+/**
+ * The sandbox around a Mac run asks before it lets the run reach a host no rule covers. The
+ * answer comes from the same policy the agent's tools are judged by, applied by trusted code.
+ */
+export const DeviceEgressRequest = z.object({
+  deviceId: z.string(),
+  runId: z.string(),
+  host: z.string().min(1).max(253),
+  port: z.number().int().positive().max(65535).optional(),
+});
+export type DeviceEgressRequest = z.infer<typeof DeviceEgressRequest>;
+
+export const DeviceEgressResponse = z.object({
+  allow: z.boolean(),
+  /** The rule or setting that decided, for the daemon's log. */
+  by: z.string().optional(),
+});
+export type DeviceEgressResponse = z.infer<typeof DeviceEgressResponse>;

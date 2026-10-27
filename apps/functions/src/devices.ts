@@ -4,6 +4,8 @@ import {
   type Device,
   type DeviceClaimRequest,
   type DeviceClaimResponse,
+  type DeviceEgressRequest,
+  type DeviceEgressResponse,
   type DeviceRegisterRequest,
   type DeviceRegisterResponse,
   deviceChoice,
@@ -11,8 +13,10 @@ import {
   paths,
   type Run,
 } from '@dodo/core';
+import { hostAllowedBy } from '@dodo/policy';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { policyForRun } from './run-control.js';
 import { type Caller, LEASE_MS, runUid, stripUndefined } from './runtime.js';
 
 /**
@@ -142,6 +146,43 @@ export async function claimRun(
     generation: claimed.generation,
     timeoutSeconds: DEVICE_RUN_TIMEOUT_S,
   };
+}
+
+/**
+ * The sandbox around a Mac run saw a connection to a host its base allowlist does not cover.
+ * Allowed when the task's policy allows it: an allowed host, an allow rule that names it, or the
+ * approval the user just gave for the command that reaches it. Judged here, by trusted code,
+ * from the current rules, so an approval card answered "always allow" counts at once.
+ */
+export async function egressCheck(
+  deps: Pick<DeviceDeps, 'db' | 'log'>,
+  caller: Caller | undefined,
+  req: DeviceEgressRequest,
+): Promise<DeviceEgressResponse> {
+  if (!caller) throw new HttpsError('unauthenticated', 'Sign in first');
+  if (caller.uid !== deviceUid(req.deviceId) || caller.claims.device !== req.deviceId) {
+    throw new HttpsError('permission-denied', 'Not this device');
+  }
+  const device = (await deps.db.doc(paths.device(req.deviceId)).get()).data() as Device | undefined;
+  if (device?.state !== 'approved') {
+    throw new HttpsError('permission-denied', 'This Mac is revoked or unknown');
+  }
+  const run = (await deps.db.doc(paths.run(req.runId)).get()).data() as Run | undefined;
+  if (!run || run.device !== deviceChoice(req.deviceId)) {
+    throw new HttpsError('permission-denied', 'This run belongs to another device');
+  }
+  if (run.state !== 'claimed' && run.state !== 'running') {
+    return { allow: false, by: `run is ${run.state}` };
+  }
+  const policy = await policyForRun(deps.db, run);
+  const answer = (run as Run & { answer?: { value?: string; suggestedRule?: string } }).answer;
+  const approved =
+    answer?.suggestedRule && /^(y|yes|ok|approve|allow)/i.test(String(answer.value ?? '').trim())
+      ? [answer.suggestedRule]
+      : [];
+  const by = hostAllowedBy({ ...policy, allow: [...policy.allow, ...approved] }, req.host);
+  deps.log?.('device egress', { deviceId: req.deviceId, runId: req.runId, host: req.host, by });
+  return by ? { allow: true, by } : { allow: false };
 }
 
 /**

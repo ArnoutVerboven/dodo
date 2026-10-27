@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   DeviceClaimRequest,
+  DeviceEgressRequest,
   DeviceRegisterRequest,
   FinishRequest,
   GenerateRequest,
@@ -21,7 +22,7 @@ import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/fire
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { claimOwnership as claim } from './claim-ownership.js';
-import { claimRun, onDeviceChanged, registerDevice } from './devices.js';
+import { claimRun, egressCheck, onDeviceChanged, registerDevice } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
@@ -255,6 +256,15 @@ export const deviceClaim = onCall(
   async (request) => {
     const req = parseOr<DeviceClaimRequest>(DeviceClaimRequest, request.data);
     return claimRun(deviceDeps(), caller(request.auth), req);
+  },
+);
+
+/** The Mac sandbox asks before it lets a run reach a host its base allowlist does not cover. */
+export const deviceEgress = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<DeviceEgressRequest>(DeviceEgressRequest, request.data);
+    return egressCheck(deviceDeps(), caller(request.auth), req);
   },
 );
 

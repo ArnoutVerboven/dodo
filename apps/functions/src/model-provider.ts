@@ -90,6 +90,14 @@ export class FakeProvider implements ModelProvider {
     let parts: Content['parts'];
     const transcript = JSON.stringify(req.contents);
     const wantsFetch = /fetch http/i.test(transcript);
+    // "Run: <command>" in the task runs it with the bash tool; the output goes into the summary
+    // so a test can see what the sandbox let through.
+    const firstUser = req.contents[0]?.parts.map((p) => p.text ?? '').join(' ') ?? '';
+    const wantsRun = /Run: (.+)/.exec(firstUser)?.[1]?.trim();
+    const ran = req.contents
+      .flatMap((c) => c.parts)
+      .map((p) => p.functionResponse)
+      .find((r) => r?.name === 'bash');
     if (!req.tools?.length) {
       parts = [{ text: `Fake title for ${lastUser.slice(0, 30)}` }];
     } else if (/ask me|question/i.test(lastUser) && turns === 0) {
@@ -114,10 +122,13 @@ export class FakeProvider implements ModelProvider {
       parts = [
         call('set_status', { text: 'Fake model: reading the task', nextAction: 'write summary' }),
       ];
-    } else if (turns === 1 || (wantsFetch && turns === 2)) {
+    } else if (wantsRun && !ran) {
+      parts = [call('bash', { command: wantsRun })];
+    } else if (turns === 1 || ((wantsFetch || wantsRun) && turns === 2)) {
+      const output = ran ? `\n\nOutput:\n\`\`\`\n${JSON.stringify(ran.response)}\n\`\`\`` : '';
       parts = [
         call('update_summary', {
-          markdown: `## Fake summary\n\nThe fake model read: ${lastUser.slice(0, 80)}`,
+          markdown: `## Fake summary\n\nThe fake model read: ${lastUser.slice(0, 80)}${output}`,
         }),
         call('post_message', { body: 'Fake model here. This run used no real tokens.' }),
       ];

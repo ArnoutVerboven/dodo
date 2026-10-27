@@ -1,6 +1,12 @@
 import { DEVICE_PROTOCOL } from '@dodo/core';
 import { describe, expect, it, vi } from 'vitest';
-import { claimRun, type DeviceDeps, onDeviceChanged, registerDevice } from './devices.js';
+import {
+  claimRun,
+  type DeviceDeps,
+  egressCheck,
+  onDeviceChanged,
+  registerDevice,
+} from './devices.js';
 
 /** Firestore double with the transaction shape the device functions use. */
 function fakeDb(initial: Record<string, Record<string, unknown>>) {
@@ -167,5 +173,74 @@ describe('onDeviceChanged', () => {
     await onDeviceChanged(t.deps, 'd1', { state: 'revoked' }, { state: 'revoked' });
     await onDeviceChanged(t.deps, 'd1', undefined, { state: 'approved' });
     expect(t.revokeRefreshTokens).not.toHaveBeenCalled();
+  });
+});
+
+describe('egressCheck', () => {
+  const world = (extra: Record<string, Record<string, unknown>> = {}) => ({
+    'devices/mac1': { state: 'approved', name: 'MacBook' },
+    'runs/run1': { taskId: 't1', device: 'mac:mac1', state: 'running' },
+    'tasks/t1': { title: 'x', ai: { enabled: true }, allowedHosts: ['api.example.com'] },
+    'settings/global': { allowedHosts: ['github.com'] },
+    ...extra,
+  });
+  const req = { deviceId: 'mac1', runId: 'run1', host: 'api.example.com' };
+
+  it('allows a host from the task, project or global allowed hosts', async () => {
+    const { deps: d } = deps(world());
+    expect(await egressCheck(d, caller('mac1'), req)).toEqual({
+      allow: true,
+      by: 'allowed host api.example.com',
+    });
+    expect(await egressCheck(d, caller('mac1'), { ...req, host: 'raw.github.com' })).toMatchObject({
+      allow: true,
+    });
+  });
+
+  it('denies a host nothing allows, and anything once the run is over', async () => {
+    const { deps: d } = deps(world());
+    expect(await egressCheck(d, caller('mac1'), { ...req, host: 'evil.test' })).toEqual({
+      allow: false,
+    });
+    const over = deps(
+      world({ 'runs/run1': { taskId: 't1', device: 'mac:mac1', state: 'succeeded' } }),
+    );
+    expect(await egressCheck(over.deps, caller('mac1'), req)).toEqual({
+      allow: false,
+      by: 'run is succeeded',
+    });
+  });
+
+  it('counts the approval the user just gave for the command that reaches the host', async () => {
+    const { deps: d } = deps(
+      world({
+        'runs/run1': {
+          taskId: 't1',
+          device: 'mac:mac1',
+          state: 'claimed',
+          answer: { value: 'yes', suggestedRule: 'Bash(curl https://pypi.org/simple/)' },
+        },
+      }),
+    );
+    expect(await egressCheck(d, caller('mac1'), { ...req, host: 'pypi.org' })).toEqual({
+      allow: true,
+      by: 'Bash(curl https://pypi.org/simple/)',
+    });
+    expect(
+      await egressCheck(d, caller('mac1'), { ...req, host: 'files.pythonhosted.org' }),
+    ).toEqual({
+      allow: false,
+    });
+  });
+
+  it("refuses another device, a revoked device and a run that is not this Mac's", async () => {
+    const { deps: d } = deps(world());
+    await expect(egressCheck(d, caller('mac2'), req)).rejects.toThrow(/Not this device/);
+    const revoked = deps(world({ 'devices/mac1': { state: 'revoked' } }));
+    await expect(egressCheck(revoked.deps, caller('mac1'), req)).rejects.toThrow(/revoked/);
+    const other = deps(
+      world({ 'runs/run1': { taskId: 't1', device: 'mac:mac9', state: 'running' } }),
+    );
+    await expect(egressCheck(other.deps, caller('mac1'), req)).rejects.toThrow(/another device/);
   });
 });
