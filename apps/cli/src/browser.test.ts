@@ -25,23 +25,41 @@ describe('profilesWithExtension', () => {
   });
 });
 
-describe('browserReport', () => {
-  it('names what is missing', () => {
-    process.env.DODO_CHROME_USER_DATA_DIR = chrome();
-    const r = browserReport({});
-    expect(r.state).toBe('unavailable');
-    if (process.platform === 'darwin') expect(r.problems.join('\n')).toMatch(/not installed/);
-    else expect(r.problems.join('\n')).toMatch(/macOS only/);
-  });
-
-  it.runIf(process.platform === 'darwin')('is ready without a token, with a warning', () => {
+describe.runIf(process.platform === 'darwin')('browserReport on a Mac', () => {
+  it('needs Chrome and nothing else: its own window by default', () => {
     const dir = chrome();
-    mkdirSync(path.join(dir, 'Default', 'Extensions', EXTENSION_ID), { recursive: true });
     process.env.DODO_CHROME_USER_DATA_DIR = dir;
+    process.env.DODO_CHROME_APP = path.join(dir, 'missing');
+    expect(browserReport({})).toMatchObject({
+      state: 'unavailable',
+      problems: [expect.stringMatching(/Chrome not found/)],
+    });
+    writeFileSync(path.join(dir, 'chrome'), '');
+    process.env.DODO_CHROME_APP = path.join(dir, 'chrome');
     expect(browserReport({})).toMatchObject({
       state: 'ready',
+      mode: 'window',
+      warnings: [expect.stringMatching(/own Chrome window/)],
+    });
+  });
+
+  it('prefers the extension when installed, unless told otherwise', () => {
+    const dir = chrome();
+    mkdirSync(path.join(dir, 'Default', 'Extensions', EXTENSION_ID), { recursive: true });
+    writeFileSync(path.join(dir, 'chrome'), '');
+    process.env.DODO_CHROME_USER_DATA_DIR = dir;
+    process.env.DODO_CHROME_APP = path.join(dir, 'chrome');
+    expect(browserReport({})).toMatchObject({
+      mode: 'extension',
       warnings: [expect.stringMatching(/allow the first connection/)],
     });
     expect(browserReport({ browser: { token: 't' } }).warnings).toEqual([]);
+    expect(browserReport({ browser: { mode: 'window' } }).mode).toBe('window');
+  });
+});
+
+describe.runIf(process.platform !== 'darwin')('browserReport elsewhere', () => {
+  it('says macOS only', () => {
+    expect(browserReport({}).problems.join('\n')).toMatch(/macOS only/);
   });
 });

@@ -41,7 +41,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 - Policy engine: allow / ask / deny at global, project, task; bash parser; deterministic ask for egress, writes outside the folder, git push, outbound messages; `untrusted` profile; "Always allow" with scope.
 - Tracked as #22 (Mac executor) and #23 (your Chrome). **Status (2026-10-27):** device pairing, revoke and the claim callables (#28), the `dodo` CLI and daemon (#29), the sandboxed worker (#30), one-command setup (#36) and your Chrome through Playwright MCP's extension mode (#39 and the daemon side) built; what is left is the exit test on a real Mac.
 - `dodo` CLI: device login, folders, launchd daemon, status; model calls via the gateway; the whole worker inside sandbox-runtime with an egress allowlist that asks the control plane about other hosts, no Keychain access.
-- Playwright MCP attached to your Chrome (built): `dodo browser connect <token>`, "Browser: Your Chrome" on the task; log in by hand, then the agent continues. Credentials from the vault (#25) type themselves in later.
+- Playwright MCP with a real Chrome window (built): dodo's own window by default, your everyday Chrome through the Playwright Extension if installed; "Browser: Your Chrome" on the task; log in by hand, then the agent continues. Credentials from the vault (#25) type themselves in later.
 - **Exit:** the agent downloaded your latest energy bill from a site you were logged into, asking before anything outside the allowlist.
 
 ## Phase 4 — Remote tools and notifications
