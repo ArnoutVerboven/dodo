@@ -58,10 +58,9 @@ pnpm dodo doctor                # checks node, pairing, sign-in, worker build an
 pnpm dodo daemon                # in the foreground; or: pnpm dodo daemon install
 ```
 
-**Your own Chrome.** A task can use your Chrome, logged in as you, for sites that need your account (itsme, MFA, passkeys). Two steps, once:
+**Your own Chrome.** A task can use your Chrome, logged in as you, for sites that need your account (itsme, MFA, passkeys). One click, once: add the [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) to Chrome (`setup` opens the page; later `pnpm dodo browser install` does). The daemon notices on its own; `pnpm dodo doctor` shows "your Chrome: ready". Chrome itself cannot be driven from outside without something inside it: since Chrome 136 it refuses remote debugging on your profile, which is why the extension exists.
 
-1. Install the [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) in Chrome, open it from the toolbar and copy the token it shows.
-2. `pnpm dodo browser connect <token>` and restart the daemon (`pnpm dodo daemon install`). `pnpm dodo doctor` shows "your Chrome: ready".
+The first time the agent connects, Chrome asks you to allow it. For a Mac that works while you are away, open the extension from Chrome's toolbar, copy its token and run `pnpm dodo browser connect <token>`; then it never asks.
 
 Then set **Browser: Your Chrome** on a task (or as a project default). The agent gets a tab group in your Chrome; opening a site is an egress decision like any other, and anything that looks like pay, order, confirm, send, delete or sign asks first. When a login needs you, do it by hand in that tab and reply to the task; the agent continues in the same session. Files it saves land in `~/.dodo/work/browser`.
 

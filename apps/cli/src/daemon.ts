@@ -61,10 +61,10 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   }
   const entry = workerEntry();
   if (!existsSync(entry)) throw new Error(`worker not built at ${entry}; run \`pnpm build\``);
-  // Your Chrome, when the extension and its token are there; otherwise runs that ask for it
-  // get the message from `dodo doctor` instead.
-  const browser = browserReport(config);
-  for (const p of browser.problems) log(`browser: ${p}`);
+  // Your Chrome, when the extension is installed; checked again on every heartbeat, so
+  // installing it later needs no restart.
+  let browser = browserReport(config);
+  for (const p of [...browser.problems, ...browser.warnings]) log(`browser: ${p}`);
   let browserServer: BrowserServer | undefined;
   let current: string | undefined;
   const decided = new Map<string, DeviceEgressResponse>();
@@ -119,8 +119,14 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
 
     // Presence. Firestore rules let the device write only these fields on its own document.
     const deviceRef = doc(clients.db, paths.device(config.deviceId));
-    const hello = () =>
-      updateDoc(deviceRef, {
+    const hello = () => {
+      const now = browserReport(config);
+      if (now.state !== browser.state)
+        log(
+          `browser: ${now.state} (${[...now.problems, ...now.warnings].join('; ') || 'extension installed'})`,
+        );
+      browser = now;
+      return updateDoc(deviceRef, {
         lastSeen: Date.now(),
         version: VERSION,
         protocol: DEVICE_PROTOCOL,
@@ -132,6 +138,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
           stop('revoked', 'This Mac was revoked in Settings.');
         else log(`heartbeat failed: ${String((err as Error).message ?? err)}`);
       });
+    };
     const beat = setInterval(hello, DEVICE_HEARTBEAT_MS);
     void hello();
     subs.push(
@@ -162,7 +169,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
           log(`run ${runId}: claimed for task ${claimed.taskId}`);
           current = runId;
           let browserUrl: string | undefined;
-          if (claimed.browser && config.browser?.token) {
+          if (claimed.browser) {
             // Started once, kept across runs: the connection to Chrome, and with it the login
             // you did in a tab for one run, outlives the run.
             if (browserServer && !browserServer.running()) {
@@ -172,7 +179,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             if (!browserServer) {
               try {
                 browserServer = await startBrowserServer(
-                  config.browser.token,
+                  config.browser?.token,
                   path.join(workRoot(), 'browser'),
                   log,
                 );
