@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -43,9 +44,10 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo daemon uninstall
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
-  dodo browser [connect <token>|forget]
-                         let the agent use your own Chrome: install the Playwright Extension,
-                         then paste the token from the extension's page here
+  dodo browser [install|connect <token>|forget]
+                         let the agent use your own Chrome: 'install' opens the Playwright
+                         Extension in the Web Store (one click); 'connect' stores the token
+                         from the extension's page so Chrome never asks to allow the agent
   dodo status            this Mac as the server sees it
   dodo doctor            check node, pairing, sign-in, the worker build, the sandbox and Chrome
   dodo logout            forget the pairing on this Mac (revoke it in Settings too)
@@ -183,25 +185,40 @@ async function folders(action: string | undefined, target: string | undefined) {
 /** The agent's browser is your Chrome: the extension does the driving, the token skips its dialog. */
 async function browser(action: string | undefined, token: string | undefined) {
   const config = requireConfig();
+  if (action === 'install') {
+    openInBrowser(EXTENSION_URL);
+    console.log(`Opening ${EXTENSION_URL}\nClick "Add to Chrome"; the daemon notices on its own.`);
+    return;
+  }
   if (action === 'connect') {
     if (!token?.trim())
       throw new Error(
-        `Usage: dodo browser connect <token>\n  Install the extension (${EXTENSION_URL}), open it from Chrome's toolbar and copy the token it shows.`,
+        "Usage: dodo browser connect <token>\n  Open the Playwright Extension from Chrome's toolbar and copy the token it shows.",
       );
     config.browser = { token: token.trim() };
     writeConfig(config);
   } else if (action === 'forget') {
     config.browser = undefined;
     writeConfig(config);
-  } else if (action !== undefined) throw new Error('Usage: dodo browser [connect <token>|forget]');
+  } else if (action !== undefined)
+    throw new Error('Usage: dodo browser [install|connect <token>|forget]');
   const r = browserReport(config);
-  if (r.state === 'ready')
-    console.log(
-      `Ready: Chrome profile ${r.profiles.join(', ')} with the extension, token stored. Restart the daemon (pnpm dodo daemon install) to pick it up.`,
-    );
-  else {
+  if (r.state === 'ready') {
+    console.log(`Ready: Chrome profile ${r.profiles.join(', ')} has the extension.`);
+    for (const w of r.warnings) console.log(`  ${w}`);
+  } else {
     console.log('Not ready:');
     for (const p of r.problems) console.log(`  ${p}`);
+  }
+}
+
+/** Open a page in the user's default browser (macOS only; elsewhere the URL is printed). */
+function openInBrowser(url: string) {
+  if (process.platform !== 'darwin') return;
+  try {
+    execFileSync('open', [url], { stdio: 'ignore' });
+  } catch {
+    // printed by the caller
   }
 }
 
@@ -248,11 +265,11 @@ async function doctor(): Promise<boolean> {
   }
   for (const f of config.folders) ok(`folder ${f}`, existsSync(expandFolder(f)));
   const chrome = browserReport(config);
-  // Optional: the task form only offers "Your Chrome" when this is ready, so it does not fail.
+  // Optional: a task only gets "Your Chrome" when this is ready, so it is not a failure.
   console.log(
     `${chrome.state === 'ready' ? 'ok  ' : 'info'} your Chrome: ${
       chrome.state === 'ready'
-        ? `profile ${chrome.profiles.join(', ')}, token stored`
+        ? `profile ${chrome.profiles.join(', ')}${chrome.warnings.length ? `; ${chrome.warnings.join('; ')}` : ', token stored'}`
         : `${chrome.problems.join('; ')} (optional: tasks that need your logins)`
     }`,
   );
@@ -289,6 +306,13 @@ async function setup(
     return 1;
   }
   const config = requireConfig();
+  if (process.platform === 'darwin' && browserReport(config).state !== 'ready') {
+    console.log(
+      'To let tasks use your own Chrome (your logins), add the Playwright Extension: opening the Web Store page now, click "Add to Chrome". The daemon notices on its own; skip it if you do not need it.',
+    );
+    openInBrowser(EXTENSION_URL);
+    console.log('');
+  }
   if (flags.foreground === true || process.platform !== 'darwin') {
     console.log('Setup complete. Starting the daemon here; stop it with Ctrl-C.');
     const reason = await runDaemon(config, {});

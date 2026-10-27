@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
  * your profile, with your sessions and cookies. The worker reaches it over MCP from inside the
  * sandbox; nothing else on the machine listens for it, and it runs only while a run needs it.
  *
- * Setup is two steps, both yours: install the extension from the Chrome Web Store, and hand
- * the daemon its token with `dodo browser connect <token>` so Chrome does not ask on every run.
+ * Setup is one click of yours: install the extension from the Chrome Web Store. The first time
+ * the daemon connects, Chrome asks you to allow it; `dodo browser connect <token>` with the
+ * token from the extension's page skips that, for a Mac that works while you are away.
  */
 
 export const EXTENSION_ID = 'mmlmfjhmonkocbjadbfplnigmagldckm';
@@ -57,17 +58,22 @@ export interface BrowserReport {
   state: 'ready' | 'unavailable';
   profiles: string[];
   problems: string[];
+  /** Ready, with a catch: without the token, Chrome asks you to allow the first connection. */
+  warnings: string[];
 }
 
 export function browserReport(config: { browser?: { token?: string } }): BrowserReport {
   const problems: string[] = [];
+  const warnings: string[] = [];
   if (process.platform !== 'darwin') problems.push('your own Chrome is driven on macOS only');
   const profiles = process.platform === 'darwin' ? profilesWithExtension() : [];
   if (process.platform === 'darwin' && profiles.length === 0)
-    problems.push(`Playwright Extension not installed in Chrome: ${EXTENSION_URL}`);
-  if (!config.browser?.token)
-    problems.push('no extension token: dodo browser connect <token> (from the extension)');
-  return { state: problems.length ? 'unavailable' : 'ready', profiles, problems };
+    problems.push(`Playwright Extension not installed in Chrome (dodo browser install)`);
+  if (!problems.length && !config.browser?.token)
+    warnings.push(
+      'Chrome asks you to allow the first connection; dodo browser connect <token> skips that',
+    );
+  return { state: problems.length ? 'unavailable' : 'ready', profiles, problems, warnings };
 }
 
 export interface BrowserServer {
@@ -90,11 +96,12 @@ const START_TIMEOUT_MS = 15_000;
 
 /**
  * Start Playwright MCP against your Chrome, on a free localhost port. Chrome itself is only
- * touched on the first tool call: the extension opens its connect page then, and with the
- * token it connects without asking. Files the agent saves land in `outputDir`.
+ * touched on the first tool call: the extension opens its connect page then, and either
+ * connects on the token or waits for you to click Allow. Files the agent saves land in
+ * `outputDir`.
  */
 export function startBrowserServer(
-  token: string,
+  token: string | undefined,
   outputDir: string,
   log: (message: string) => void,
 ): Promise<BrowserServer> {
@@ -115,7 +122,7 @@ export function startBrowserServer(
       outputDir,
     ],
     {
-      env: { ...process.env, PLAYWRIGHT_MCP_EXTENSION_TOKEN: token },
+      env: token ? { ...process.env, PLAYWRIGHT_MCP_EXTENSION_TOKEN: token } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );

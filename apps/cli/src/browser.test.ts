@@ -26,12 +26,22 @@ describe('profilesWithExtension', () => {
 });
 
 describe('browserReport', () => {
-  it('names each missing piece', () => {
+  it('names what is missing', () => {
     process.env.DODO_CHROME_USER_DATA_DIR = chrome();
     const r = browserReport({});
     expect(r.state).toBe('unavailable');
-    expect(r.problems.join('\n')).toMatch(/dodo browser connect/);
     if (process.platform === 'darwin') expect(r.problems.join('\n')).toMatch(/not installed/);
     else expect(r.problems.join('\n')).toMatch(/macOS only/);
+  });
+
+  it.runIf(process.platform === 'darwin')('is ready without a token, with a warning', () => {
+    const dir = chrome();
+    mkdirSync(path.join(dir, 'Default', 'Extensions', EXTENSION_ID), { recursive: true });
+    process.env.DODO_CHROME_USER_DATA_DIR = dir;
+    expect(browserReport({})).toMatchObject({
+      state: 'ready',
+      warnings: [expect.stringMatching(/allow the first connection/)],
+    });
+    expect(browserReport({ browser: { token: 't' } }).warnings).toEqual([]);
   });
 });
