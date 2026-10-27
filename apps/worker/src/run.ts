@@ -3,7 +3,7 @@ import { mkdir, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { execTools, runAgent, taskTools } from '@dodo/agent';
+import { execTools, inheritedEnv, runAgent, taskTools } from '@dodo/agent';
 import { Project, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
@@ -38,7 +38,7 @@ async function checkout(
       {
         cwd: workdir,
         timeout: 120_000,
-        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', HOME: workdir },
+        env: { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir },
       },
     );
     log(`checked out ${repo}`);

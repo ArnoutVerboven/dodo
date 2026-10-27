@@ -15,6 +15,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@dodo/core": "workspace:*",
     "firebase": "^13.1.0"
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PolicyEngine } from './engine.js';
+import { hostAllowedBy, PolicyEngine } from './engine.js';
 import { matches, parseRule, ruleFor } from './rules.js';
 
 describe('rules', () => {
@@ -75,5 +75,40 @@ describe('PolicyEngine', () => {
       'allow',
     );
     expect(p.decide({ tool: 'Http', key: 'domain:evil.com', category: 'egress' }).kind).toBe('ask');
+  });
+});
+
+describe('hostAllowedBy', () => {
+  const base = { allow: [] as string[], deny: [] as string[], allowedHosts: [] as string[] };
+  it('allows a host on the allowed-hosts list, including subdomains', () => {
+    expect(hostAllowedBy({ ...base, allowedHosts: ['github.com'] }, 'api.github.com')).toBe(
+      'allowed host api.github.com',
+    );
+    expect(
+      hostAllowedBy({ ...base, allowedHosts: ['github.com'] }, 'notgithub.com'),
+    ).toBeUndefined();
+  });
+  it('allows a host an Http rule names', () => {
+    expect(
+      hostAllowedBy({ ...base, allow: ['Http(domain:api.example.com)'] }, 'api.example.com'),
+    ).toBe('Http(domain:api.example.com)');
+    expect(
+      hostAllowedBy({ ...base, allow: ['Http(domain:api.example.com)'] }, 'example.com'),
+    ).toBeUndefined();
+    expect(hostAllowedBy({ ...base, allow: ['Http'] }, 'anything.test')).toBe('Http');
+  });
+  it('allows a host an approved command mentions as a whole name', () => {
+    const allow = ['Bash(curl -s https://api.x.com/v1 | jq .)'];
+    expect(hostAllowedBy({ ...base, allow }, 'api.x.com')).toBe(allow[0]);
+    expect(hostAllowedBy({ ...base, allow }, 'x.com')).toBeUndefined();
+    expect(hostAllowedBy({ ...base, allow }, 'api.x.community')).toBeUndefined();
+  });
+  it('a deny rule wins', () => {
+    expect(
+      hostAllowedBy(
+        { allow: ['Http'], deny: ['Http(domain:evil.test)'], allowedHosts: ['evil.test'] },
+        'evil.test',
+      ),
+    ).toBeUndefined();
   });
 });

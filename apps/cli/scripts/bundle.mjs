@@ -12,6 +12,8 @@ await build({
   target: 'node22',
   format: 'esm',
   sourcemap: true,
+  // Ships its own helper binaries next to its code, so it stays a real dependency.
+  external: ['@anthropic-ai/sandbox-runtime'],
   banner: {
     js: "#!/usr/bin/env node\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },

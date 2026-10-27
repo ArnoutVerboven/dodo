@@ -28,6 +28,7 @@ import {
 import { credentialStore } from './credentials.js';
 import { runDaemon, workerEntry } from './daemon.js';
 import { agentInstalled, installAgent, uninstallAgent } from './launchd.js';
+import { sandboxReport } from './sandbox.js';
 
 const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
 
@@ -39,7 +40,7 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
   dodo status            this Mac as the server sees it
-  dodo doctor            check node, pairing, sign-in and the worker build
+  dodo doctor            check node, pairing, sign-in, the worker build and the sandbox
   dodo logout            forget the pairing on this Mac (revoke it in Settings too)
 `;
 
@@ -184,6 +185,14 @@ async function doctor() {
   ok(`sign-in stored in the ${store.kind}`, !!store.load());
   const entry = workerEntry();
   ok('worker built', existsSync(entry), entry);
+  const sandbox = sandboxReport();
+  ok(
+    'sandbox for the worker',
+    sandbox.state === 'on',
+    sandbox.state === 'on'
+      ? `${process.platform === 'darwin' ? 'Seatbelt' : 'bubblewrap'}${sandbox.warnings.length ? `; ${sandbox.warnings.join('; ')}` : ''}`
+      : [...sandbox.problems, ...sandbox.warnings].join('; '),
+  );
   if (!config) return;
   try {
     const clients = connect(config, store);
