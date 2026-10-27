@@ -1,7 +1,9 @@
 import type { FunctionDeclaration } from '@dodo/core';
+import { vaultRef, vaultRule } from '@dodo/core';
 import type { ActionCategory, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
 import type { TaskStore } from './control-plane.js';
+import type { SecretResolver } from './secrets.js';
 
 /**
  * Tools are defined once in our own format and converted per adapter. Phase 2 ships only
@@ -14,8 +16,8 @@ export interface ToolContext {
   policy?: PolicyEngine;
   /** The run's task folder; exec tools are confined to it. */
   workdir?: string;
-  /** The vault (#25): resolves `{{vault:…}}` references for a host, and strips resolved values. */
-  secrets?: { resolve(ref: string, host: string): Promise<string>; redact(text: string): string };
+  /** Vault values for tools that type into a site; absent when the run has no such tool. */
+  secrets?: SecretResolver;
 }
 
 /** What a call does, for the policy engine: the rule tool name, the key rules match, the category. */
@@ -148,6 +150,64 @@ export const taskTools = [
       if (args.kind === 'text' && !args.text)
         return { result: { error: 'A text artifact needs text' } };
       return { result: { id: await store.addArtifact(args) } };
+    },
+  }),
+  define({
+    name: 'get_personal_info',
+    description:
+      "The user's personal details for forms, sign-ups and scheduling: name, email, phone, address, birth date, language, time zone, other details and notes (e.g. when they work). Use these instead of asking. Empty fields are unknown.",
+    schema: z.object({}),
+    async execute(_, { store }) {
+      const info = await store.getPersonalInfo();
+      if (!info) return { result: { info: {}, note: 'The user has not filled in personal info.' } };
+      const { updatedAt: _u, ...rest } = info;
+      return { result: { info: rest } };
+    },
+  }),
+  define({
+    name: 'list_vault',
+    description:
+      "The user's vault: logins and other secret values (passwords, usernames, phone numbers for itsme) you can type into a site without seeing them. Returns each entry's id, name, the sites it may be used on, its fields and a login hint, never the values. Refer to a value as {{vault:<id>.<field>}} in a tool that types into a page; a task must be approved for an entry first (request_vault_access).",
+    schema: z.object({}),
+    async execute(_, { store }) {
+      const entries = await store.listVault();
+      return {
+        result: {
+          entries: entries.map((e) => ({
+            id: e.id,
+            name: e.name,
+            sites: e.domains,
+            hint: e.hint || undefined,
+            fields: e.fields.map((f) => ({
+              field: f.key,
+              label: f.label,
+              ref: vaultRef(e.id, f.key),
+            })),
+          })),
+        },
+      };
+    },
+  }),
+  define({
+    name: 'request_vault_access',
+    description:
+      'Ask the user to approve using one vault entry in this task. The run pauses until they answer; once approved, the entry stays usable in this task on its own sites only.',
+    schema: z.object({
+      entryId: z.string().min(1),
+      reason: z.string().min(1).max(500),
+    }),
+    async execute({ entryId, reason }, { store }) {
+      const entry = (await store.listVault()).find((e) => e.id === entryId);
+      if (!entry) return { result: { error: `No vault entry ${entryId}; see list_vault.` } };
+      const fields = entry.fields.map((f) => f.label.toLowerCase()).join(', ');
+      return {
+        result: { ok: true, note: 'The run pauses here until the user answers.' },
+        askUser: {
+          kind: 'approval',
+          prompt: `Use your vault entry "${entry.name}" (${fields}) on ${entry.domains.join(', ')} for this task? ${reason}`,
+          suggestedRule: vaultRule(entry.id),
+        },
+      };
     },
   }),
   define({

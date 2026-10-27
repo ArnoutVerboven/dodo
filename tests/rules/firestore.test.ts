@@ -244,6 +244,30 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(device(), 'runs/m1/events/e1')));
   });
 
+  it('lets the owner edit personal info and a live run read it', async () => {
+    await assertSucceeds(setDoc(doc(owner(), 'settings/profile'), { email: 'a@b.be' }));
+    await assertSucceeds(getDoc(doc(run(), 'settings/profile')));
+    await assertFails(getDoc(doc(run('r9', 1), 'settings/profile'))); // finished run
+    await assertFails(setDoc(doc(run(), 'settings/profile'), { email: 'x@evil.com' }));
+    await assertFails(getDoc(doc(stranger(), 'settings/profile')));
+    await assertFails(getDoc(doc(run(), 'settings/global')));
+  });
+
+  it('keeps vault metadata read-only and vault values out of every client', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'vault/energy'), { name: 'Energy', domains: ['x.be'] });
+      await setDoc(doc(ctx.firestore(), 'vaultDev/values'), { values: { energy: { p: 's' } } });
+    });
+    await assertSucceeds(getDoc(doc(owner(), 'vault/energy')));
+    await assertSucceeds(getDoc(doc(run(), 'vault/energy')));
+    await assertFails(getDoc(doc(run('r9', 1), 'vault/energy')));
+    await assertFails(setDoc(doc(owner(), 'vault/energy'), { name: 'changed' }));
+    await assertFails(setDoc(doc(run(), 'vault/new'), { name: 'x' }));
+    await assertFails(getDoc(doc(stranger(), 'vault/energy')));
+    await assertFails(getDoc(doc(owner(), 'vaultDev/values')));
+    await assertFails(getDoc(doc(run(), 'vaultDev/values')));
+  });
+
   it('denies unknown collections', async () => {
     await assertFails(setDoc(doc(owner(), 'anything/x'), { a: 1 }));
   });

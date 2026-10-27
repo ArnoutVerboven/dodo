@@ -1,3 +1,4 @@
+import { vaultRefs } from '@dodo/core';
 import { z } from 'zod';
 import { define, type PolicyClaim, type ToolContext, type ToolDef } from './tools.js';
 
@@ -118,6 +119,7 @@ export function browserClaim(
 export async function browserTools(client: BrowserClient): Promise<ToolDef[]> {
   const available = new Map((await client.listTools()).map((t) => [t.name, t]));
   let currentHost = '';
+  let tainted = false;
   const tools: ToolDef[] = [];
   for (const name of BROWSER_TOOLS) {
     const mcp = available.get(name);
@@ -130,9 +132,30 @@ export async function browserTools(client: BrowserClient): Promise<ToolDef[]> {
         parameters: mcp.inputSchema,
         policy: (args) => browserClaim(name, args, currentHost),
         async execute(args, ctx: ToolContext) {
-          const res = await client.callTool(name, args);
+          // A page that just got a vault value may not run arbitrary JavaScript: it could read
+          // the field back. Opening another page clears it.
+          if (name === 'browser_evaluate' && tainted) {
+            return {
+              result: {
+                error:
+                  'JavaScript is disabled on this page because a vault value was typed into it. Navigate first.',
+              },
+            };
+          }
+          let callArgs = args;
+          if (name === 'browser_type' || name === 'browser_fill_form') {
+            const resolved = await resolveVault(name, args, currentHost, ctx);
+            if ('error' in resolved) return { result: { error: resolved.error } };
+            if (resolved.injected) tainted = true;
+            callArgs = resolved.args;
+          }
+          const res = await client.callTool(name, callArgs);
           const url = pageUrlIn(res.text);
-          if (url) currentHost = hostOf(url);
+          if (url) {
+            const host = hostOf(url);
+            if (name === 'browser_navigate' || host !== currentHost) tainted = false;
+            currentHost = host;
+          }
           let text =
             res.text.length > MAX_RESULT ? `${res.text.slice(0, MAX_RESULT)}\n…(cut)` : res.text;
           if (ctx.secrets) text = ctx.secrets.redact(text);
@@ -142,6 +165,47 @@ export async function browserTools(client: BrowserClient): Promise<ToolDef[]> {
     );
   }
   return tools;
+}
+
+/**
+ * Replaces `{{vault:…}}` references in what a type or fill-form call types with the values,
+ * for the site the agent is on. The model's arguments (and so the trace) keep the references;
+ * only the call to the browser gets the values.
+ */
+export async function resolveVault(
+  name: string,
+  args: Record<string, unknown>,
+  host: string,
+  ctx: ToolContext,
+): Promise<{ args: Record<string, unknown>; injected: boolean } | { error: string }> {
+  const texts =
+    name === 'browser_type'
+      ? [String(args.text ?? '')]
+      : Array.isArray(args.fields)
+        ? (args.fields as Array<Record<string, unknown>>).map((f) => String(f?.value ?? ''))
+        : [];
+  if (!texts.some((t) => vaultRefs(t).length)) return { args, injected: false };
+  if (!ctx.secrets) return { error: 'The vault is not available in this run.' };
+  if (!host) return { error: 'Open the login page first; vault values are typed per site.' };
+  try {
+    const secrets = ctx.secrets;
+    if (name === 'browser_type') {
+      return {
+        args: { ...args, text: await secrets.resolve(String(args.text ?? ''), host) },
+        injected: true,
+      };
+    }
+    const fields = await Promise.all(
+      (args.fields as Array<Record<string, unknown>>).map(async (f) =>
+        typeof f?.value === 'string' && vaultRefs(f.value).length
+          ? { ...f, value: await secrets.resolve(f.value, host) }
+          : f,
+      ),
+    );
+    return { args: { ...args, fields }, injected: true };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
 }
 
 /** Connect to a Playwright MCP server over streamable HTTP; the worker calls this once per run. */

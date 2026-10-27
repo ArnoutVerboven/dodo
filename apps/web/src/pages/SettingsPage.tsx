@@ -3,10 +3,12 @@ import { useEffect, useState } from 'react';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
+import { PersonalInfoSettings } from '@/components/PersonalInfoSettings';
 import { PushSettings } from '@/components/PushSettings';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Label, Select } from '@/components/ui/input';
+import { VaultSettings } from '@/components/VaultSettings';
 import { saveSettings, useSettings } from '@/lib/data';
 
 const toEur = (micro: number) => String(micro / 1e6);
@@ -147,6 +149,10 @@ export function SettingsPage() {
           </p>
         </CardBody>
       </Card>
+
+      <PersonalInfoSettings />
+
+      <VaultSettings />
 
       <DevicesSettings />
 

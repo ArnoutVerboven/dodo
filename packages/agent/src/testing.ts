@@ -5,11 +5,13 @@ import type {
   GenerateRequest,
   GenerateResponse,
   HeartbeatResponse,
+  PersonalInfo,
   Project,
   RequestInputRequest,
   RunEvent,
   StatusLine,
   Task,
+  VaultEntry,
 } from '@dodo/core';
 import type { ControlPlane, TaskStore, TraceSink } from './control-plane.js';
 
@@ -66,6 +68,8 @@ export class MemoryTaskStore implements TaskStore {
   status: StatusLine | undefined;
   messages: Array<{ author: string; body: string; createdAt: number }> = [];
   artifacts: Artifact[] = [];
+  personalInfo: PersonalInfo | undefined;
+  vault: VaultEntry[] = [];
   constructor(
     public task: Task,
     public project: Project | undefined = undefined,
@@ -100,6 +104,12 @@ export class MemoryTaskStore implements TaskStore {
   }
   async recentMessages(limit: number) {
     return this.messages.slice(-limit);
+  }
+  async getPersonalInfo() {
+    return this.personalInfo;
+  }
+  async listVault() {
+    return this.vault;
   }
 }
 

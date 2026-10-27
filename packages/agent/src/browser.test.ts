@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type BrowserClient, browserClaim, browserTools, pageUrlIn } from './browser.js';
 import type { TaskStore } from './control-plane.js';
+import { createSecretResolver } from './secrets.js';
 
 describe('browserClaim', () => {
   it('keys navigation by the target host and actions by the current page', () => {
@@ -117,5 +118,66 @@ describe('browserTools', () => {
       'https://a.test/x?y=1',
     );
     expect(pageUrlIn('nothing')).toBeUndefined();
+  });
+
+  it('types vault values only on their site, keeps refs in the args, and blocks scripts after', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const client: BrowserClient = {
+      async listTools() {
+        return ['browser_navigate', 'browser_type', 'browser_fill_form', 'browser_evaluate'].map(
+          (name) => ({ name, inputSchema: { type: 'object' } }),
+        );
+      },
+      async callTool(name, args) {
+        calls.push([name, args]);
+        const url = name === 'browser_navigate' ? args.url : 'https://login.engie.be/';
+        return { text: `- Page URL: ${url}\nfield: ${JSON.stringify(args)}`, isError: false };
+      },
+      async close() {},
+    };
+    const asked: string[] = [];
+    const secrets = createSecretResolver(async (e, f, host) => {
+      asked.push(`${e}.${f}@${host}`);
+      if (host !== 'login.engie.be') throw new Error('Energy may only be used on login.engie.be');
+      return f === 'phone' ? '+32470111222' : 'pw-123';
+    });
+    const ctx = { store: {} as TaskStore, secrets };
+    const byName = Object.fromEntries((await browserTools(client)).map((t) => [t.name, t]));
+    const run = (name: string, args: Record<string, unknown>) =>
+      (byName[name] as NonNullable<(typeof byName)[string]>).execute(args, ctx);
+
+    // Before any page: refused, nothing typed.
+    expect(await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).toEqual({
+      result: { error: expect.stringContaining('Open the login page first') },
+    });
+    await run('browser_navigate', { url: 'https://evil.test/' });
+    expect(await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).toEqual({
+      result: { error: 'Energy may only be used on login.engie.be' },
+    });
+    await run('browser_navigate', { url: 'https://login.engie.be/' });
+    const args = { target: 'e1', text: '{{vault:energy.phone}}' };
+    const typed = await run('browser_type', args);
+    expect(calls.at(-1)).toEqual(['browser_type', { target: 'e1', text: '+32470111222' }]);
+    expect(args.text).toBe('{{vault:energy.phone}}');
+    expect(JSON.stringify(typed)).not.toContain('+32470111222');
+    await run('browser_fill_form', {
+      fields: [
+        { name: 'user', value: 'arnout' },
+        { name: 'pw', value: '{{vault:energy.password}}' },
+      ],
+    });
+    expect(calls.at(-1)?.[1]).toEqual({
+      fields: [
+        { name: 'user', value: 'arnout' },
+        { name: 'pw', value: 'pw-123' },
+      ],
+    });
+    expect(await run('browser_evaluate', { function: '() => 1' })).toEqual({
+      result: { error: expect.stringContaining('JavaScript is disabled') },
+    });
+    await run('browser_navigate', { url: 'https://login.engie.be/account' });
+    expect((await run('browser_evaluate', { function: '() => 1' })).result).not.toHaveProperty(
+      'error',
+    );
   });
 });

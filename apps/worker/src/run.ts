@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import {
   browserTools,
   connectBrowser,
+  createSecretResolver,
   execTools,
   inheritedEnv,
   runAgent,
@@ -118,6 +119,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       tools,
       policy,
       workdir,
+      secrets: createSecretResolver((entryId, field, host) =>
+        control.resolveVault(entryId, field, host),
+      ),
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },
