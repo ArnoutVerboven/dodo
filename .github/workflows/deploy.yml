@@ -98,19 +98,19 @@ jobs:
           BUDGET_CURRENCY=${{ vars.BUDGET_CURRENCY || 'EUR' }}
           MODEL_BACKEND=${{ vars.MODEL_BACKEND || 'vertex' }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-          APP_URL=https://dodo-tasks.web.app
+          APP_URL=https://dodo-app.web.app
           EOF
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
-      - name: Make sure the dodo-tasks Hosting site exists
-        # The app is served from dodo-tasks.web.app (firebase.json); the project's default
+      - name: Make sure the dodo-app Hosting site exists
+        # The app is served from dodo-app.web.app (firebase.json); the project's default
         # site only redirects there.
         if: env.HOSTING == 'true'
         run: |
-          pnpm exec firebase hosting:sites:get dodo-tasks --project ${{ vars.GCP_PROJECT_ID }} >/dev/null 2>&1 ||
-            pnpm exec firebase hosting:sites:create dodo-tasks --project ${{ vars.GCP_PROJECT_ID }} --non-interactive
+          pnpm exec firebase hosting:sites:get dodo-app --project ${{ vars.GCP_PROJECT_ID }} >/dev/null 2>&1 ||
+            pnpm exec firebase hosting:sites:create dodo-app --project ${{ vars.GCP_PROJECT_ID }} --non-interactive
       - name: Deploy to Firebase
         run: |
           ONLY=""

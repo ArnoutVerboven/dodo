@@ -16,7 +16,7 @@
   ],
   "hosting": [
     {
-      "site": "dodo-tasks",
+      "site": "dodo-app",
       "public": "apps/web/dist",
       "ignore": ["firebase.json", "**/.*"],
       "rewrites": [
@@ -52,7 +52,7 @@
       "redirects": [
         {
           "regex": "^/(.*)$",
-          "destination": "https://dodo-tasks.web.app/:1",
+          "destination": "https://dodo-app.web.app/:1",
           "type": 302
         }
       ]
