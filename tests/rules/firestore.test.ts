@@ -5,7 +5,16 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST;
@@ -35,6 +44,20 @@ describe.skipIf(!enabled)('firestore.rules', () => {
         state: 'running',
         interrupt: false,
         generation: 2,
+      });
+      await setDoc(doc(db, 'devices/d1'), { name: 'MacBook', state: 'approved', lastSeen: 1 });
+      await setDoc(doc(db, 'devices/d2'), { name: 'Old', state: 'revoked' });
+      await setDoc(doc(db, 'runs/m1'), {
+        taskId: 't1',
+        state: 'queued',
+        device: 'mac:d1',
+        generation: 0,
+      });
+      await setDoc(doc(db, 'runs/m2'), {
+        taskId: 't1',
+        state: 'queued',
+        device: 'mac:d2',
+        generation: 0,
       });
       await setDoc(doc(db, 'runs/r9'), {
         taskId: 't1',
@@ -134,6 +157,42 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(stranger(), 'pushTokens/tok1')));
     await assertFails(setDoc(doc(stranger(), 'pushTokens/tok2'), { createdAt: 1 }));
     await assertFails(getDoc(doc(run(), 'pushTokens/tok1')));
+  });
+
+  const device = (id = 'd1') =>
+    env.authenticatedContext(`device:${id}`, { device: id }).firestore();
+
+  it('lets a Mac read and heartbeat only its own device document', async () => {
+    await assertSucceeds(getDoc(doc(device(), 'devices/d1')));
+    await assertSucceeds(
+      updateDoc(doc(device(), 'devices/d1'), { lastSeen: 2, folders: ['~/code'] }),
+    );
+    await assertFails(updateDoc(doc(device(), 'devices/d1'), { name: 'renamed' }));
+    await assertFails(updateDoc(doc(device(), 'devices/d1'), { state: 'revoked', lastSeen: 3 }));
+    await assertFails(getDoc(doc(device(), 'devices/d2')));
+    await assertFails(updateDoc(doc(device('d2'), 'devices/d2'), { lastSeen: 2 }));
+    await assertFails(getDoc(doc(device(), 'tasks/t1')));
+    await assertFails(getDoc(doc(device(), 'settings/global')));
+    await assertFails(getDoc(doc(device(), 'pushTokens/tok1')));
+    await assertFails(getDoc(doc(stranger(), 'devices/d1')));
+  });
+
+  it('lets a Mac see only the runs addressed to it, and never write them', async () => {
+    await assertSucceeds(getDoc(doc(device(), 'runs/m1')));
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(device(), 'runs'),
+          where('device', '==', 'mac:d1'),
+          where('state', '==', 'queued'),
+        ),
+      ),
+    );
+    await assertFails(getDocs(query(collection(device(), 'runs'), where('state', '==', 'queued'))));
+    await assertFails(getDoc(doc(device(), 'runs/r1')));
+    await assertFails(getDoc(doc(device('d2'), 'runs/m2'))); // revoked
+    await assertFails(updateDoc(doc(device(), 'runs/m1'), { state: 'claimed' }));
+    await assertFails(getDoc(doc(device(), 'runs/m1/events/e1')));
   });
 
   it('denies unknown collections', async () => {

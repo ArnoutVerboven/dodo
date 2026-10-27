@@ -27,17 +27,22 @@ function fakeDb(docs: Map<string, Record<string, unknown>>) {
   } as unknown as DispatcherDeps['db'];
 }
 
-function setup(createCustomToken: () => Promise<string>, start = vi.fn(async () => 'exec-1')) {
+function setup(
+  createCustomToken: () => Promise<string>,
+  start = vi.fn(async () => 'exec-1'),
+  extra: Array<[string, Record<string, unknown>]> = [],
+) {
   const docs = new Map<string, Record<string, unknown>>([
     ['runs/r1', { state: 'queued', device: 'gcp', taskId: 't1', projectId: undefined }],
     ['tasks/t1', { status: 'in_progress', activeRunId: 'r1' }],
+    ...extra,
   ]);
   const deps: DispatcherDeps = {
     db: fakeDb(docs),
     auth: { createCustomToken } as unknown as DispatcherDeps['auth'],
     costGate: { available: async () => 1_000_000 } as unknown as DispatcherDeps['costGate'],
     executor: { start },
-    now: () => 1000,
+    now: () => 1_000_000,
   };
   return { deps, docs, start };
 }
@@ -66,5 +71,36 @@ describe('dispatch', () => {
     expect(docs.get('tasks/t1')).toMatchObject({ status: 'needs_input' });
     expect(docs.get('tasks/t1')?.activeRunId).toBeUndefined();
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it('leaves a Mac run queued and tells the task what it waits for', async () => {
+    const { deps, docs, start } = setup(async () => 'tok', undefined, [
+      ['runs/r1', { state: 'queued', device: 'mac:d1', taskId: 't1', createdAt: 0 }],
+      ['devices/d1', { state: 'approved', name: 'MacBook', lastSeen: 1_000_000 }],
+    ]);
+    expect(await dispatch(deps, 'r1')).toBe('deferred');
+    expect(docs.get('runs/r1')).toMatchObject({ state: 'queued' });
+    expect(docs.get('tasks/t1')?.statusLine).toMatchObject({ text: 'Waiting for MacBook' });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('says when the Mac is offline, and fails a run for a Mac that is not paired', async () => {
+    const offline = setup(async () => 'tok', undefined, [
+      ['runs/r1', { state: 'queued', device: 'mac:d1', taskId: 't1', createdAt: 0 }],
+      ['devices/d1', { state: 'approved', name: 'MacBook', lastSeen: 0 }],
+    ]);
+    await dispatch(offline.deps, 'r1');
+    expect(offline.docs.get('tasks/t1')?.statusLine).toMatchObject({
+      text: expect.stringMatching(/offline/),
+    });
+
+    const revoked = setup(async () => 'tok', undefined, [
+      ['runs/r1', { state: 'queued', device: 'mac:d9', taskId: 't1', createdAt: 0 }],
+      ['devices/d9', { state: 'revoked', name: 'Old' }],
+    ]);
+    expect(await dispatch(revoked.deps, 'r1')).toBe('deferred');
+    expect(revoked.docs.get('runs/r1')).toMatchObject({ state: 'failed' });
+    expect(revoked.docs.get('tasks/t1')).toMatchObject({ status: 'needs_input' });
+    expect(revoked.docs.get('tasks/t1')?.activeRunId).toBeUndefined();
   });
 });

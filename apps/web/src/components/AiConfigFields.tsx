@@ -1,5 +1,6 @@
 import type { AiConfig } from '@dodo/core';
 import { Input, Label, Select } from '@/components/ui/input';
+import { useDevices } from '@/lib/data';
 import { MODEL_OPTIONS } from '@/lib/options';
 
 /** Editor for AI settings. Empty fields inherit from the project or global defaults. */
@@ -13,6 +14,10 @@ export function AiConfigFields({
   showEnabled?: boolean;
 }) {
   const set = (patch: Partial<AiConfig>) => onChange({ ...value, ...patch });
+  const { data: devices } = useDevices();
+  const macs = devices.filter((d) => d.state === 'approved');
+  const knownDevice =
+    !value.device?.startsWith('mac:') || macs.some((d) => `mac:${d.id}` === value.device);
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {showEnabled && (
@@ -48,7 +53,12 @@ export function AiConfigFields({
           <option value="">Default</option>
           <option value="auto">Auto (small model decides)</option>
           <option value="gcp">Remote (GCP sandbox)</option>
-          <option value="mac:default">Local Mac</option>
+          {macs.map((d) => (
+            <option key={d.id} value={`mac:${d.id}`}>
+              {d.name}
+            </option>
+          ))}
+          {!knownDevice && <option value={value.device}>Unpaired Mac ({value.device})</option>}
         </Select>
       </label>
       <label>

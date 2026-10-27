@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  DeviceClaimRequest,
+  DeviceRegisterRequest,
   FinishRequest,
   GenerateRequest,
   HeartbeatRequest,
@@ -19,6 +21,7 @@ import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/fire
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { claimOwnership as claim } from './claim-ownership.js';
+import { claimRun, onDeviceChanged, registerDevice } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
@@ -220,6 +223,42 @@ export const runFinish = onCall(
     ]);
     await finish(deps, run, req);
     return { ok: true };
+  },
+);
+
+/* ----------------------------- devices --------------------------- */
+
+const deviceDeps = () => ({ db: getFirestore(), auth: getAuth(), log: logger.info });
+
+/** `dodo login <code>`: unauthenticated on purpose, the single-use code from Settings is the proof. */
+export const deviceRegister = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    const req = parseOr<DeviceRegisterRequest>(DeviceRegisterRequest, request.data);
+    return registerDevice(deviceDeps(), req);
+  },
+);
+
+/** The daemon takes a queued run addressed to it and gets the run's own identity back. */
+export const deviceClaim = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<DeviceClaimRequest>(DeviceClaimRequest, request.data);
+    return claimRun(deviceDeps(), caller(request.auth), req);
+  },
+);
+
+export const onDeviceWritten = onDocumentWritten(
+  { document: 'devices/{deviceId}', serviceAccount: GATEWAY_SA },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() : undefined;
+    const after = event.data?.after.exists ? event.data.after.data() : undefined;
+    await onDeviceChanged(
+      deviceDeps(),
+      event.params.deviceId,
+      before as { state: 'approved' | 'revoked' } | undefined,
+      after as { state: 'approved' | 'revoked' } | undefined,
+    );
   },
 );
 

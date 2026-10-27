@@ -1,5 +1,6 @@
 import {
   Artifact,
+  Device,
   eur,
   GlobalSettings,
   type NewTask,
@@ -120,6 +121,17 @@ export const useRunEvents = (runId: string) =>
 /** The only write the owner may make on a run: ask it to stop at the next step. */
 export async function interruptRun(runId: string) {
   await updateDoc(doc(db, paths.run(runId)), { interrupt: true });
+}
+
+export const useDevices = () =>
+  useLiveQuery(query(collection(db, paths.devices()), orderBy('createdAt', 'asc')), Device, []);
+
+export async function saveDevice(id: string, changes: Partial<Pick<Device, 'name' | 'state'>>) {
+  await updateDoc(doc(db, paths.device(id)), clean({ ...changes, updatedAt: Date.now() }));
+}
+
+export async function removeDevice(id: string) {
+  await deleteDoc(doc(db, paths.device(id)));
 }
 
 export const useProjects = () =>

@@ -1,6 +1,7 @@
 import type { AiConfig } from '@dodo/core';
 import { useEffect, useState } from 'react';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { DevicesSettings } from '@/components/DevicesSettings';
 import { PushSettings } from '@/components/PushSettings';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -145,6 +146,8 @@ export function SettingsPage() {
           </p>
         </CardBody>
       </Card>
+
+      <DevicesSettings />
 
       <PushSettings />
 

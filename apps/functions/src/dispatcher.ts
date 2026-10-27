@@ -1,5 +1,5 @@
 import { affordableSeconds, type CostGate } from '@dodo/budget';
-import { paths, type Run } from '@dodo/core';
+import { type Device, deviceIdFromChoice, isDeviceOnline, paths, type Run } from '@dodo/core';
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { runUid, scopesForRun, WORKER_GIB, WORKER_VCPU } from './runtime.js';
@@ -32,11 +32,12 @@ export async function dispatch(
 ): Promise<'started' | 'skipped' | 'deferred'> {
   const now = (deps.now ?? Date.now)();
   const ref = deps.db.doc(paths.run(runId));
-  const claimed = await deps.db.runTransaction(async (t) => {
+  type Step = { kind: 'start' | 'defer'; run: Run } | undefined;
+  const step = await deps.db.runTransaction(async (t): Promise<Step> => {
     const snap = await t.get(ref);
     const run = snap.data() as Run | undefined;
     if (run?.state !== 'queued') return undefined;
-    if (run.device !== 'gcp') return 'deferred' as const; // Mac runs are claimed by the daemon (phase 3)
+    if (run.device !== 'gcp') return { kind: 'defer', run: { ...run, id: runId } }; // a Mac daemon claims it
     const generation = (run.generation ?? 0) + 1;
     t.update(ref, {
       state: 'dispatching',
@@ -44,10 +45,14 @@ export async function dispatch(
       attempts: FieldValue.increment(1),
       updatedAt: now,
     });
-    return { ...run, id: runId, generation };
+    return { kind: 'start', run: { ...run, id: runId, generation } };
   });
-  if (!claimed) return 'skipped';
-  if (claimed === 'deferred') return 'deferred';
+  if (!step) return 'skipped';
+  if (step.kind === 'defer') {
+    await deferToDevice(deps, step.run, now);
+    return 'deferred';
+  }
+  const claimed = step.run;
 
   try {
     const remaining = await deps.costGate.available(scopesForRun(claimed, now));
@@ -84,4 +89,39 @@ export async function dispatch(
     });
     return 'skipped';
   }
+}
+
+/**
+ * A run addressed to a Mac stays queued until its daemon claims it. The task says what it is
+ * waiting for; a run addressed to a Mac that is not paired fails right away instead of hanging.
+ */
+async function deferToDevice(deps: DispatcherDeps, run: Run, now: number) {
+  const deviceId = deviceIdFromChoice(run.device);
+  const device = deviceId
+    ? ((await deps.db.doc(paths.device(deviceId)).get()).data() as Device | undefined)
+    : undefined;
+  const taskRef = deps.db.doc(paths.task(run.taskId));
+  if (device?.state !== 'approved') {
+    await deps.db.doc(paths.run(run.id)).update({
+      state: 'failed',
+      endReason: 'error',
+      error: `Device ${run.device} is not paired`,
+      endedAt: now,
+      updatedAt: now,
+    });
+    await taskRef.update({
+      activeRunId: FieldValue.delete(),
+      status: 'needs_input',
+      statusLine: {
+        text: 'This Mac is not paired. Pick another device in the AI settings.',
+        needsYou: true,
+      },
+      updatedAt: now,
+    });
+    return;
+  }
+  const text = isDeviceOnline(device.lastSeen, now)
+    ? `Waiting for ${device.name}`
+    : `Waiting for ${device.name} (offline since ${new Date(device.lastSeen ?? run.createdAt).toISOString().slice(11, 16)} UTC)`;
+  await taskRef.update({ statusLine: { text, needsYou: false }, updatedAt: now });
 }
