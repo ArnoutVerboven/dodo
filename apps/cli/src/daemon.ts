@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DEVICE_HEARTBEAT_MS,
   DEVICE_PROTOCOL,
+  type DeviceClaimRequest,
   type DeviceClaimResponse,
   type DeviceEgressRequest,
   type DeviceEgressResponse,
@@ -14,6 +16,7 @@ import {
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
+import { type BrowserServer, browserReport, startBrowserServer } from './browser.js';
 import { type CliConfig, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
 import {
@@ -58,6 +61,11 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   }
   const entry = workerEntry();
   if (!existsSync(entry)) throw new Error(`worker not built at ${entry}; run \`pnpm build\``);
+  // Your Chrome, when the extension and its token are there; otherwise runs that ask for it
+  // get the message from `dodo doctor` instead.
+  const browser = browserReport(config);
+  for (const p of browser.problems) log(`browser: ${p}`);
+  let browserServer: BrowserServer | undefined;
   let current: string | undefined;
   const decided = new Map<string, DeviceEgressResponse>();
   if (report.state === 'on') {
@@ -92,7 +100,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     );
   }
   log(
-    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, waiting for runs`,
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.state}, waiting for runs`,
   );
 
   return new Promise<StopReason>((resolve) => {
@@ -106,7 +114,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       log(why);
       for (const s of subs) s();
       clearInterval(beat);
-      void stopSandbox().then(() => resolve(reason));
+      void Promise.all([stopSandbox(), browserServer?.stop()]).then(() => resolve(reason));
     };
 
     // Presence. Firestore rules let the device write only these fields on its own document.
@@ -117,6 +125,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         version: VERSION,
         protocol: DEVICE_PROTOCOL,
         folders: config.folders,
+        browser: browser.state === 'ready',
         updatedAt: Date.now(),
       }).catch((err: { code?: string }) => {
         if (String(err.code).endsWith('permission-denied'))
@@ -148,11 +157,40 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       if (!runId) return;
       busy = runId;
       try {
-        const claimed = await claim(clients, config, runId);
+        const claimed = await claim(clients, config, runId, browser.state === 'ready');
         if (claimed) {
           log(`run ${runId}: claimed for task ${claimed.taskId}`);
           current = runId;
-          const code = await execute(config, runId, claimed, log, report.state === 'on');
+          let browserUrl: string | undefined;
+          if (claimed.browser && config.browser?.token) {
+            // Started once, kept across runs: the connection to Chrome, and with it the login
+            // you did in a tab for one run, outlives the run.
+            if (browserServer && !browserServer.running()) {
+              log('browser: the server is gone; starting it again');
+              browserServer = undefined;
+            }
+            if (!browserServer) {
+              try {
+                browserServer = await startBrowserServer(
+                  config.browser.token,
+                  path.join(workRoot(), 'browser'),
+                  log,
+                );
+                log(`browser: Playwright MCP at ${browserServer.url}`);
+              } catch (err) {
+                log(`run ${runId}: ${(err as Error).message}; running without the browser`);
+              }
+            }
+            browserUrl = browserServer?.url;
+          }
+          const code = await execute(
+            config,
+            runId,
+            claimed,
+            log,
+            report.state === 'on',
+            browserUrl,
+          );
           current = undefined;
           for (const k of [...decided.keys()]) if (k.startsWith(`${runId} `)) decided.delete(k);
           log(`run ${runId}: worker exited with ${code}`);
@@ -206,9 +244,9 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
 }
 
 /** Take the lease. `undefined` when somebody else (or an earlier instance) got there first. */
-async function claim(clients: Clients, config: CliConfig, runId: string) {
+async function claim(clients: Clients, config: CliConfig, runId: string, browser: boolean) {
   try {
-    const r = await httpsCallable<unknown, DeviceClaimResponse>(
+    const r = await httpsCallable<DeviceClaimRequest, DeviceClaimResponse>(
       clients.functions,
       'deviceClaim',
     )({
@@ -216,6 +254,7 @@ async function claim(clients: Clients, config: CliConfig, runId: string) {
       runId,
       protocol: DEVICE_PROTOCOL,
       version: VERSION,
+      browser,
     });
     return r.data;
   } catch (err) {
@@ -240,6 +279,7 @@ async function execute(
   claimed: DeviceClaimResponse,
   log: (m: string) => void,
   sandboxed: boolean,
+  browserUrl?: string,
 ): Promise<number | null> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
@@ -263,9 +303,11 @@ async function execute(
   if (config.firebase.appId) env.FIREBASE_APP_ID = config.firebase.appId;
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;
   if (process.env.TMPDIR) env.TMPDIR = process.env.TMPDIR;
+  if (browserUrl) env.DODO_BROWSER_URL = browserUrl;
   const argv = sandboxed
     ? await sandboxedArgv([process.execPath, entry], workRoot(), runId, {
         proxyLoopback: !!config.emulatorHost,
+        localBinding: !!browserUrl,
       })
     : [process.execPath, entry];
   return new Promise((resolve) => {

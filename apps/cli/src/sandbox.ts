@@ -140,7 +140,10 @@ export type AskHost = (host: string, port: number | undefined) => Promise<boolea
  * Start the runtime's proxies with this config. `ask` decides hosts the allowlist does not cover:
  * `true` allows, a string denies with that reason (what the sandboxed client sees on its 403).
  */
+let baseConfig: SandboxRuntimeConfig | undefined;
+
 export async function startSandbox(config: SandboxRuntimeConfig, ask: AskHost): Promise<void> {
+  baseConfig = config;
   await SandboxManager.initialize(config, async ({ host, port }) => {
     const verdict = await ask(host, port);
     if (verdict === true) return true;
@@ -150,6 +153,7 @@ export async function startSandbox(config: SandboxRuntimeConfig, ask: AskHost): 
 }
 
 export async function stopSandbox(): Promise<void> {
+  baseConfig = undefined;
   await SandboxManager.reset().catch(() => {});
 }
 
@@ -164,6 +168,12 @@ export interface SandboxedOptions {
    * proxy with one, which the proxy would otherwise be asked to tunnel to itself.
    */
   proxyLoopback?: boolean;
+  /**
+   * Let the worker reach servers on this machine: the browser server the daemon runs for it.
+   * Seatbelt bakes it into the profile at wrap time from the runtime's current config, so the
+   * config is switched for the wrap and switched back; the egress allowlist stays as it was.
+   */
+  localBinding?: boolean;
 }
 
 /** `node worker.js` as an argv to spawn, inside the sandbox; `commandId` keys its violations. */
@@ -178,15 +188,22 @@ export async function sandboxedArgv(
   const inner = bypass
     ? `env -u no_grpc_proxy NO_PROXY=${quote(bypass)} no_proxy=${quote(bypass)} ${command}`
     : command;
-  const wrapped = await SandboxManager.wrapWithSandboxArgv(
-    inner,
-    undefined,
-    undefined,
-    undefined,
-    cwd,
-    { commandId, commandText: command },
-  );
-  return wrapped.argv;
+  const base = baseConfig;
+  if (options.localBinding && base)
+    SandboxManager.updateConfig({ ...base, network: { ...base.network, allowLocalBinding: true } });
+  try {
+    const wrapped = await SandboxManager.wrapWithSandboxArgv(
+      inner,
+      undefined,
+      undefined,
+      undefined,
+      cwd,
+      { commandId, commandText: command },
+    );
+    return wrapped.argv;
+  } finally {
+    if (options.localBinding && base) SandboxManager.updateConfig(base);
+  }
 }
 
 /** Where the sandboxed command finds the proxy: a fixed relay port on Linux, the proxy itself elsewhere. */
