@@ -303,4 +303,42 @@ export class CalendarClient {
       end: Date.parse(b.end),
     }));
   }
+
+  /**
+   * Inserts an event on the primary calendar under a fixed id, so a repeat returns the
+   * existing event instead of a second one. Nobody is invited: no attendees, no emails.
+   */
+  async insertEvent(event: NewCalendarEvent): Promise<{ id: string; htmlLink?: string }> {
+    const url = `${CALENDAR}/calendars/primary/events`;
+    try {
+      return await this.s.request<{ id: string; htmlLink?: string }>(`${url}?sendUpdates=none`, {
+        method: 'POST',
+        body: JSON.stringify({
+          id: event.id,
+          summary: event.title,
+          location: event.location,
+          description: event.description,
+          start: { dateTime: event.start, timeZone: event.timeZone },
+          end: { dateTime: event.end, timeZone: event.timeZone },
+        }),
+      });
+    } catch (err) {
+      if (!(err instanceof GoogleApiError && err.status === 409)) throw err;
+      return this.s.request<{ id: string; htmlLink?: string }>(
+        `${url}/${encodeURIComponent(event.id)}`,
+      );
+    }
+  }
+}
+
+export interface NewCalendarEvent {
+  /** 5–1024 characters from a–v and 0–9 (base32hex). */
+  id: string;
+  title: string;
+  /** Local wall-clock times, `YYYY-MM-DDTHH:MM:SS`, in `timeZone`. */
+  start: string;
+  end: string;
+  timeZone: string;
+  location?: string;
+  description?: string;
 }

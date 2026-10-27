@@ -9,7 +9,9 @@ import {
   type Generate,
   GmailClient,
   GoogleSession,
+  handleEventAnswer,
   handleReplyAnswer,
+  isEventAction,
   isReplyAction,
   type JobKind,
   jobPaths,
@@ -342,28 +344,46 @@ export async function onReplyAnswered(
   before: MessageData | undefined,
   after: MessageData | undefined,
 ) {
-  if (after?.author !== 'system' || !isReplyAction(after.action)) return;
+  if (after?.author !== 'system') return;
+  const action = after.action;
+  if (!isReplyAction(action) && !isEventAction(action)) return;
   const answer = after.input?.answer;
   if (!answer?.value || before?.input?.answer || answer.via === 'system') return;
-  let gmail: GmailClient;
+  let clients: ReturnType<typeof google>;
   try {
-    gmail = google(shared).gmail;
+    clients = google(shared);
   } catch (err) {
-    await taskSink(shared.db).post(taskId, `Could not act on the reply: ${(err as Error).message}`);
+    await taskSink(shared.db).post(taskId, `Could not act on this: ${(err as Error).message}`);
     return;
   }
+  if (isEventAction(action)) {
+    const result = await handleEventAnswer(
+      {
+        tasks: taskSink(shared.db),
+        store: new FirestoreJobStore(shared.db),
+        calendar: clients.calendar,
+      },
+      taskId,
+      messageId,
+      action,
+      answer.value,
+    );
+    shared.log('event answered', { taskId, messageId, result });
+    return;
+  }
+  const gmail = clients.gmail;
   const result = await handleReplyAnswer(
     {
       tasks: taskSink(shared.db),
       store: new FirestoreJobStore(shared.db),
       gmail,
-      generate: jobGenerate(shared, after.action.jobId),
+      generate: jobGenerate(shared, action.jobId),
       notify: { notify: shared.notify },
       profile: () => readProfile(shared.db),
     },
     taskId,
     messageId,
-    after.action,
+    action,
     answer.value,
   );
   shared.log('reply answered', { taskId, messageId, result });

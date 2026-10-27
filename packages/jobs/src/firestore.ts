@@ -116,12 +116,17 @@ export class FirestoreJobStore implements JobStore {
 
   async setThread(
     jobId: string,
-    thread: Omit<JobThread, 'approval'> & { approval?: JobThread['approval'] | null },
+    thread: Omit<JobThread, 'approval' | 'event'> & {
+      approval?: JobThread['approval'] | null;
+      event?: JobThread['event'] | null;
+    },
   ) {
-    const { id, approval, ...rest } = thread;
+    const { id, approval, event, ...rest } = thread;
     const data: Record<string, unknown> = clean(rest);
     if (approval === null) data.approval = FieldValue.delete();
     else if (approval) data.approval = approval;
+    if (event === null) data.event = FieldValue.delete();
+    else if (event) data.event = event;
     await this.db.doc(jobPaths.thread(jobId, id)).set(data, { merge: true });
   }
 
