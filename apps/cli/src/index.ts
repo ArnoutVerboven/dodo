@@ -284,11 +284,10 @@ async function doctor(): Promise<boolean> {
         : `${chrome.problems.join('; ')} (optional: tasks that use a browser)`
     }`,
   );
+  // Informational: setup installs it, so its absence is not a failure.
   if (process.platform === 'darwin')
-    ok(
-      'launchd agent',
-      agentInstalled(),
-      agentInstalled() ? 'installed' : 'not installed (dodo daemon install)',
+    console.log(
+      `${agentInstalled() ? 'ok  ' : 'info'} launchd agent: ${agentInstalled() ? 'installed' : 'not installed (dodo setup or dodo daemon install)'}`,
     );
   return all;
 }
@@ -300,8 +299,12 @@ async function setup(
   flags: Flags,
 ): Promise<number> {
   const existing = readConfig();
-  if (existing) console.log(`Already paired as "${existing.name}"; keeping that pairing.`);
-  else {
+  if (existing) {
+    console.log(`Already paired as "${existing.name}"; keeping that pairing.`);
+    // No code needed any more: a first argument that is a folder is one.
+    if (code && (code.includes('/') || code.startsWith('~') || existsSync(code)))
+      folderArgs = [code, ...folderArgs];
+  } else {
     if (!code)
       throw new Error(
         'Usage: dodo setup <code> [folder...]  (the code is in Settings › Your Macs)',
