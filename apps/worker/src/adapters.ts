@@ -49,6 +49,9 @@ export interface WorkerEnv {
   region: string;
   /** Host of the Firebase emulators, when running locally. */
   emulatorHost?: string;
+  /** Mac daemon: where scratch task folders go, and the folders a task may name as its own. */
+  workRoot?: string;
+  allowedFolders?: string[];
 }
 
 export interface Clients {

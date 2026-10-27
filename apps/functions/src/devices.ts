@@ -24,6 +24,8 @@ import { type Caller, LEASE_MS, runUid, stripUndefined } from './runtime.js';
  */
 export interface DeviceDeps {
   db: Firestore;
+  /** What the daemon needs to use the Firebase client SDKs (the API-restricted worker key). */
+  clientConfig?: { apiKey: string; projectId: string };
   auth: {
     createCustomToken(uid: string, claims?: object): Promise<string>;
     revokeRefreshTokens(uid: string): Promise<void>;
@@ -70,7 +72,7 @@ export async function registerDevice(
   });
   const token = await deps.auth.createCustomToken(deviceUid(ref.id), { device: ref.id });
   deps.log?.('device paired', { deviceId: ref.id, name: req.name });
-  return { deviceId: ref.id, token };
+  return { deviceId: ref.id, token, firebase: deps.clientConfig };
 }
 
 /**

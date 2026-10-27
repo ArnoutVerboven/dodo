@@ -47,6 +47,8 @@ const MODEL_BACKEND = defineString('MODEL_BACKEND', { default: 'vertex' });
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'global';
 const TELEGRAM_BOT_TOKEN = defineString('TELEGRAM_BOT_TOKEN', { default: '' });
 const APP_URL = defineString('APP_URL', { default: 'https://dodo-app.web.app' });
+/** The API-restricted worker key (Terraform), handed to a Mac when it pairs. */
+const DEVICE_API_KEY = defineString('DEVICE_API_KEY', { default: '' });
 const REGION = 'europe-west1';
 const WORKER_JOB = 'dodo-worker';
 const GATEWAY_SA = 'dodo-gateway@';
@@ -228,7 +230,15 @@ export const runFinish = onCall(
 
 /* ----------------------------- devices --------------------------- */
 
-const deviceDeps = () => ({ db: getFirestore(), auth: getAuth(), log: logger.info });
+const deviceDeps = () => ({
+  db: getFirestore(),
+  auth: getAuth(),
+  log: logger.info,
+  clientConfig:
+    !isEmulator && DEVICE_API_KEY.value()
+      ? { apiKey: DEVICE_API_KEY.value(), projectId: projectId() }
+      : undefined,
+});
 
 /** `dodo login <code>`: unauthenticated on purpose, the single-use code from Settings is the proof. */
 export const deviceRegister = onCall(

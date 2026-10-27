@@ -16,7 +16,8 @@
     "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-dodo",
     "seed": "node scripts/seed-emulator.mjs",
     "dev": "pnpm --filter @dodo/core build && pnpm --filter @dodo/web dev:emulators",
-    "test:e2e": "firebase emulators:exec --only auth,firestore,storage,functions --project demo-dodo 'node scripts/e2e-emulator.mjs'"
+    "test:e2e": "firebase emulators:exec --only auth,firestore,storage,functions --project demo-dodo 'node scripts/e2e-emulator.mjs'",
+    "dodo": "node apps/cli/dist/index.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",

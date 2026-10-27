@@ -5,6 +5,9 @@
 //   firebase emulators:exec --only auth,firestore,storage,functions --project demo-dodo \
 //     'node scripts/e2e-emulator.mjs'
 import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -206,6 +209,111 @@ if (!fetched.summary.includes('Fake summary')) fail('fetch task summary missing'
 const fetchRuns = await db.collection('runs').where('taskId', '==', fetchTask.id).get();
 if (fetchRuns.size !== 2) fail(`expected 2 runs for the fetch task, got ${fetchRuns.size}`);
 console.log('approval flow ok');
+
+// 5. A Mac pairs with a one-time code, its daemon claims a run addressed to it and runs it with
+//    the run identity; the task's folder is used only when the daemon allows it.
+const macHome = await mkdtemp(path.join(os.tmpdir(), 'dodo-mac-'));
+const macFolder = path.join(macHome, 'code');
+await mkdir(macFolder, { recursive: true });
+const macEnv = { ...process.env, DODO_HOME: macHome, DODO_CREDENTIAL_STORE: 'file' };
+const cli = (...args) =>
+  new Promise((resolve) => {
+    const p = spawn('node', ['apps/cli/dist/index.js', ...args], {
+      env: macEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    p.stdout.on('data', (c) => (out += c));
+    p.stderr.on('data', (c) => (out += c));
+    p.on('close', (code) => resolve({ code, out }));
+  });
+await db
+  .doc('settings/global')
+  .set({ devicePairing: { code: 'e2e-pair-code', createdAt: Date.now() } }, { merge: true });
+const login = await cli('login', 'e2e-pair-code', '--emulator', '--name', 'E2E Mac');
+console.log(login.out.trim());
+if (login.code !== 0) fail(`dodo login exited ${login.code}`);
+const macConfig = JSON.parse(await readFile(path.join(macHome, 'config.json'), 'utf8'));
+const device = (await db.doc(`devices/${macConfig.deviceId}`).get()).data();
+if (device?.state !== 'approved' || device.name !== 'E2E Mac')
+  fail(`device not registered: ${JSON.stringify(device)}`);
+if ((await db.doc('settings/global').get()).get('devicePairing')) fail('pairing code not consumed');
+const again = await cli('login', 'e2e-pair-code', '--emulator');
+if (again.code === 0) fail('a second login with the same code should fail');
+const added = await cli('folders', 'add', macFolder);
+if (added.code !== 0) fail(`dodo folders add failed: ${added.out}`);
+const daemon = spawn('node', ['apps/cli/dist/index.js', 'daemon', '--once'], {
+  env: macEnv,
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+const daemonExited = new Promise((resolve) => daemon.on('close', resolve));
+daemon.stdout.on('data', (c) => process.stdout.write(`  daemon: ${c}`));
+daemon.stderr.on('data', (c) => process.stdout.write(`  daemon: ${c}`));
+await until('daemon heartbeat', async () => {
+  const d = (await db.doc(`devices/${macConfig.deviceId}`).get()).data();
+  return d?.version ? d : undefined;
+});
+const macTask = await db.collection('tasks').add({
+  title: 'E2E: on the Mac',
+  titleSource: 'user',
+  description: 'Summarise: the Mac did it.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true, device: `mac:${macConfig.deviceId}`, folder: macFolder },
+  summary: '',
+  externalRefs: {},
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+const macRunId = await until('mac run enqueued', async () =>
+  (await macTask.get()).get('activeRunId'),
+);
+const macRun = await until(
+  'mac run to end',
+  async () => {
+    const r = (await db.doc(`runs/${macRunId}`).get()).data();
+    return ['succeeded', 'failed', 'interrupted'].includes(r?.state) ? r : undefined;
+  },
+  120_000,
+);
+console.log('mac run ended', macRun.state, macRun.endReason, macRun.error ?? '');
+if (macRun.state !== 'succeeded') fail(`mac run ${macRun.state}: ${macRun.error}`);
+if (macRun.execution !== `mac:${macConfig.deviceId}`)
+  fail(`mac run executed by ${macRun.execution}`);
+if (macRun.infraReservation) fail('mac run should not meter infra');
+const macDone = (await macTask.get()).data();
+if (macDone.status !== 'review' || !macDone.summary.includes('Fake summary'))
+  fail('mac task not finished');
+const daemonExit = await daemonExited;
+if (daemonExit !== 0) fail(`daemon --once exited ${daemonExit}`);
+console.log('mac flow ok');
+
+// 6. A revoked Mac cannot claim: its queued run waits and the task says so.
+await db.doc(`devices/${macConfig.deviceId}`).update({ state: 'revoked', updatedAt: Date.now() });
+const macStatus = await cli('status');
+if (!/revoked/.test(macStatus.out)) fail(`dodo status after revoke: ${macStatus.out}`);
+const revokedTask = await db.collection('tasks').add({
+  title: 'E2E: revoked Mac',
+  titleSource: 'user',
+  description: 'Summarise: nothing.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true, device: `mac:${macConfig.deviceId}` },
+  summary: '',
+  externalRefs: {},
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+await until('revoked run to fail', async () => {
+  const d = (await revokedTask.get()).data();
+  return d.status === 'needs_input' && /not paired/.test(d.statusLine?.text ?? '') ? d : undefined;
+});
+const revokedDaemon = await cli('daemon', '--once');
+if (revokedDaemon.code === 0 || !/revoked/i.test(revokedDaemon.out))
+  fail(`revoked daemon: ${revokedDaemon.out}`);
+console.log('revoked mac ok');
 
 console.log('E2E OK');
 worker.kill();
