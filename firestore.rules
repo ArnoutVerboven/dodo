@@ -125,6 +125,26 @@ service cloud.firestore {
       allow update: if isOwner() && onlyChanges(['revoked']) && request.resource.data.revoked == true;
     }
 
+    // Jobs (docs/JOBS.md). The owner turns jobs on and off and edits their config; state,
+    // ledgers, runs and connector status are written by the Jobs functions only. Tokens and
+    // OAuth states (connectorSecrets, oauthStates) are server-only.
+    match /jobs/{jobId} {
+      allow read: if isOwner();
+      allow create: if isOwner()
+        && request.resource.data.keys().hasOnly(['kind', 'enabled', 'config', 'createdAt', 'updatedAt'])
+        && request.resource.data.kind in ['gmail-followup', 'whatsapp-followup'];
+      allow update: if isOwner() && onlyChanges(['enabled', 'config', 'updatedAt']);
+      match /{sub=**} {
+        allow read: if isOwner();
+      }
+    }
+    match /jobRuns/{runId} {
+      allow read: if isOwner();
+    }
+    match /connectors/{id} {
+      allow read: if isOwner();
+    }
+
     match /budgets/{scope} {
       allow read: if isOwner();
     }

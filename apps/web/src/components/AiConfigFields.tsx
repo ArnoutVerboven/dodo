@@ -62,6 +62,19 @@ export function AiConfigFields({
         </Select>
       </label>
       <label>
+        <Label>Browser</Label>
+        <Select
+          value={value.browser ?? ''}
+          onChange={(e) =>
+            set({ browser: (e.target.value || undefined) as AiConfig['browser'] | undefined })
+          }
+        >
+          <option value="">Default (none)</option>
+          <option value="none">None</option>
+          <option value="chrome">Your Chrome (on a Mac with the browser set up)</option>
+        </Select>
+      </label>
+      <label>
         <Label>Budget (EUR)</Label>
         <Input
           type="number"

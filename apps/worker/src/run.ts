@@ -3,7 +3,15 @@ import { mkdir, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { createSecretResolver, execTools, inheritedEnv, runAgent, taskTools } from '@dodo/agent';
+import {
+  browserTools,
+  connectBrowser,
+  createSecretResolver,
+  execTools,
+  inheritedEnv,
+  runAgent,
+  taskTools,
+} from '@dodo/agent';
 import { Project, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
@@ -84,6 +92,16 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       }
     : task;
 
+  // The browser only when the task asked for it and the daemon handed us one.
+  const browser =
+    env.browserUrl && (task.ai.browser ?? project?.defaults.browser) === 'chrome'
+      ? await connectBrowser(env.browserUrl).catch((err: Error) => {
+          console.log(`browser unavailable: ${err.message}`);
+          return undefined;
+        })
+      : undefined;
+  const tools = [...taskTools, ...execTools, ...(browser ? await browserTools(browser) : [])];
+
   const result = await runAgent(
     {
       runId: env.runId,
@@ -98,7 +116,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       control,
       store,
       trace,
-      tools: [...taskTools, ...execTools],
+      tools,
       policy,
       workdir,
       secrets: createSecretResolver((entryId, field, host) =>
@@ -108,6 +126,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
+  await browser?.close();
   console.log(`run ${env.runId} ended: ${result.reason} after ${result.steps} steps`);
   return result.reason;
 }
@@ -152,6 +171,7 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     allowedFolders: process.env.DODO_FOLDERS
       ? process.env.DODO_FOLDERS.split(':').filter(Boolean)
       : undefined,
+    browserUrl: process.env.DODO_BROWSER_URL || undefined,
     ...overrides,
   };
 }

@@ -49,7 +49,7 @@ jobs:
           {
             echo "worker=$(hit '^(apps/worker/|packages/(agent|policy)/|apps/web/\.env\.production$)')"
             echo "functions=$(hit "^(apps/functions/|packages/(budget|policy|jobs)/)|$FB")"
-            echo "hosting=$(hit "^apps/web/|$FB")"
+            echo "hosting=$(hit "^(apps/web/|packages/jobs/)|$FB")"
             echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"
             echo "storage=$(hit "^(storage\.rules|infra/storage-cors\.json)$|$FB")"
           } | tee -a "$GITHUB_OUTPUT"

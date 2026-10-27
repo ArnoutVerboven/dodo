@@ -45,6 +45,8 @@ export const AiConfig = z.object({
   device: DeviceChoice.optional(),
   repo: z.string().optional(),
   folder: z.string().optional(),
+  /** `chrome`: the run may use your own Chrome on the Mac it runs on (browser tools). */
+  browser: z.enum(['none', 'chrome']).optional(),
   tools: z.array(z.string()).optional(),
   budget: MicroEur.optional(),
   /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */

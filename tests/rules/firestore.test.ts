@@ -174,6 +174,40 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(owner(), 'ingestKeys/k1')));
   });
 
+  it('lets the owner configure jobs but not write their state, ledgers or secrets', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'jobs/gmail-followup'), { kind: 'gmail-followup', enabled: false });
+      await setDoc(doc(db, 'jobs/gmail-followup/items/m1'), { state: 'done' });
+      await setDoc(doc(db, 'jobRuns/r1'), { jobId: 'gmail-followup' });
+      await setDoc(doc(db, 'connectors/google'), { status: 'connected' });
+      await setDoc(doc(db, 'connectorSecrets/google'), { refreshToken: 'x' });
+    });
+    await assertSucceeds(
+      updateDoc(doc(owner(), 'jobs/gmail-followup'), {
+        enabled: true,
+        config: { lookbackDays: 2 },
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(owner(), 'jobs/gmail-followup'), { 'state.consecutiveFailures': 0 }),
+    );
+    await assertSucceeds(
+      setDoc(doc(owner(), 'jobs/whatsapp-followup'), { kind: 'whatsapp-followup', enabled: false }),
+    );
+    await assertFails(
+      setDoc(doc(owner(), 'jobs/other'), { kind: 'gmail-followup', state: { lock: null } }),
+    );
+    await assertSucceeds(getDoc(doc(owner(), 'jobs/gmail-followup/items/m1')));
+    await assertFails(setDoc(doc(owner(), 'jobs/gmail-followup/items/m2'), { state: 'done' }));
+    await assertSucceeds(getDoc(doc(owner(), 'jobRuns/r1')));
+    await assertSucceeds(getDoc(doc(owner(), 'connectors/google')));
+    await assertFails(setDoc(doc(owner(), 'connectors/google'), { status: 'connected' }));
+    await assertFails(getDoc(doc(owner(), 'connectorSecrets/google')));
+    await assertFails(getDoc(doc(stranger(), 'jobs/gmail-followup')));
+    await assertFails(getDoc(doc(run(), 'jobRuns/r1')));
+  });
+
   const device = (id = 'd1') =>
     env.authenticatedContext(`device:${id}`, { device: id }).firestore();
 

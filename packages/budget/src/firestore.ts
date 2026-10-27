@@ -75,6 +75,7 @@ function stripUndefined<T extends object>(o: T): T {
 const DEFAULT_TOTAL = 35_000_000;
 const DEFAULT_MONTHLY = 25_000_000;
 const DEFAULT_TASK = 500_000;
+const DEFAULT_JOB = 1_000_000;
 
 /**
  * Standard limits: the lifetime and month caps from settings (35 and 25 EUR if unset, never
@@ -90,6 +91,13 @@ export function defaultLimitFor(db: Firestore) {
       const projectId = scopeKey.slice('project_'.length, scopeKey.lastIndexOf('_'));
       const project = (await t.get(db.doc(paths.project(projectId)))).data();
       return project?.monthlyBudget ?? undefined;
+    }
+    if (scopeKey.startsWith('job_')) {
+      const jobId = scopeKey.slice('job_'.length, scopeKey.lastIndexOf('_'));
+      const job = (await t.get(db.doc(`jobs/${jobId}`))).data();
+      const limit = job?.config?.monthlyBudget;
+      // Never unlimited: a job without a valid budget gets 1 EUR a month, at most 10.
+      return typeof limit === 'number' && limit >= 0 ? Math.min(limit, 10_000_000) : DEFAULT_JOB;
     }
     if (scopeKey.startsWith('task_')) {
       const taskId = scopeKey.slice('task_'.length);

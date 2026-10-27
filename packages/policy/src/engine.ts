@@ -57,8 +57,8 @@ export class PolicyEngine {
     const allowed = this.allow.find((r) => matches(r, input.tool, input.key));
     if (allowed) return { kind: 'allow', by: allowed.raw };
     if (this.onceAllowed.delete(exact)) return { kind: 'allow', by: 'approved once' };
-    if (input.category === 'egress' && input.tool === 'Http') {
-      const host = input.key.replace(/^domain:/, '');
+    if (input.category === 'egress' && (input.tool === 'Http' || input.tool === 'Browser')) {
+      const host = input.key.replace(/^(domain|navigate):/, '');
       if (hostMatches(host, this.config.allowedHosts ?? [])) {
         return { kind: 'allow', by: `allowed host ${host}` };
       }

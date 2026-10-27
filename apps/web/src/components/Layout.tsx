@@ -1,4 +1,4 @@
-import { FolderKanban, LayoutList, LogOut, Settings, Wallet } from 'lucide-react';
+import { FolderKanban, LayoutList, LogOut, Settings, Wallet, Workflow } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { signOutUser } from '@/lib/auth';
 import { useSettings } from '@/lib/data';
@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 const nav = [
   { to: '/', label: 'Tasks', icon: LayoutList },
   { to: '/projects', label: 'Projects', icon: FolderKanban },
+  { to: '/jobs', label: 'Jobs', icon: Workflow },
   { to: '/budget', label: 'Budget', icon: Wallet },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
