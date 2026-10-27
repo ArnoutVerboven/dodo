@@ -7,6 +7,7 @@ import {
   type DeviceClaimResponse,
   type DeviceEgressRequest,
   type DeviceEgressResponse,
+  type DeviceReleaseRequest,
   deviceChoice,
   paths,
 } from '@dodo/core';
@@ -155,6 +156,15 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
           current = undefined;
           for (const k of [...decided.keys()]) if (k.startsWith(`${runId} `)) decided.delete(k);
           log(`run ${runId}: worker exited with ${code}`);
+          // A worker that did not report its end leaves the run claimed: end it as failed now.
+          const released = await httpsCallable<DeviceReleaseRequest, { released: boolean }>(
+            clients.functions,
+            'deviceRelease',
+          )({ deviceId: config.deviceId, runId, exitCode: code }).catch((err: Error) => {
+            log(`run ${runId}: could not release: ${err.message}`);
+            return undefined;
+          });
+          if (released?.data.released) log(`run ${runId}: marked failed (worker did not finish)`);
           if (opts.once) return stop('once', 'Done (--once).');
         }
       } catch (err) {

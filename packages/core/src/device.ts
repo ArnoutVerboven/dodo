@@ -74,3 +74,11 @@ export const DeviceEgressResponse = z.object({
   by: z.string().optional(),
 });
 export type DeviceEgressResponse = z.infer<typeof DeviceEgressResponse>;
+
+/** The daemon's worker exited without finishing its run: let the run end as failed now. */
+export const DeviceReleaseRequest = z.object({
+  deviceId: z.string(),
+  runId: z.string(),
+  exitCode: z.number().int().nullable(),
+});
+export type DeviceReleaseRequest = z.infer<typeof DeviceReleaseRequest>;

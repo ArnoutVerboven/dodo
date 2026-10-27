@@ -6,6 +6,7 @@ import {
   egressCheck,
   onDeviceChanged,
   registerDevice,
+  releaseRun,
 } from './devices.js';
 
 /** Firestore double with the transaction shape the device functions use. */
@@ -242,5 +243,41 @@ describe('egressCheck', () => {
       world({ 'runs/run1': { taskId: 't1', device: 'mac:mac9', state: 'running' } }),
     );
     await expect(egressCheck(other.deps, caller('mac1'), req)).rejects.toThrow(/another device/);
+  });
+});
+
+describe('releaseRun', () => {
+  const world = (state: string) => ({
+    'devices/mac1': { state: 'approved', name: 'MacBook' },
+    'runs/run1': { taskId: 't1', device: 'mac:mac1', state },
+  });
+
+  it('ends a live run whose worker died, through the finish path', async () => {
+    const { deps: d } = deps(world('running'));
+    const finished = vi.fn(async () => {});
+    const req = { deviceId: 'mac1', runId: 'run1', exitCode: 127 };
+    expect(await releaseRun(d, caller('mac1'), req, finished)).toEqual({ released: true });
+    expect(finished).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'run1', taskId: 't1' }),
+      'the worker on this Mac exited with code 127',
+    );
+  });
+
+  it('leaves a run alone that already ended, and refuses another device', async () => {
+    const finished = vi.fn(async () => {});
+    const done = deps(world('succeeded'));
+    expect(
+      await releaseRun(
+        done.deps,
+        caller('mac1'),
+        { deviceId: 'mac1', runId: 'run1', exitCode: 0 },
+        finished,
+      ),
+    ).toEqual({ released: false });
+    expect(finished).not.toHaveBeenCalled();
+    const { deps: d } = deps(world('claimed'));
+    await expect(
+      releaseRun(d, caller('mac2'), { deviceId: 'mac2', runId: 'run1', exitCode: null }, finished),
+    ).rejects.toThrow();
   });
 });

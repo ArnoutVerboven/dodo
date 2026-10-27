@@ -176,7 +176,7 @@ export async function sandboxedArgv(
   const command = argv.map(quote).join(' ');
   const bypass = options.proxyLoopback ? proxyBypass(sandboxProxyPort()) : undefined;
   const inner = bypass
-    ? `env NO_PROXY=${quote(bypass)} no_proxy=${quote(bypass)} -u no_grpc_proxy ${command}`
+    ? `env -u no_grpc_proxy NO_PROXY=${quote(bypass)} no_proxy=${quote(bypass)} ${command}`
     : command;
   const wrapped = await SandboxManager.wrapWithSandboxArgv(
     inner,

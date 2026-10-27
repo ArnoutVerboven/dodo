@@ -8,6 +8,7 @@ import {
   type DeviceEgressResponse,
   type DeviceRegisterRequest,
   type DeviceRegisterResponse,
+  type DeviceReleaseRequest,
   deviceChoice,
   deviceUid,
   paths,
@@ -148,6 +149,50 @@ export async function claimRun(
   };
 }
 
+/** The run, when the caller is the approved device it is addressed to; an error otherwise. */
+async function runOfDevice(
+  deps: Pick<DeviceDeps, 'db'>,
+  caller: Caller | undefined,
+  req: { deviceId: string; runId: string },
+): Promise<Run> {
+  if (!caller) throw new HttpsError('unauthenticated', 'Sign in first');
+  if (caller.uid !== deviceUid(req.deviceId) || caller.claims.device !== req.deviceId) {
+    throw new HttpsError('permission-denied', 'Not this device');
+  }
+  const device = (await deps.db.doc(paths.device(req.deviceId)).get()).data() as Device | undefined;
+  if (device?.state !== 'approved') {
+    throw new HttpsError('permission-denied', 'This Mac is revoked or unknown');
+  }
+  const snap = await deps.db.doc(paths.run(req.runId)).get();
+  const run = snap.data() as Run | undefined;
+  if (!run || run.device !== deviceChoice(req.deviceId)) {
+    throw new HttpsError('permission-denied', 'This run belongs to another device');
+  }
+  return { ...run, id: req.runId };
+}
+
+/**
+ * The worker exited without finishing its run (a crash, a kill, a sandbox it could not start
+ * in). Instead of waiting for the lease to lapse, the run ends as failed now, through the same
+ * path a worker's own error report takes, so the task shows what happened.
+ */
+export async function releaseRun(
+  deps: Pick<DeviceDeps, 'db' | 'log'>,
+  caller: Caller | undefined,
+  req: DeviceReleaseRequest,
+  finishRun: (run: Run, error: string) => Promise<void>,
+): Promise<{ released: boolean }> {
+  const run = await runOfDevice(deps, caller, req);
+  if (run.state !== 'claimed' && run.state !== 'running') return { released: false };
+  const error =
+    req.exitCode === null
+      ? 'the worker on this Mac was killed'
+      : `the worker on this Mac exited with code ${req.exitCode}`;
+  deps.log?.('device release', { deviceId: req.deviceId, runId: req.runId, error });
+  await finishRun(run, error);
+  return { released: true };
+}
+
 /**
  * The sandbox around a Mac run saw a connection to a host its base allowlist does not cover.
  * Allowed when the task's policy allows it: an allowed host, an allow rule that names it, or the
@@ -159,18 +204,7 @@ export async function egressCheck(
   caller: Caller | undefined,
   req: DeviceEgressRequest,
 ): Promise<DeviceEgressResponse> {
-  if (!caller) throw new HttpsError('unauthenticated', 'Sign in first');
-  if (caller.uid !== deviceUid(req.deviceId) || caller.claims.device !== req.deviceId) {
-    throw new HttpsError('permission-denied', 'Not this device');
-  }
-  const device = (await deps.db.doc(paths.device(req.deviceId)).get()).data() as Device | undefined;
-  if (device?.state !== 'approved') {
-    throw new HttpsError('permission-denied', 'This Mac is revoked or unknown');
-  }
-  const run = (await deps.db.doc(paths.run(req.runId)).get()).data() as Run | undefined;
-  if (!run || run.device !== deviceChoice(req.deviceId)) {
-    throw new HttpsError('permission-denied', 'This run belongs to another device');
-  }
+  const run = await runOfDevice(deps, caller, req);
   if (run.state !== 'claimed' && run.state !== 'running') {
     return { allow: false, by: `run is ${run.state}` };
   }
