@@ -25,6 +25,9 @@ locals {
     "apikeys.googleapis.com",
     "fcm.googleapis.com",
     "fcmregistrations.googleapis.com",
+    # Jobs (docs/JOBS.md): read the inbox, draft replies, read free/busy.
+    "gmail.googleapis.com",
+    "calendar-json.googleapis.com",
   ])
 }
 

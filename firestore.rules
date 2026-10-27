@@ -105,6 +105,13 @@ service cloud.firestore {
       allow read, write: if isOwner();
     }
 
+    // Task API tokens: created by the apiTokenCreate function (hash only); the owner can list,
+    // revoke and delete them. Idempotency keys (ingestKeys) are server-only.
+    match /apiTokens/{id} {
+      allow read, delete: if isOwner();
+      allow update: if isOwner() && onlyChanges(['revoked']) && request.resource.data.revoked == true;
+    }
+
     match /budgets/{scope} {
       allow read: if isOwner();
     }

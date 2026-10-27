@@ -159,6 +159,21 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(run(), 'pushTokens/tok1')));
   });
 
+  it('lets the owner list and revoke API tokens, but not create or un-revoke them', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'apiTokens/h1'), { name: 'x', hash: 'h1', revoked: false });
+      await setDoc(doc(ctx.firestore(), 'ingestKeys/k1'), { taskId: 't1' });
+    });
+    await assertSucceeds(getDoc(doc(owner(), 'apiTokens/h1')));
+    await assertFails(setDoc(doc(owner(), 'apiTokens/h2'), { name: 'forged', hash: 'h2' }));
+    await assertFails(updateDoc(doc(owner(), 'apiTokens/h1'), { name: 'renamed' }));
+    await assertSucceeds(updateDoc(doc(owner(), 'apiTokens/h1'), { revoked: true }));
+    await assertFails(updateDoc(doc(owner(), 'apiTokens/h1'), { revoked: false }));
+    await assertFails(getDoc(doc(stranger(), 'apiTokens/h1')));
+    await assertFails(getDoc(doc(run(), 'apiTokens/h1')));
+    await assertFails(getDoc(doc(owner(), 'ingestKeys/k1')));
+  });
+
   const device = (id = 'd1') =>
     env.authenticatedContext(`device:${id}`, { device: id }).firestore();
 

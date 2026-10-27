@@ -48,7 +48,7 @@ jobs:
           FB='^firebase\.json$'
           {
             echo "worker=$(hit '^(apps/worker/|packages/(agent|policy)/|apps/web/\.env\.production$)')"
-            echo "functions=$(hit "^(apps/functions/|packages/budget/)|$FB")"
+            echo "functions=$(hit "^(apps/functions/|packages/(budget|policy|jobs)/)|$FB")"
             echo "hosting=$(hit "^apps/web/|$FB")"
             echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"
             echo "storage=$(hit "^(storage\.rules|infra/storage-cors\.json)$|$FB")"
@@ -109,7 +109,23 @@ jobs:
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           APP_URL=https://dodo-app.web.app
           DEVICE_API_KEY=$DEVICE_API_KEY
+          GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           EOF
+      - name: Make sure the Jobs token secret exists
+        # Jobs keep the Google refresh token in Secret Manager, readable by dodo-jobs only. The
+        # deployer may manage secrets, Terraform may not, so the secret is created here.
+        # dodo-jobs itself comes from Terraform: on its very first apply it may not exist yet.
+        if: env.FUNCTIONS == 'true'
+        run: |
+          P=${{ vars.GCP_PROJECT_ID }}
+          gcloud secrets describe dodo-google-token --project "$P" >/dev/null 2>&1 ||
+            gcloud secrets create dodo-google-token --project "$P" --replication-policy=automatic
+          for role in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionManager; do
+            gcloud secrets add-iam-policy-binding dodo-google-token --project "$P" --condition=None \
+              --member="serviceAccount:dodo-jobs@$P.iam.gserviceaccount.com" --role="$role" >/dev/null ||
+              echo "::warning::Could not grant $role on dodo-google-token to dodo-jobs (not created yet?)"
+          done
       - name: Make sure the dodo-app Hosting site exists
         # The app is served from dodo-app.web.app (firebase.json); the project's default
         # site only redirects there.

@@ -1,6 +1,7 @@
 import type { AiConfig } from '@dodo/core';
 import { useEffect, useState } from 'react';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
 import { PushSettings } from '@/components/PushSettings';
 import { Button } from '@/components/ui/button';
@@ -150,6 +151,8 @@ export function SettingsPage() {
       <DevicesSettings />
 
       <PushSettings />
+
+      <ApiTokensSettings />
 
       <Card>
         <CardHeader title="Telegram notifications" />

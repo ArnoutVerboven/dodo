@@ -288,6 +288,7 @@ Other pipelines can push tasks onto the board, for example "emails in Gmail that
 - Content from a source is **untrusted input**: it is stored and shown as quoted source material. Runs on such tasks get the `untrusted` policy profile: no `agent-decides` at all, so every action outside the task tools is a deterministic _ask_, because an email can contain prompt-injection text.
 - Rate limited per token, and the function rejects anything without a valid token before doing work, so it cannot be used to run up costs.
 - Example pipeline for Gmail, at no cost: a Google Apps Script on your account that runs every 10 minutes, looks for a label like `dodo` (or a Gmail filter result), and posts each new email to the API.
+- **Built (2026-10-27)** as the `taskApi` function (`apps/functions/src/ingest.ts`): `POST/GET /v1/tasks`, `GET/PATCH /v1/tasks/{id}`, `POST /v1/tasks/{id}/messages`. The token decides the source, a token can only touch its own source's tasks, 120 calls per hour per token. Tasks carry `source` (kind, link back, label), shown as a logo on the board. Jobs ([JOBS.md](JOBS.md)) use the same functions in-process.
 
 ---
 

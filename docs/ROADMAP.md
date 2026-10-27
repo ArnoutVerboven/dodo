@@ -64,6 +64,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 ## Phase 6 — Other task interfaces
 
 - Task ingest API with per-source tokens, idempotency, `untrusted` profile; Gmail Apps Script example.
+- **Status (2026-10-27):** ingest API built (#31); its first consumer is Jobs ([JOBS.md](JOBS.md), #32–#34).
 - Connectors: Notion, Linear (agent API), GitHub Issues; one-time connector setting.
 
 ## Phase 7 — Polish

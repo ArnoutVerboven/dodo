@@ -22,4 +22,8 @@ export const paths = {
   /** Web push registrations, one document per FCM token (the token is the id). */
   pushTokens: () => 'pushTokens',
   pushToken: (token: string) => `pushTokens/${token}`,
+  /** Task ingest API: tokens (owner-visible, hashed) and idempotency keys (server only). */
+  apiTokens: () => 'apiTokens',
+  apiToken: (id: string) => `apiTokens/${id}`,
+  ingestKey: (id: string) => `ingestKeys/${id}`,
 } as const;

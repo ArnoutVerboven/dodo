@@ -3,6 +3,7 @@ import { Bot, Columns3, List, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { NewTaskDialog } from '@/components/NewTaskDialog';
+import { SourceIcon } from '@/components/SourceIcon';
 import { DueDate, PriorityLabel, StatusBadge, statusMeta, Tags } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
@@ -225,6 +226,7 @@ function TaskList({
             <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
+                  {t.source && <SourceIcon source={t.source} />}
                   <span
                     className={cn(
                       'truncate font-medium',
@@ -321,6 +323,7 @@ function Kanban({ tasks, projectName }: { tasks: Task[]; projectName: Map<string
                   )}
                 >
                   <div className="flex items-start gap-2">
+                    {t.source && <SourceIcon source={t.source} className="mt-0.5" />}
                     <span className="min-w-0 flex-1 font-medium">{t.title}</span>
                     {t.ai.enabled && (
                       <Bot
