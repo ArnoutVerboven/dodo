@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dodo/core": "workspace:*",
+    "@dodo/jobs": "workspace:*",
     "clsx": "^2.1.1",
     "firebase": "^13.1.0",
     "lucide-react": "^1.61.0",

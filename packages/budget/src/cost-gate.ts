@@ -7,7 +7,9 @@ export type Scope =
   | { kind: 'total' }
   | { kind: 'global'; month: string }
   | { kind: 'project'; projectId: string; month: string }
-  | { kind: 'task'; taskId: string };
+  | { kind: 'task'; taskId: string }
+  /** A job's own monthly budget (docs/JOBS.md); job runs have no task. */
+  | { kind: 'job'; jobId: string; month: string };
 
 export const scopeKey = (s: Scope): string =>
   s.kind === 'total'
@@ -16,7 +18,9 @@ export const scopeKey = (s: Scope): string =>
       ? `global_${s.month}`
       : s.kind === 'project'
         ? `project_${s.projectId}_${s.month}`
-        : `task_${s.taskId}`;
+        : s.kind === 'job'
+          ? `job_${s.jobId}_${s.month}`
+          : `task_${s.taskId}`;
 
 /** `2026-10` style month key in UTC. */
 export const monthKey = (now: number): string => new Date(now).toISOString().slice(0, 7);

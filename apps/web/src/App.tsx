@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { AuthProvider, useAuth } from './lib/auth';
 import { BoardPage } from './pages/BoardPage';
 import { BudgetPage } from './pages/BudgetPage';
+import { JobsPage } from './pages/JobsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -18,6 +19,7 @@ function Gate() {
         <Route path="/" element={<BoardPage />} />
         <Route path="/tasks/:id" element={<TaskPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/jobs" element={<JobsPage />} />
         <Route path="/budget" element={<BudgetPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
