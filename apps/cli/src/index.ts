@@ -114,7 +114,7 @@ async function status() {
   const config = requireConfig();
   const store = credentialStore();
   const clients = connect(config, store);
-  await currentUser(clients.auth, store);
+  await currentUser(clients);
   const snap = await getDoc(doc(clients.db, paths.device(config.deviceId)));
   if (!snap.exists()) {
     console.log(`"${config.name}" was removed in Settings. Run \`dodo logout\`, then pair again.`);
@@ -158,7 +158,7 @@ async function folders(action: string | undefined, target: string | undefined) {
     // Tell the server too, so the task form can offer these folders.
     const store = credentialStore();
     const clients = connect(config, store);
-    await currentUser(clients.auth, store);
+    await currentUser(clients);
     await updateDoc(doc(clients.db, paths.device(config.deviceId)), {
       folders: config.folders,
       updatedAt: Date.now(),
@@ -187,7 +187,7 @@ async function doctor() {
   if (!config) return;
   try {
     const clients = connect(config, store);
-    const user = await currentUser(clients.auth, store);
+    const user = await currentUser(clients);
     ok('sign-in valid', user.uid === `device:${config.deviceId}`, user.uid);
     const snap = await getDoc(doc(clients.db, paths.device(config.deviceId)));
     ok(

@@ -32,7 +32,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   const log = opts.log ?? ((m: string) => console.log(`${new Date().toISOString()} ${m}`));
   const store = credentialStore();
   const clients = connect(config, store);
-  await currentUser(clients.auth, store).catch((err) => {
+  await currentUser(clients).catch((err) => {
     throw new Error(`${(err as Error).message} (${config.name})`);
   });
   const me = deviceChoice(config.deviceId);

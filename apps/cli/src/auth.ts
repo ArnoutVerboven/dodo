@@ -58,6 +58,8 @@ export interface Clients {
   auth: Auth;
   db: Firestore;
   functions: Functions;
+  /** Whether the store held a sign-in when we connected (the SDK clears one that stopped working). */
+  hadSignIn: boolean;
 }
 
 /**
@@ -70,6 +72,7 @@ export function connect(
   config: Pick<CliConfig, 'firebase' | 'region' | 'emulatorHost'>,
   store: CredentialStore,
 ): Clients {
+  const hadSignIn = !!store.load();
   const app = initializeApp(config.firebase, APP_NAME);
   const auth = initializeAuth(app, { persistence: storePersistence(store) });
   const db = getFirestore(app);
@@ -79,7 +82,7 @@ export function connect(
     connectFirestoreEmulator(db, config.emulatorHost, 8080);
     connectFunctionsEmulator(functions, config.emulatorHost, 5001);
   }
-  return { app, auth, db, functions };
+  return { app, auth, db, functions, hadSignIn };
 }
 
 /** What to do when the sign-in is gone: revoking a Mac in Settings invalidates its tokens. */
@@ -89,11 +92,10 @@ const NEVER_SIGNED_IN = 'Not signed in. Run `pnpm dodo login <code>` with a code
 
 /**
  * Resolves with the restored user. Throws when there is no sign-in, with a message that says
- * whether there never was one or it stopped working (the store still holds the old one).
+ * whether there never was one or it stopped working (revoked: the SDK then drops it).
  */
 export function currentUser(
-  auth: Auth,
-  store?: CredentialStore,
+  { auth, hadSignIn }: Pick<Clients, 'auth' | 'hadSignIn'>,
   timeoutMs = 15_000,
 ): Promise<User> {
   return new Promise((resolve, reject) => {
@@ -105,7 +107,7 @@ export function currentUser(
       clearTimeout(timer);
       stop();
       if (user) resolve(user);
-      else reject(new Error(store?.load() ? SIGNED_OUT : NEVER_SIGNED_IN));
+      else reject(new Error(hadSignIn ? SIGNED_OUT : NEVER_SIGNED_IN));
     });
   });
 }
