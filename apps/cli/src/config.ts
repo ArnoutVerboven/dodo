@@ -12,8 +12,8 @@ export interface CliConfig {
   emulatorHost?: string;
   /** Folders the agent may work in on this Mac. Nothing until you add one. */
   folders: string[];
-  /** Your own Chrome through the Playwright Extension; the token skips its approval dialog. */
-  browser?: { token?: string };
+  /** The browser: dodo's own Chrome window, or your Chrome through the Playwright Extension. */
+  browser?: { mode?: 'window' | 'extension'; token?: string };
 }
 
 export const VERSION = '0.1.0';
@@ -26,6 +26,8 @@ export const configPath = () => path.join(home(), 'config.json');
 export const logPath = () => path.join(home(), 'daemon.log');
 /** Task folders for tasks that name no folder of their own. */
 export const workRoot = () => path.join(home(), 'work');
+/** The profile of dodo's own Chrome window: its logins, kept between runs. */
+export const chromeProfile = () => path.join(home(), 'chrome');
 
 export function readConfig(): CliConfig | undefined {
   try {

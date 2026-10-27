@@ -44,10 +44,12 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo daemon uninstall
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
-  dodo browser [install|connect <token>|forget]
-                         let the agent use your own Chrome: 'install' opens the Playwright
-                         Extension in the Web Store (one click); 'connect' stores the token
-                         from the extension's page so Chrome never asks to allow the agent
+  dodo browser           how tasks get a browser: dodo's own Chrome window by default (log in
+                         there once), or your everyday Chrome through the Playwright Extension
+  dodo browser install   open the Playwright Extension in the Web Store (optional, one click)
+  dodo browser connect <token>
+                         the extension's token, so Chrome never asks to allow the agent
+  dodo browser use window|extension
   dodo status            this Mac as the server sees it
   dodo doctor            check node, pairing, sign-in, the worker build, the sandbox and Chrome
   dodo logout            forget the pairing on this Mac (revoke it in Settings too)
@@ -197,14 +199,23 @@ async function browser(action: string | undefined, token: string | undefined) {
       );
     config.browser = { token: token.trim() };
     writeConfig(config);
+  } else if (action === 'use') {
+    if (token !== 'window' && token !== 'extension')
+      throw new Error('Usage: dodo browser use window|extension');
+    config.browser = { ...config.browser, mode: token };
+    writeConfig(config);
   } else if (action === 'forget') {
     config.browser = undefined;
     writeConfig(config);
   } else if (action !== undefined)
-    throw new Error('Usage: dodo browser [install|connect <token>|forget]');
+    throw new Error('Usage: dodo browser [install|connect <token>|use window|extension|forget]');
   const r = browserReport(config);
   if (r.state === 'ready') {
-    console.log(`Ready: Chrome profile ${r.profiles.join(', ')} has the extension.`);
+    console.log(
+      r.mode === 'extension'
+        ? `Ready: your Chrome (profile ${r.profiles.join(', ')} has the extension).`
+        : "Ready: dodo's own Chrome window.",
+    );
     for (const w of r.warnings) console.log(`  ${w}`);
   } else {
     console.log('Not ready:');
@@ -265,12 +276,12 @@ async function doctor(): Promise<boolean> {
   }
   for (const f of config.folders) ok(`folder ${f}`, existsSync(expandFolder(f)));
   const chrome = browserReport(config);
-  // Optional: a task only gets "Your Chrome" when this is ready, so it is not a failure.
+  // Optional: a task only gets a browser when this is ready, so it is not a failure.
   console.log(
-    `${chrome.state === 'ready' ? 'ok  ' : 'info'} your Chrome: ${
+    `${chrome.state === 'ready' ? 'ok  ' : 'info'} browser: ${
       chrome.state === 'ready'
-        ? `profile ${chrome.profiles.join(', ')}${chrome.warnings.length ? `; ${chrome.warnings.join('; ')}` : ', token stored'}`
-        : `${chrome.problems.join('; ')} (optional: tasks that need your logins)`
+        ? `${chrome.mode === 'extension' ? `your Chrome (profile ${chrome.profiles.join(', ')})` : "dodo's own Chrome window"}${chrome.warnings.length ? `; ${chrome.warnings.join('; ')}` : ''}`
+        : `${chrome.problems.join('; ')} (optional: tasks that use a browser)`
     }`,
   );
   if (process.platform === 'darwin')
@@ -306,13 +317,6 @@ async function setup(
     return 1;
   }
   const config = requireConfig();
-  if (process.platform === 'darwin' && browserReport(config).state !== 'ready') {
-    console.log(
-      'To let tasks use your own Chrome (your logins), add the Playwright Extension: opening the Web Store page now, click "Add to Chrome". The daemon notices on its own; skip it if you do not need it.',
-    );
-    openInBrowser(EXTENSION_URL);
-    console.log('');
-  }
   if (flags.foreground === true || process.platform !== 'darwin') {
     console.log('Setup complete. Starting the daemon here; stop it with Ctrl-C.');
     const reason = await runDaemon(config, {});

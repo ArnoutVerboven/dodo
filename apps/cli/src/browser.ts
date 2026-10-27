@@ -5,18 +5,37 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The agent's browser on a Mac is your own Chrome. The daemon runs Playwright MCP in extension
- * mode: a small server on localhost that drives Chrome through the Playwright Extension, in
- * your profile, with your sessions and cookies. The worker reaches it over MCP from inside the
- * sandbox; nothing else on the machine listens for it, and it runs only while a run needs it.
+ * The agent's browser on a Mac is a real Chrome window on your screen, driven by Playwright MCP,
+ * which the daemon runs as a small server on localhost. The worker reaches it over MCP from
+ * inside the sandbox; nothing else on the machine listens for it. Two ways to get that window:
  *
- * Setup is one click of yours: install the extension from the Chrome Web Store. The first time
- * the daemon connects, Chrome asks you to allow it; `dodo browser connect <token>` with the
- * token from the extension's page skips that, for a Mac that works while you are away.
+ *   window      (default, nothing to install) dodo's own Chrome window, with its own profile
+ *               under ~/.dodo/chrome. Log in to a site there once; the session stays.
+ *   extension   your everyday Chrome, with your logins, through the Playwright Extension from
+ *               the Chrome Web Store. Chrome asks you to allow the first connection, or
+ *               `dodo browser connect <token>` with the extension's token skips that.
+ *
+ * The extension is used when it is installed, unless `dodo browser use window` says otherwise.
  */
 
 export const EXTENSION_ID = 'mmlmfjhmonkocbjadbfplnigmagldckm';
 export const EXTENSION_URL = `https://chromewebstore.google.com/detail/playwright-extension/${EXTENSION_ID}`;
+
+export type BrowserMode = 'window' | 'extension';
+
+export interface BrowserConfig {
+  /** Force one way; by default the extension when installed, else dodo's own window. */
+  mode?: BrowserMode;
+  /** The Playwright Extension's token: skips Chrome's "allow" dialog. */
+  token?: string;
+}
+
+/** Where Playwright looks for Chrome on a Mac; `DODO_CHROME_APP` overrides it (tests). */
+export function chromeExecutable(): string {
+  return (
+    process.env.DODO_CHROME_APP ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  );
+}
 
 /** Chrome's user data folder; `DODO_CHROME_USER_DATA_DIR` overrides it (tests, other channels). */
 export function chromeUserDataDir(): string {
@@ -54,26 +73,51 @@ export function profilesWithExtension(userDataDir = chromeUserDataDir()): string
 }
 
 export interface BrowserReport {
-  /** 'ready': runs that ask for your Chrome get it. Otherwise the problems say what is missing. */
+  /** 'ready': runs that ask for a browser get one. Otherwise the problems say what is missing. */
   state: 'ready' | 'unavailable';
+  /** How the window is obtained when ready. */
+  mode?: BrowserMode;
+  /** Chrome profiles with the extension. */
   profiles: string[];
   problems: string[];
-  /** Ready, with a catch: without the token, Chrome asks you to allow the first connection. */
+  /** Ready, with a catch worth knowing. */
   warnings: string[];
 }
 
-export function browserReport(config: { browser?: { token?: string } }): BrowserReport {
+export function browserReport(config: { browser?: BrowserConfig }): BrowserReport {
   const problems: string[] = [];
   const warnings: string[] = [];
-  if (process.platform !== 'darwin') problems.push('your own Chrome is driven on macOS only');
-  const profiles = process.platform === 'darwin' ? profilesWithExtension() : [];
-  if (process.platform === 'darwin' && profiles.length === 0)
-    problems.push(`Playwright Extension not installed in Chrome (dodo browser install)`);
-  if (!problems.length && !config.browser?.token)
+  if (process.platform !== 'darwin') {
+    return {
+      state: 'unavailable',
+      profiles: [],
+      problems: ['the browser is driven on macOS only'],
+      warnings,
+    };
+  }
+  const profiles = profilesWithExtension();
+  const chrome = existsSync(chromeExecutable());
+  const wanted = config.browser?.mode;
+  let mode: BrowserMode | undefined;
+  if (wanted === 'extension' || (wanted === undefined && profiles.length > 0)) {
+    if (profiles.length === 0)
+      problems.push('Playwright Extension not installed in Chrome (dodo browser install)');
+    else {
+      mode = 'extension';
+      if (!config.browser?.token)
+        warnings.push(
+          'Chrome asks you to allow the first connection; dodo browser connect <token> skips that',
+        );
+    }
+  } else if (!chrome) {
+    problems.push(`Google Chrome not found at ${chromeExecutable()}; install Chrome`);
+  } else {
+    mode = 'window';
     warnings.push(
-      'Chrome asks you to allow the first connection; dodo browser connect <token> skips that',
+      "dodo's own Chrome window: log in to a site there once, the session stays (dodo browser install puts the agent in your everyday Chrome instead)",
     );
-  return { state: problems.length ? 'unavailable' : 'ready', profiles, problems, warnings };
+  }
+  return { state: problems.length ? 'unavailable' : 'ready', mode, profiles, problems, warnings };
 }
 
 export interface BrowserServer {
@@ -94,38 +138,50 @@ export function mcpCli(): string {
 
 const START_TIMEOUT_MS = 15_000;
 
+export interface BrowserServerOptions {
+  mode: BrowserMode;
+  token?: string;
+  /** Where files the agent saves land. */
+  outputDir: string;
+  /** The profile of dodo's own window (window mode): cookies and logins, kept between runs. */
+  profileDir: string;
+  log: (message: string) => void;
+}
+
 /**
- * Start Playwright MCP against your Chrome, on a free localhost port. Chrome itself is only
- * touched on the first tool call: the extension opens its connect page then, and either
- * connects on the token or waits for you to click Allow. Files the agent saves land in
- * `outputDir`.
+ * Start Playwright MCP on a free localhost port. Chrome itself is only touched on the first
+ * tool call: dodo's own window opens then, or the extension's connect page does and either
+ * connects on the token or waits for you to click Allow.
  */
-export function startBrowserServer(
-  token: string | undefined,
-  outputDir: string,
-  log: (message: string) => void,
-): Promise<BrowserServer> {
+export function startBrowserServer({
+  mode,
+  token,
+  outputDir,
+  profileDir,
+  log,
+}: BrowserServerOptions): Promise<BrowserServer> {
   mkdirSync(outputDir, { recursive: true, mode: 0o700 });
-  const child: ChildProcess = spawn(
-    process.execPath,
-    [
-      mcpCli(),
-      '--extension',
-      '--port',
-      '0',
-      '--host',
-      'localhost',
-      '--shared-browser-context',
-      '--image-responses',
-      'omit',
-      '--output-dir',
-      outputDir,
-    ],
-    {
-      env: token ? { ...process.env, PLAYWRIGHT_MCP_EXTENSION_TOKEN: token } : process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
+  const common = [
+    '--port',
+    '0',
+    '--host',
+    'localhost',
+    '--shared-browser-context',
+    '--image-responses',
+    'omit',
+    '--output-dir',
+    outputDir,
+  ];
+  let args: string[];
+  if (mode === 'extension') args = ['--extension', ...common];
+  else {
+    mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+    args = ['--browser', 'chrome', '--user-data-dir', profileDir, ...common];
+  }
+  const child: ChildProcess = spawn(process.execPath, [mcpCli(), ...args], {
+    env: token ? { ...process.env, PLAYWRIGHT_MCP_EXTENSION_TOKEN: token } : process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const stop = () =>
     new Promise<void>((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) return resolve();

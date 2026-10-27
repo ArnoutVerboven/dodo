@@ -17,7 +17,7 @@ import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/f
 import { httpsCallable } from 'firebase/functions';
 import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
 import { type BrowserServer, browserReport, startBrowserServer } from './browser.js';
-import { type CliConfig, expandFolder, VERSION, workRoot } from './config.js';
+import { type CliConfig, chromeProfile, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
 import {
   finishSandboxed,
@@ -61,8 +61,8 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   }
   const entry = workerEntry();
   if (!existsSync(entry)) throw new Error(`worker not built at ${entry}; run \`pnpm build\``);
-  // Your Chrome, when the extension is installed; checked again on every heartbeat, so
-  // installing it later needs no restart.
+  // The browser: dodo's own Chrome window, or your Chrome when the extension is installed;
+  // checked again on every heartbeat, so installing either later needs no restart.
   let browser = browserReport(config);
   for (const p of [...browser.problems, ...browser.warnings]) log(`browser: ${p}`);
   let browserServer: BrowserServer | undefined;
@@ -100,7 +100,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     );
   }
   log(
-    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.state}, waiting for runs`,
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, waiting for runs`,
   );
 
   return new Promise<StopReason>((resolve) => {
@@ -169,7 +169,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
           log(`run ${runId}: claimed for task ${claimed.taskId}`);
           current = runId;
           let browserUrl: string | undefined;
-          if (claimed.browser) {
+          if (claimed.browser && browser.mode) {
             // Started once, kept across runs: the connection to Chrome, and with it the login
             // you did in a tab for one run, outlives the run.
             if (browserServer && !browserServer.running()) {
@@ -178,12 +178,14 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             }
             if (!browserServer) {
               try {
-                browserServer = await startBrowserServer(
-                  config.browser?.token,
-                  path.join(workRoot(), 'browser'),
+                browserServer = await startBrowserServer({
+                  mode: browser.mode,
+                  token: config.browser?.token,
+                  outputDir: path.join(workRoot(), 'browser'),
+                  profileDir: chromeProfile(),
                   log,
-                );
-                log(`browser: Playwright MCP at ${browserServer.url}`);
+                });
+                log(`browser: Playwright MCP (${browser.mode}) at ${browserServer.url}`);
               } catch (err) {
                 log(`run ${runId}: ${(err as Error).message}; running without the browser`);
               }
