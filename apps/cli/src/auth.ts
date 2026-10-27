@@ -82,8 +82,20 @@ export function connect(
   return { app, auth, db, functions };
 }
 
-/** Resolves with the restored user, or throws when the stored sign-in is gone or revoked. */
-export function currentUser(auth: Auth, timeoutMs = 15_000): Promise<User> {
+/** What to do when the sign-in is gone: revoking a Mac in Settings invalidates its tokens. */
+export const SIGNED_OUT =
+  'The sign-in of this Mac is no longer valid: it was revoked or removed in Settings. Run `pnpm dodo logout`, then pair again with a new code.';
+const NEVER_SIGNED_IN = 'Not signed in. Run `pnpm dodo login <code>` with a code from Settings.';
+
+/**
+ * Resolves with the restored user. Throws when there is no sign-in, with a message that says
+ * whether there never was one or it stopped working (the store still holds the old one).
+ */
+export function currentUser(
+  auth: Auth,
+  store?: CredentialStore,
+  timeoutMs = 15_000,
+): Promise<User> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       stop();
@@ -93,8 +105,7 @@ export function currentUser(auth: Auth, timeoutMs = 15_000): Promise<User> {
       clearTimeout(timer);
       stop();
       if (user) resolve(user);
-      else
-        reject(new Error('Not signed in. Run `pnpm dodo login <code>` with a code from Settings.'));
+      else reject(new Error(store?.load() ? SIGNED_OUT : NEVER_SIGNED_IN));
     });
   });
 }

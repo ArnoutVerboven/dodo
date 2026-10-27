@@ -10,7 +10,7 @@ import {
 } from '@dodo/core';
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { type Clients, connect, currentUser } from './auth.js';
+import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
 import { type CliConfig, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
 
@@ -30,8 +30,9 @@ export type StopReason = 'revoked' | 'update_needed' | 'signed_out' | 'once';
  */
 export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Promise<StopReason> {
   const log = opts.log ?? ((m: string) => console.log(`${new Date().toISOString()} ${m}`));
-  const clients = connect(config, credentialStore());
-  await currentUser(clients.auth).catch((err) => {
+  const store = credentialStore();
+  const clients = connect(config, store);
+  await currentUser(clients.auth, store).catch((err) => {
     throw new Error(`${(err as Error).message} (${config.name})`);
   });
   const me = deviceChoice(config.deviceId);
@@ -79,7 +80,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     );
     subs.push(
       clients.auth.onAuthStateChanged((user) => {
-        if (!user) stop('signed_out', 'Signed out. Run `pnpm dodo login <code>` again.');
+        if (!user) stop('signed_out', SIGNED_OUT);
       }),
     );
 
