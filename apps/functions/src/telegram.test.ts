@@ -90,6 +90,37 @@ describe('notifyTelegram', () => {
   });
 });
 
+describe('notifyTelegram formatting', () => {
+  it('renders Markdown as Telegram HTML', async () => {
+    const { db } = fakeDb({ telegram: { chatId: 42 } });
+    const d = deps(db);
+    await notifyTelegram(d, {
+      title: 'Needs you: <x>',
+      body: 'Pick one:\n- **Option A**\n- Option B',
+      taskId: 't1',
+      appUrl: 'https://app',
+    });
+    const body = (d.send.mock.calls[0] as [string, { text: string }])[1];
+    expect(body.text).toBe(
+      '<b>Needs you: &lt;x&gt;</b>\nPick one:\n• <b>Option A</b>\n• Option B\n<a href="https://app/tasks/t1">Open task</a>',
+    );
+  });
+
+  it('falls back to plain text when Telegram rejects the HTML', async () => {
+    const { db } = fakeDb({ telegram: { chatId: 42 } });
+    const d = deps(db);
+    d.send.mockRejectedValueOnce(
+      new Error("Telegram sendMessage: Bad Request: can't parse entities"),
+    );
+    expect(
+      await notifyTelegram(d, { title: 'T', body: '**b**', taskId: 't1', appUrl: 'https://app' }),
+    ).toBe(true);
+    const body = (d.send.mock.calls[1] as [string, Record<string, unknown>])[1];
+    expect(body.parse_mode).toBeUndefined();
+    expect(body.text).toBe('T\n**b**\nhttps://app/tasks/t1');
+  });
+});
+
 describe('handleTelegramUpdate', () => {
   it('pairs only with the right code', async () => {
     const { db, g } = fakeDb({ telegram: { pairingCode: 'abc123' } });

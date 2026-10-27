@@ -1,5 +1,6 @@
 import { paths } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { esc, markdownToTelegram } from './telegram-format.js';
 
 /**
  * Telegram as a notification channel. One bot, one chat (yours), paired once with a code
@@ -41,15 +42,12 @@ export function telegramApi(token: string) {
   };
 }
 
-const esc = (s: string) =>
-  s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string);
-
 export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promise<boolean> {
   if (!deps.token) return false;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const chatId = settings.telegram?.chatId as number | undefined;
   if (!chatId) return false;
-  const text = `<b>${esc(n.title)}</b>\n${esc(n.body).slice(0, 3500)}\n<a href="${n.appUrl}/tasks/${n.taskId}">Open task</a>`;
+  const text = `<b>${esc(n.title)}</b>\n${markdownToTelegram(n.body.slice(0, 3500))}\n<a href="${n.appUrl}/tasks/${n.taskId}">Open task</a>`;
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
   if (n.input) {
     const cb = (v: string) => `a:${n.taskId}:${n.input?.messageId}:${v}`.slice(0, 64);
@@ -66,18 +64,25 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
       );
     }
   }
+  const about = { taskId: n.taskId, inputMessageId: n.input?.messageId };
+  const reply_markup = buttons.length ? { inline_keyboard: buttons } : undefined;
   try {
-    await sendTracked(
-      deps,
-      {
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined,
-      },
-      { taskId: n.taskId, inputMessageId: n.input?.messageId },
-    );
+    try {
+      await sendTracked(
+        deps,
+        { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup },
+        about,
+      );
+    } catch (err) {
+      // Telegram rejects HTML it cannot parse; the message still matters more than its looks.
+      if (!/parse entities/i.test(String(err))) throw err;
+      const plain = `${n.title}\n${n.body.slice(0, 3500)}\n${n.appUrl}/tasks/${n.taskId}`;
+      await sendTracked(
+        deps,
+        { chat_id: chatId, text: plain, disable_web_page_preview: true, reply_markup },
+        about,
+      );
+    }
     return true;
   } catch (err) {
     deps.log?.('telegram send failed', { err: String(err) });
