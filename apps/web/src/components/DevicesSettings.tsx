@@ -49,8 +49,8 @@ export function DevicesSettings() {
       <CardBody className="space-y-3 text-sm">
         {devices.length === 0 && !pairingLive && (
           <p className="text-muted-foreground">
-            No Mac paired yet. A paired Mac runs the tasks you route to it, with your folders and
-            later your Chrome.
+            No Mac paired yet. A paired Mac runs the tasks you route to it, with your folders and a
+            Chrome window on your screen.
           </p>
         )}
         {devices.map((d) => (
@@ -58,13 +58,14 @@ export function DevicesSettings() {
         ))}
         {pairingLive && pairing && (
           <div className="rounded-md border bg-muted/40 p-3">
-            <p className="mb-2">On the Mac, in a clone of the repo:</p>
+            <p className="mb-2">On the Mac, with Node 22+ and pnpm installed:</p>
             <pre className="overflow-x-auto rounded bg-card p-2 text-xs">
-              {`pnpm install\npnpm dodo login ${pairing.code}\npnpm dodo daemon`}
+              {`git clone https://github.com/ArnoutVerboven/dodo && cd dodo\npnpm mac setup ${pairing.code} ~/code`}
             </pre>
             <p className="mt-2 text-xs text-muted-foreground">
-              The code works once and expires after 15 minutes. The Mac appears here as soon as it
-              has signed in.
+              ~/code is a folder the agent may work in (any number, optional). The code works once
+              and expires after 15 minutes. The Mac appears here as soon as it has signed in, and
+              its tasks can use a Chrome window on it with nothing else installed.
             </p>
           </div>
         )}
