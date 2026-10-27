@@ -75,7 +75,7 @@ One Google OAuth client for both. "Connect Google" in the Jobs tab runs the stan
 | `gmail.readonly`    | read inbox threads                                           |
 | `gmail.compose`     | create, update and send drafts (replies only after approval) |
 | `calendar.readonly` | free/busy and time zone, to propose slots                    |
-| `calendar.events`   | add an event you approved on the task (nobody is invited)   |
+| `calendar.events`   | add an event you approved on the task (nobody is invited)    |
 | `openid email`      | show which account is connected                              |
 
 No `gmail.modify`: jobs never archive, label or delete mail. The app stays unverified for personal use; publishing the consent screen "In production" avoids the 7-day refresh-token expiry of testing mode.
