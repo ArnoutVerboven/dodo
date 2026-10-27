@@ -117,6 +117,44 @@ export function classifyCommand(command: string, workdir: string): 'sandbox' | '
   return category;
 }
 
+/**
+ * What a command the agent runs inherits from the worker's environment: nothing but the path and,
+ * when the worker itself runs inside a sandbox, the way out of it. The sandbox hands the worker a
+ * proxy and a trust store through these variables; a command without them has no network at all,
+ * silently, instead of a refusal it can read.
+ */
+const INHERITED = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'GRPC_PROXY',
+  'grpc_proxy',
+  'SANDBOX_RUNTIME',
+  'TMPDIR',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'REQUESTS_CA_BUNDLE',
+  'CURL_CA_BUNDLE',
+  'NODE_EXTRA_CA_CERTS',
+  'GIT_SSL_CAINFO',
+  'GIT_SSH_COMMAND',
+  'GIT_CONFIG_PARAMETERS',
+];
+
+export function inheritedEnv(): Record<string, string> {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin' };
+  for (const k of INHERITED) {
+    const v = process.env[k];
+    if (v !== undefined) env[k] = v;
+  }
+  return env;
+}
+
 function run(
   command: string,
   cwd: string,
@@ -125,7 +163,7 @@ function run(
   return new Promise((resolve) => {
     const child = spawn('bash', ['-c', command], {
       cwd,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: cwd, LANG: 'C.UTF-8', DODO: '1' },
+      env: { ...inheritedEnv(), HOME: cwd, LANG: 'C.UTF-8', DODO: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
