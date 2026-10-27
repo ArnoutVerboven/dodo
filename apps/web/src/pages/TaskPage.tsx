@@ -785,7 +785,9 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
   const req = message.input;
   const [text, setText] = useState('');
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
-  const [scope, setScope] = useState<'task' | 'project' | 'global'>('project');
+  // A vault entry is approved per task: the server ignores project and global rules for it.
+  const isVault = req?.suggestedRule?.startsWith('Vault(') ?? false;
+  const [scope, setScope] = useState<'task' | 'project' | 'global'>(isVault ? 'task' : 'project');
   const [showRule, setShowRule] = useState(false);
   if (!req) return null;
   if (req.answer) {
@@ -853,8 +855,8 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
                 onChange={(e) => setScope(e.target.value as typeof scope)}
               >
                 <option value="task">this task</option>
-                <option value="project">this project</option>
-                <option value="global">everywhere</option>
+                {!isVault && <option value="project">this project</option>}
+                {!isVault && <option value="global">everywhere</option>}
               </Select>
               <Button
                 size="sm"

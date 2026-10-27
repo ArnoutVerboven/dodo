@@ -3,7 +3,7 @@ import { mkdir, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { execTools, inheritedEnv, runAgent, taskTools } from '@dodo/agent';
+import { createSecretResolver, execTools, inheritedEnv, runAgent, taskTools } from '@dodo/agent';
 import { Project, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
@@ -101,6 +101,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       tools: [...taskTools, ...execTools],
       policy,
       workdir,
+      secrets: createSecretResolver((entryId, field, host) =>
+        control.resolveVault(entryId, field, host),
+      ),
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },

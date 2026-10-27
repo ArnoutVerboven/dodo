@@ -12,12 +12,14 @@ import {
   type GenerateRequest,
   GenerateResponse,
   HeartbeatResponse,
+  PersonalInfo,
   Project,
   paths,
   type RequestInputRequest,
   type RunEvent,
   type StatusLine,
   Task,
+  VaultEntry,
 } from '@dodo/core';
 import type { FirebaseApp } from 'firebase/app';
 import { type Auth, connectAuthEmulator, getAuth, signInWithCustomToken } from 'firebase/auth';
@@ -134,6 +136,24 @@ export class CallableControlPlane implements ControlPlane {
   async finish(req: Omit<FinishRequest, 'runId'>) {
     await this.call('runFinish', { runId: this.runId, ...req });
   }
+  /**
+   * One vault value for the site a tool types it into. A refusal (not approved for this task,
+   * wrong site) comes back as a plain Error with the reason, for the model to read; a lost
+   * lease shows up at the next heartbeat.
+   */
+  async resolveVault(entryId: string, field: string, host: string): Promise<string> {
+    try {
+      const r = await httpsCallable(this.fns, 'vaultResolve', { timeout: 30_000 })({
+        runId: this.runId,
+        entryId,
+        field,
+        host,
+      });
+      return (r.data as { value: string }).value;
+    } catch (err) {
+      throw new Error((err as Error).message || 'Vault value not available');
+    }
+  }
 }
 
 /** Task-level reads and writes with the run's own identity, scoped by Firestore rules. */
@@ -199,6 +219,19 @@ export class FirestoreTaskStore implements TaskStore {
       createdAt: Date.now(),
     });
     return ref.id;
+  }
+  async getPersonalInfo() {
+    const snap = await getDoc(doc(this.db, paths.profile()));
+    if (!snap.exists()) return undefined;
+    const p = PersonalInfo.safeParse(snap.data());
+    return p.success ? p.data : undefined;
+  }
+  async listVault() {
+    const snap = await getDocs(collection(this.db, paths.vault()));
+    return snap.docs.flatMap((d) => {
+      const p = VaultEntry.safeParse({ id: d.id, ...d.data() });
+      return p.success ? [p.data] : [];
+    });
   }
   async recentMessages(max: number) {
     const snap = await getDocs(

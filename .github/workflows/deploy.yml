@@ -126,6 +126,18 @@ jobs:
               --member="serviceAccount:dodo-jobs@$P.iam.gserviceaccount.com" --role="$role" >/dev/null ||
               echo "::warning::Could not grant $role on dodo-google-token to dodo-jobs (not created yet?)"
           done
+      - name: Make sure the vault secret exists
+        # Agent vault values (Settings › Vault): one secret, readable and writable only by the
+        # gateway account that runs vaultSave and vaultResolve. Created here like the Jobs token.
+        if: env.FUNCTIONS == 'true'
+        run: |
+          P=${{ vars.GCP_PROJECT_ID }}
+          gcloud secrets describe dodo-vault --project "$P" >/dev/null 2>&1 ||
+            gcloud secrets create dodo-vault --project "$P" --replication-policy=automatic
+          for role in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionManager roles/secretmanager.viewer; do
+            gcloud secrets add-iam-policy-binding dodo-vault --project "$P" --condition=None \
+              --member="serviceAccount:dodo-gateway@$P.iam.gserviceaccount.com" --role="$role" >/dev/null
+          done
       - name: Make sure the dodo-app Hosting site exists
         # The app is served from dodo-app.web.app (firebase.json); the project's default
         # site only redirects there.

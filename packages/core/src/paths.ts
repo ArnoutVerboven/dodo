@@ -1,6 +1,11 @@
 /** Firestore collection and document paths, shared by the web app, functions and workers. */
 export const paths = {
   settings: () => 'settings/global',
+  /** Personal info the agent may read (not secret). */
+  profile: () => 'settings/profile',
+  /** Vault entry metadata; values are in Secret Manager. */
+  vault: () => 'vault',
+  vaultEntry: (id: string) => `vault/${id}`,
   tasks: () => 'tasks',
   task: (id: string) => `tasks/${id}`,
   messages: (taskId: string) => `tasks/${taskId}/messages`,

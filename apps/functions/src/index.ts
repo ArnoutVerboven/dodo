@@ -9,6 +9,8 @@ import {
   HeartbeatRequest,
   paths,
   RequestInputRequest,
+  VaultDeleteRequest,
+  VaultResolveRequest,
 } from '@dodo/core';
 import { CloudBillingClient } from '@google-cloud/billing';
 import { ExecutionsClient, JobsClient } from '@google-cloud/run';
@@ -35,6 +37,15 @@ import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
+import {
+  deleteVaultEntry,
+  firestoreDevStore,
+  resolveVaultValue,
+  saveVaultEntry,
+  secretManagerStore,
+  type VaultDeps,
+  VaultError,
+} from './vault.js';
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 2 });
@@ -424,6 +435,63 @@ export const apiTokenCreate = onCall(
       if (err instanceof IngestError) throw new HttpsError('invalid-argument', err.message);
       throw err;
     }
+  },
+);
+
+/* ----------------------------- vault ----------------------------- */
+
+const vaultDeps = (): VaultDeps => {
+  const db = getFirestore();
+  return {
+    db,
+    secrets: isEmulator ? firestoreDevStore(db) : secretManagerStore(projectId()),
+    log: logger.info,
+  };
+};
+
+const ownerOnly = (auth: { token: Record<string, unknown> } | undefined) => {
+  if (auth?.token.dodo_owner !== true) throw new HttpsError('permission-denied', 'Owner only');
+};
+
+const vaultCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof VaultError) throw new HttpsError(err.code, err.message);
+    throw err;
+  }
+};
+
+/** Settings › Vault: values go in, never come back out to the browser. */
+export const vaultSave = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return vaultCall(() => saveVaultEntry(vaultDeps(), request.data));
+  },
+);
+
+export const vaultDelete = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { id } = parseOr<{ id: string }>(VaultDeleteRequest, request.data);
+    await vaultCall(() => deleteVaultEntry(vaultDeps(), id));
+    return { ok: true };
+  },
+);
+
+/** A run's browser tool gets one value for the site it types it into (only the run itself). */
+export const vaultResolve = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2 },
+  async (request) => {
+    const req = parseOr<VaultResolveRequest>(VaultResolveRequest, request.data);
+    const c = caller(request.auth);
+    // The owner's own account is not a run: values never go back to a browser session.
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const deps = vaultDeps();
+    const run = await loadRunForCaller(deps.db, c, req.runId);
+    return vaultCall(() => resolveVaultValue(deps, run, req));
   },
 );
 

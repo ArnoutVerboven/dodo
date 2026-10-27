@@ -51,6 +51,9 @@ importers:
       '@google-cloud/run':
         specifier: ^4.2.0
         version: 4.2.0
+      '@google-cloud/secret-manager':
+        specifier: ^6.3.0
+        version: 6.3.0
       '@google/genai':
         specifier: ^1.30.0
         version: 1.52.0(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))
@@ -978,6 +981,10 @@ packages:
   '@google-cloud/run@4.2.0':
     resolution: {integrity: sha512-idLdoweHOA4la4/46Vw0d1DwyRqjseWQkzDqfF6DzX7Zf18bzTNhWdGGAVAk41gdL50DRhAmOOtn2+0tUQpSAA==}
     engines: {node: '>=22'}
+
+  '@google-cloud/secret-manager@6.3.0':
+    resolution: {integrity: sha512-TUuzu8CchbCd2cXd0pYJSXvDBsEVX3wpZu4iOpdLrXLbYbvCDKhdjDyOyC7vo14qQRE9J6Z0AL2hfX08H+fh3A==}
+    engines: {node: '>=18'}
 
   '@google-cloud/sql@0.25.0':
     resolution: {integrity: sha512-OKAA98q2M25rQcqcFvbQniix4zTFcbeSyauj+PcPd+6ngn7eXvAUqpuCRVxbIGmA8r5OtE6Ru/oCJ1xwcUR2vA==}
@@ -5205,6 +5212,12 @@ snapshots:
   '@google-cloud/run@4.2.0':
     dependencies:
       google-gax: 6.13.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@google-cloud/secret-manager@6.3.0':
+    dependencies:
+      google-gax: 5.0.8
     transitivePeerDependencies:
       - supports-color
 

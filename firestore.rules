@@ -47,6 +47,19 @@ service cloud.firestore {
       allow read, write: if isOwner();
     }
 
+    // Personal info: not secret, so the agent of any live run may read it.
+    match /settings/profile {
+      allow read, write: if isOwner();
+      allow read: if request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run);
+    }
+
+    // Vault entries hold names, sites and field names only; values are in Secret Manager and
+    // reach a run one at a time through vaultResolve. Writes go through vaultSave/vaultDelete.
+    match /vault/{entryId} {
+      allow read: if isOwner();
+      allow read: if request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run);
+    }
+
     match /projects/{projectId} {
       allow read: if isOwner() || (request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run));
       allow write: if isOwner();

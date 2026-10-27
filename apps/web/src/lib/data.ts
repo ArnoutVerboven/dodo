@@ -5,6 +5,7 @@ import {
   eur,
   GlobalSettings,
   type NewTask,
+  PersonalInfo,
   Project,
   paths,
   Run,
@@ -12,6 +13,8 @@ import {
   Task,
   type TaskStatus,
   ThreadMessage,
+  VaultEntry,
+  type VaultSaveRequest,
 } from '@dodo/core';
 import {
   addDoc,
@@ -337,6 +340,25 @@ export async function deleteProject(id: string) {
 
 export async function saveSettings(changes: Partial<GlobalSettings>) {
   await setDoc(doc(db, paths.settings()), clean(changes), { merge: true });
+}
+
+export const usePersonalInfo = () => useLiveDoc(paths.profile(), PersonalInfo);
+
+/** Replaces the whole profile: what the form shows is what the agent gets. */
+export async function savePersonalInfo(info: Omit<PersonalInfo, 'updatedAt'>) {
+  await setDoc(doc(db, paths.profile()), clean({ ...info, updatedAt: Date.now() }));
+}
+
+export const useVault = () =>
+  useLiveQuery(query(collection(db, paths.vault()), orderBy('name')), VaultEntry, []);
+
+/** Values go to the server only; a field left empty keeps its stored value. */
+export async function saveVaultEntry(entry: VaultSaveRequest) {
+  await httpsCallable(functions, 'vaultSave')(clean(entry));
+}
+
+export async function deleteVaultEntry(id: string) {
+  await httpsCallable(functions, 'vaultDelete')({ id });
 }
 
 export const EUR = eur;

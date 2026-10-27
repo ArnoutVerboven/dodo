@@ -5,11 +5,13 @@ import type {
   GenerateRequest,
   GenerateResponse,
   HeartbeatResponse,
+  PersonalInfo,
   Project,
   RequestInputRequest,
   RunEvent,
   StatusLine,
   Task,
+  VaultEntry,
 } from '@dodo/core';
 
 /**
@@ -38,6 +40,10 @@ export interface TaskStore {
     url?: string;
     text?: string;
   }): Promise<string>;
+  /** Settings › Personal info: not secret, the agent may use it freely. */
+  getPersonalInfo(): Promise<PersonalInfo | undefined>;
+  /** Vault entries without their values (names, sites, field names). */
+  listVault(): Promise<VaultEntry[]>;
   /** Thread messages (user and agent) for context on a new or comment-triggered run. */
   recentMessages(
     limit: number,

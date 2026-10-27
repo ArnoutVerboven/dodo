@@ -10,6 +10,7 @@ import {
   type TraceSink,
 } from './control-plane.js';
 import { systemPrompt, taskContext } from './prompt.js';
+import { redactDeep, type SecretResolver } from './secrets.js';
 import { findTool, type ToolDef, toDeclarations } from './tools.js';
 
 export interface LoopOptions {
@@ -19,6 +20,8 @@ export interface LoopOptions {
   tools: ToolDef[];
   policy?: PolicyEngine;
   workdir?: string;
+  /** Vault values for tools that type into sites; every value it hands out is redacted. */
+  secrets?: SecretResolver;
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -43,6 +46,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const session: Content[] = [...input.session];
   const declarations = toDeclarations(tools);
   const system = systemPrompt(input.task, input.project);
+  // Vault values never go back to the model, the trace or the task: cut them out of every
+  // tool argument and result.
+  const redact = <T>(v: T): T => (opts.secrets ? redactDeep(v, opts.secrets.redact) : v);
 
   await trace.emit({
     type: 'run_started',
@@ -167,6 +173,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         }
         throw err;
       }
+      response = { ...response, content: redact(response.content) };
       session.push(response.content);
       const calls = response.content.parts.filter((p) => p.functionCall);
       const text = response.content.parts
@@ -221,7 +228,12 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
             };
           } else {
             try {
-              const ctx = { store, policy: opts.policy, workdir: opts.workdir };
+              const ctx = {
+                store,
+                policy: opts.policy,
+                workdir: opts.workdir,
+                secrets: opts.secrets,
+              };
               const claim = tool.policy?.(parsed.data, ctx);
               const decision = claim
                 ? (opts.policy?.decide(claim) ?? { kind: 'deny' as const, by: 'no policy engine' })
@@ -258,7 +270,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 break;
               }
               const outcome = await tool.execute(parsed.data, ctx);
-              result = outcome.result;
+              result = redact(outcome.result);
               if ('askUser' in outcome) {
                 responses.push(functionResponse(fc, result));
                 session.push({ role: 'user', parts: responses });
@@ -284,7 +296,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
               }
             } catch (err) {
               log('tool failed', { tool: fc.name, err: String(err) });
-              result = { error: `Tool failed: ${(err as Error).message}` };
+              result = redact({ error: `Tool failed: ${(err as Error).message}` });
             }
           }
         }

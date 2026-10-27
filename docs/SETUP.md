@@ -48,4 +48,4 @@ What I need from you, in short:
 ## 3. Later phases
 
 - **Mac**: Node 22 (`brew install node`), then the `dodo` CLI (phase 4).
-- **Credentials**: a dedicated vault in your password manager for agent use (phase 5).
+- **Credentials**: nothing to set up. Add logins in Settings › Vault; the deploy creates the `dodo-vault` secret in Secret Manager and lets only `dodo-gateway` use it.
