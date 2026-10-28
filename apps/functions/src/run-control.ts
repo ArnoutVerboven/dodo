@@ -26,7 +26,12 @@ export type Notify = (n: {
   title: string;
   body: string;
   taskId: string;
-  input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+  input?: {
+    messageId: string;
+    kind: 'text' | 'choice' | 'approval';
+    options?: string[];
+    suggestedRule?: string;
+  };
 }) => Promise<void>;
 
 export interface RunControlDeps {
@@ -236,7 +241,12 @@ export async function requestInput(
     title: `Needs you: ${title}`,
     body: req.prompt,
     taskId: run.taskId,
-    input: { messageId: messageRef.id, kind: req.kind, options: req.options },
+    input: stripUndefined({
+      messageId: messageRef.id,
+      kind: req.kind,
+      options: req.options,
+      suggestedRule: req.suggestedRule,
+    }),
   });
 }
 

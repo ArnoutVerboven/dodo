@@ -24,7 +24,13 @@ export interface Notification {
   body: string;
   taskId: string;
   /** Present for input requests: adds answer buttons for approvals and choices. */
-  input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+  input?: {
+    messageId: string;
+    kind: 'text' | 'choice' | 'approval';
+    options?: string[];
+    /** For approvals: the rule "Always" would store; without it there is no Always button. */
+    suggestedRule?: string;
+  };
   appUrl: string;
 }
 
@@ -53,7 +59,8 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
     const cb = (v: string) => `a:${n.taskId}:${n.input?.messageId}:${v}`.slice(0, 64);
     if (n.input.kind === 'approval')
       buttons.push([
-        { text: '✅ Yes', callback_data: cb('yes') },
+        { text: '✅ Once', callback_data: cb('yes') },
+        ...(n.input.suggestedRule ? [{ text: '♾️ Always', callback_data: cb(ALWAYS) }] : []),
         { text: '❌ No', callback_data: cb('no') },
       ]);
     if (n.input.kind === 'choice' && n.input.options) {
@@ -318,7 +325,9 @@ export async function handleTelegramUpdate(
     }
     const ref = deps.db.doc(`${paths.messages(taskId)}/${messageId}`);
     const snap = await ref.get();
-    const input = snap.get('input') as { answer?: unknown } | undefined;
+    const input = snap.get('input') as
+      | { answer?: unknown; kind?: string; suggestedRule?: string }
+      | undefined;
     if (!snap.exists || !input) {
       await deps.send('answerCallbackQuery', {
         callback_query_id: cq.id,
@@ -333,10 +342,21 @@ export async function handleTelegramUpdate(
       });
       return;
     }
-    await ref.update({ 'input.answer': { value, answeredAt: Date.now(), via: 'telegram' } });
+    const always =
+      value === ALWAYS && input.kind === 'approval' && input.suggestedRule
+        ? { rule: input.suggestedRule, scope: await alwaysScope(deps, taskId, input.suggestedRule) }
+        : undefined;
+    await ref.update({
+      'input.answer': {
+        value: always ? 'yes' : value,
+        ...(always ? { alwaysAllow: always } : {}),
+        answeredAt: Date.now(),
+        via: 'telegram',
+      },
+    });
     await deps.send('answerCallbackQuery', {
       callback_query_id: cq.id,
-      text: `Answered: ${value}`,
+      text: always ? `Always allowed in this ${always.scope}` : `Answered: ${value}`,
     });
     await deps
       .send('editMessageReplyMarkup', {
@@ -346,4 +366,20 @@ export async function handleTelegramUpdate(
       })
       .catch(() => {});
   }
+}
+
+const ALWAYS = 'always';
+
+/**
+ * Where "Always" from Telegram stores the rule: the task's project when it has one (the same
+ * default as the app), the task itself otherwise. A vault entry is only ever approved per task.
+ */
+async function alwaysScope(
+  deps: TelegramDeps,
+  taskId: string,
+  rule: string,
+): Promise<'task' | 'project'> {
+  if (rule.startsWith('Vault(')) return 'task';
+  const task = await deps.db.doc(paths.task(taskId)).get();
+  return task.get('projectId') ? 'project' : 'task';
 }

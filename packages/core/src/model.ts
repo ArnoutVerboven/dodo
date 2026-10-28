@@ -98,6 +98,8 @@ export const Task = z.object({
   activeRunId: z.string().optional(),
   externalRefs: z.record(z.string(), z.string()).default({}),
   source: TaskSource.optional(),
+  /** Permission rules answered "Always allow" for this task, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -122,6 +124,8 @@ export const Project = z.object({
   /** Hard cap for all tasks in the project together, per calendar month. */
   monthlyBudget: MicroEur.optional(),
   instructions: z.string().default(''),
+  /** Permission rules answered "Always allow" for this project, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -260,5 +264,7 @@ export const GlobalSettings = z.object({
     .optional(),
   /** One-time code shown in Settings; `dodo login <code>` consumes it. */
   devicePairing: z.object({ code: z.string(), createdAt: Timestamp }).optional(),
+  /** Permission rules answered "Always allow" everywhere, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

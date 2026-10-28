@@ -801,6 +801,12 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
+const SCOPE_LABEL = {
+  task: 'for this task',
+  project: 'for this project',
+  global: 'everywhere',
+} as const;
+
 function InputRequestView({
   taskId,
   message,
@@ -818,15 +824,28 @@ function InputRequestView({
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
   // A vault entry is approved per task: the server ignores project and global rules for it.
   const isVault = req?.suggestedRule?.startsWith('Vault(') ?? false;
-  const [scope, setScope] = useState<'task' | 'project' | 'global'>(isVault ? 'task' : 'project');
+  const { data: task } = useTask(taskId);
+  // Without a project the server stores a "project" rule on the task, so offer task instead.
+  const hasProject = !!task?.projectId;
+  const [pickedScope, setScope] = useState<'task' | 'project' | 'global'>();
+  const scope = pickedScope ?? (isVault || !hasProject ? 'task' : 'project');
   const [showRule, setShowRule] = useState(false);
   if (!req) return null;
   if (req.answer) {
     return (
       <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
         Answered: <b>{req.answer.value}</b>
-        {req.answer.alwaysAllow &&
-          ` (always allow ${req.answer.alwaysAllow.rule} in ${req.answer.alwaysAllow.scope})`}
+        {req.answer.alwaysAllow && (
+          <>
+            {' '}
+            (always allow <code className="text-xs">{req.answer.alwaysAllow.rule}</code>{' '}
+            {SCOPE_LABEL[req.answer.alwaysAllow.scope]},{' '}
+            <Link to="/settings#allowed-actions" className="underline underline-offset-2">
+              manage
+            </Link>
+            )
+          </>
+        )}
       </p>
     );
   }
@@ -873,20 +892,41 @@ function InputRequestView({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => answer('approve')}>
-              Approve once
+              Allow once
             </Button>
+            {req.suggestedRule !== undefined && (
+              <span className="relative inline-flex">
+                <Button size="sm" variant="outline" tabIndex={-1} aria-hidden>
+                  Allow always <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+                <select
+                  aria-label="Allow always"
+                  title={`Always allow ${req.suggestedRule}`}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === 'edit') setShowRule(true);
+                    else if (v)
+                      void answer('approve', {
+                        rule: req.suggestedRule ?? '',
+                        scope: v as typeof scope,
+                      });
+                  }}
+                >
+                  <option value="" disabled hidden>
+                    Allow always
+                  </option>
+                  <option value="task">For this task</option>
+                  {!isVault && hasProject && <option value="project">For this project</option>}
+                  {!isVault && <option value="global">Everywhere</option>}
+                  <option value="edit">Edit the rule first…</option>
+                </select>
+              </span>
+            )}
             <Button size="sm" variant="outline" onClick={() => answer('deny')}>
               Deny
             </Button>
-            {req.suggestedRule !== undefined && (
-              <button
-                type="button"
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => setShowRule((v) => !v)}
-              >
-                {showRule ? 'Hide' : 'Always allow…'}
-              </button>
-            )}
           </div>
           {req.suggestedRule !== undefined && showRule && (
             <div className="flex flex-wrap items-center gap-2">
@@ -900,8 +940,8 @@ function InputRequestView({
                 value={scope}
                 onChange={(e) => setScope(e.target.value as typeof scope)}
               >
-                <option value="task">this task</option>
-                {!isVault && <option value="project">this project</option>}
+                <option value="task">for this task</option>
+                {!isVault && hasProject && <option value="project">for this project</option>}
                 {!isVault && <option value="global">everywhere</option>}
               </Select>
               <Button
@@ -912,6 +952,13 @@ function InputRequestView({
               >
                 Always allow
               </Button>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setShowRule(false)}
+              >
+                Cancel
+              </button>
             </div>
           )}
         </div>

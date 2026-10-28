@@ -1,6 +1,7 @@
 import type { AiConfig } from '@dodo/core';
 import { useEffect, useState } from 'react';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { AllowedActionsSettings } from '@/components/AllowedActionsSettings';
 import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
 import { GitHubSettings } from '@/components/GitHubSettings';
@@ -156,6 +157,8 @@ export function SettingsPage() {
       <GitHubSettings />
 
       <VaultSettings />
+
+      <AllowedActionsSettings />
 
       <DevicesSettings />
 
