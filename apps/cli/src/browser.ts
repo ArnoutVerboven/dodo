@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -288,4 +288,36 @@ export function startBrowserServer({
       fail(`exited with ${code}`);
     });
   });
+}
+
+/** The worker's closing line when the agent asked the user something and stopped for the answer. */
+export function endedWaitingInput(line: string): boolean {
+  return /\bended: waiting_input\b/.test(line);
+}
+
+const exec = (file: string, args: string[]) =>
+  new Promise<string>((resolve, reject) => {
+    execFile(file, args, { timeout: 5000 }, (err, stdout) =>
+      err ? reject(err) : resolve(String(stdout)),
+    );
+  });
+
+/**
+ * Bring dodo's own Chrome window to the front (macOS). Called when a run stops to ask the user
+ * something while it had the browser: the page it wants them to look at is then on top instead
+ * of behind their other windows. Best effort; a failure only logs.
+ */
+export async function focusBrowserWindow(profileDir: string, log: (m: string) => void) {
+  if (process.platform !== 'darwin') return;
+  try {
+    // The browser process is the oldest one started with this profile; renderers share the flag.
+    const pid = (await exec('pgrep', ['-o', '-f', `--user-data-dir=${profileDir}`])).trim();
+    if (!pid) return;
+    await exec('osascript', [
+      '-e',
+      `tell application "System Events" to set frontmost of (first process whose unix id is ${Number(pid)}) to true`,
+    ]);
+  } catch (err) {
+    log(`browser: could not bring the window to the front: ${(err as Error).message}`);
+  }
 }
