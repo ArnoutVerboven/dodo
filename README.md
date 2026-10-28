@@ -5,6 +5,7 @@ A personal, asynchronous AI task agent. Create a task on a board; an agent works
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [One-time setup](docs/SETUP.md)
+- [GitHub](docs/GITHUB.md): the agent clones your repos, pushes branches and opens pull requests
 
 ## Layout
 

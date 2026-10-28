@@ -1,4 +1,4 @@
-import type { Content, Part, RunEndReason } from '@dodo/core';
+import { type Content, type Part, type RunEndReason, repoFor } from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
 import {
   type ControlPlane,
@@ -48,6 +48,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const declarations = toDeclarations(tools);
   const system = systemPrompt(input.task, input.project, {
     browser: tools.some((t) => t.name.startsWith('browser_')),
+    github: tools.some((t) => t.name === 'open_pull_request')
+      ? repoFor(input.task, input.project)
+      : undefined,
   });
   // Vault values never go back to the model, the trace or the task: cut them out of every
   // tool argument and result.

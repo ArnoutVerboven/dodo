@@ -4,15 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  authHeaderArgs,
   browserTools,
   connectBrowser,
   createSecretResolver,
   execTools,
+  type GitHubAccess,
+  githubTools,
   inheritedEnv,
   runAgent,
   taskTools,
 } from '@dodo/agent';
-import { Project, Task } from '@dodo/core';
+import { type GitHubTokenResponse, Project, repoFor, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
 import {
@@ -28,31 +31,42 @@ const HEARTBEAT_MS = 15_000;
 const execFileP = promisify(execFile);
 
 /**
- * The project's repository is checked out into the task folder before the run. Only public
- * GitHub repos work until the credential vault (phase 5) provides a token. Configured by the
- * user on the project, so it needs no approval; later pushes still go through the policy.
+ * The task's (or project's) repository is checked out into the task folder before the run.
+ * Private repos use a read-only token from the control plane (the dodo GitHub App), passed to
+ * git for the clone only; the checkout keeps no credentials, so pushing goes through the
+ * push_branch / open_pull_request tools and their approval. Configured by the user, so the
+ * checkout itself needs no approval.
  */
 async function checkout(
   workdir: string,
   repo: string,
+  github: GitHubTokenResponse | undefined,
   log: (m: string) => void,
 ): Promise<string | undefined> {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return `repo "${repo}" is not owner/name`;
-  if ((await readdir(workdir)).length > 0) return undefined; // already there (same container)
+  const env = { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir };
+  const gitIn = (args: string[]) => execFileP('git', args, { cwd: workdir, timeout: 120_000, env });
   try {
-    await execFileP(
-      'git',
-      ['clone', '--depth', '50', '--quiet', `https://github.com/${repo}.git`, '.'],
-      {
-        cwd: workdir,
-        timeout: 120_000,
-        env: { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir },
-      },
-    );
-    log(`checked out ${repo}`);
+    if ((await readdir(workdir)).length === 0) {
+      await gitIn([
+        ...(github?.token ? authHeaderArgs(github.token) : []),
+        'clone',
+        '--depth',
+        '50',
+        '--quiet',
+        `https://github.com/${repo}.git`,
+        '.',
+      ]);
+      log(`checked out ${repo}`);
+    }
+    // Commits are the app's bot (or plain dodo); only where this run cloned or a git repo exists.
+    if (github?.botLogin && github.botEmail) {
+      await gitIn(['config', 'user.name', github.botLogin]).catch(() => undefined);
+      await gitIn(['config', 'user.email', github.botEmail]).catch(() => undefined);
+    }
     return undefined;
   } catch (err) {
-    return `checkout of ${repo} failed: ${(err as Error).message.split('\n')[0]}`;
+    const msg = (err as Error).message.split('\n')[0] ?? '';
+    return `checkout of ${repo} failed: ${github?.token ? msg.split(github.token).join('***') : msg}${github?.note ? ` (${github.note})` : ''}`;
   }
 }
 
@@ -83,8 +97,16 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
   await mkdir(workdir, { recursive: true });
   const policy = new PolicyEngine(started.policy);
-  const repo = task.ai.repo ?? project?.defaults.repo;
-  const checkoutNote = repo ? await checkout(workdir, repo, (m) => console.log(m)) : undefined;
+  const repo = repoFor(task, project);
+  const github = repo
+    ? await control.githubToken('read').catch((err: Error) => {
+        console.log(`github token unavailable: ${err.message}`);
+        return undefined;
+      })
+    : undefined;
+  const checkoutNote = repo
+    ? await checkout(workdir, repo, github, (m) => console.log(m))
+    : undefined;
   const taskForRun = repo
     ? {
         ...task,
@@ -100,7 +122,25 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
           return undefined;
         })
       : undefined;
-  const tools = [...taskTools, ...execTools, ...(browser ? await browserTools(browser) : [])];
+  const githubAccess: GitHubAccess | undefined =
+    repo && !checkoutNote
+      ? {
+          repo,
+          defaultBranch: github?.defaultBranch,
+          writeToken: async () => {
+            const t = await control.githubToken('write');
+            if (!t.token) throw new Error(t.note ?? `No write access to ${repo}`);
+            return t.token;
+          },
+          openPullRequest: (req) => control.githubOpenPr(req),
+        }
+      : undefined;
+  const tools = [
+    ...taskTools,
+    ...execTools,
+    ...(githubAccess ? githubTools(githubAccess) : []),
+    ...(browser ? await browserTools(browser) : []),
+  ];
 
   const result = await runAgent(
     {

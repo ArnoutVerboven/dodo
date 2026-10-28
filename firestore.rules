@@ -60,6 +60,12 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run);
     }
 
+    // GitHub App connection: app name, installation, repo list. Written by the GitHub functions;
+    // the app's private key is in Secret Manager (dodo-github-app), never here.
+    match /github/{docId} {
+      allow read: if isOwner();
+    }
+
     match /projects/{projectId} {
       allow read: if isOwner() || (request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run));
       allow write: if isOwner();

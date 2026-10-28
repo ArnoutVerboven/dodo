@@ -12,6 +12,7 @@ import {
   type FinishRequest,
   type GenerateRequest,
   GenerateResponse,
+  GitHubTokenResponse,
   HeartbeatResponse,
   PersonalInfo,
   Project,
@@ -177,6 +178,34 @@ export class CallableControlPlane implements ControlPlane {
       return (r.data as { value: string }).value;
     } catch (err) {
       throw new Error((err as Error).message || 'Vault value not available');
+    }
+  }
+  /** A token for the run's own repo (docs/GITHUB.md); refusals come back as plain Errors. */
+  async githubToken(access: 'read' | 'write'): Promise<GitHubTokenResponse> {
+    try {
+      const r = await httpsCallable(this.fns, 'githubToken', { timeout: 30_000 })({
+        runId: this.runId,
+        access,
+      });
+      return GitHubTokenResponse.parse(r.data);
+    } catch (err) {
+      throw new Error((err as Error).message || 'GitHub token not available');
+    }
+  }
+  async githubOpenPr(req: {
+    head: string;
+    base?: string;
+    title: string;
+    body: string;
+    draft: boolean;
+  }): Promise<{ url: string; number: number; existing: boolean }> {
+    try {
+      const r = await httpsCallable(this.fns, 'githubOpenPr', { timeout: 60_000 })(
+        JSON.parse(JSON.stringify({ runId: this.runId, ...req })),
+      );
+      return r.data as { url: string; number: number; existing: boolean };
+    } catch (err) {
+      throw new Error((err as Error).message || 'Could not open the pull request');
     }
   }
 }

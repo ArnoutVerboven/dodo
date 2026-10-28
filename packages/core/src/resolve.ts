@@ -26,7 +26,7 @@ export function resolveAiConfig(
     model: pick('model') ?? 'auto',
     device: pick('device') ?? 'auto',
     budget: pick('budget') ?? settings.defaultTaskBudget,
-    repo: pick('repo'),
+    repo: pick('repo')?.trim() || undefined,
     folder: pick('folder'),
     tools: pick('tools'),
   };

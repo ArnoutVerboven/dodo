@@ -138,6 +138,18 @@ jobs:
             gcloud secrets add-iam-policy-binding dodo-vault --project "$P" --condition=None \
               --member="serviceAccount:dodo-gateway@$P.iam.gserviceaccount.com" --role="$role" >/dev/null
           done
+      - name: Make sure the GitHub App secret exists
+        # The dodo GitHub App's id and private key (Settings › GitHub writes them after GitHub
+        # creates the app). Readable and writable only by the gateway account, like the vault.
+        if: env.FUNCTIONS == 'true'
+        run: |
+          P=${{ vars.GCP_PROJECT_ID }}
+          gcloud secrets describe dodo-github-app --project "$P" >/dev/null 2>&1 ||
+            gcloud secrets create dodo-github-app --project "$P" --replication-policy=automatic
+          for role in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionManager roles/secretmanager.viewer; do
+            gcloud secrets add-iam-policy-binding dodo-github-app --project "$P" --condition=None \
+              --member="serviceAccount:dodo-gateway@$P.iam.gserviceaccount.com" --role="$role" >/dev/null
+          done
       - name: Make sure the dodo-app Hosting site exists
         # The app is served from dodo-app.web.app (firebase.json); the project's default
         # site only redirects there.

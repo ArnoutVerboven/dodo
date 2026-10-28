@@ -46,7 +46,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 
 ## Phase 4 — Remote tools and notifications
 
-**Status (2026-10-26): policy engine, bash, files, HTTP fetch, git checkout per task/project and Telegram notifications built (#4), ahead of phase 3 because they needed no Mac.** The policy engine from phase 3 moved here; phase 3 now reuses it. FCM web push added afterwards (#14). Still open in this phase: web search, the in-container egress proxy, tool cost models, and the exit criterion (a PR opened after an approval from your phone).
+**Status (2026-10-26): policy engine, bash, files, HTTP fetch, git checkout per task/project and Telegram notifications built (#4), ahead of phase 3 because they needed no Mac.** The policy engine from phase 3 moved here; phase 3 now reuses it. FCM web push added afterwards (#14). GitHub App with repos per project and task, private checkouts, `push_branch` and `open_pull_request` behind approvals built 2026-10-28 ([GITHUB.md](GITHUB.md)). Still open in this phase: web search, the in-container egress proxy, tool cost models, and the exit criterion (a PR opened after an approval from your phone).
 
 - Remote container tools: bash, files, git checkout per project, HTTP fetch, web search, all behind the policy engine and the in-container egress proxy.
 - Tool cost models; one paid API end to end (Maps).
