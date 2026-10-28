@@ -13,6 +13,7 @@ import {
   githubTools,
   inheritedEnv,
   runAgent,
+  takeScreenshot,
   taskTools,
 } from '@dodo/agent';
 import { type GitHubTokenResponse, Project, repoFor, Task } from '@dodo/core';
@@ -162,6 +163,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       secrets: createSecretResolver((entryId, field, host) =>
         control.resolveVault(entryId, field, host),
       ),
+      screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },

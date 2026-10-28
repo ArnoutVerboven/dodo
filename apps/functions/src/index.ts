@@ -58,7 +58,7 @@ import { FakeProvider, type ModelProvider, VertexProvider } from './model-provid
 import { notifyPush, type PushDeps } from './push.js';
 import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
-import { handleTelegramUpdate, notifyTelegram, telegramApi } from './telegram.js';
+import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
 import {
@@ -127,6 +127,7 @@ const telegramDeps = () => {
     db: getFirestore(),
     token,
     send: token ? telegramApi(token) : async () => undefined,
+    upload: token ? telegramUpload(token) : undefined,
     log: logger.warn,
   };
 };

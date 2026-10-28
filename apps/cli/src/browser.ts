@@ -216,8 +216,10 @@ export function startBrowserServer({
     '--host',
     'localhost',
     '--shared-browser-context',
+    // Screenshots come back as images so ask_user can show them to you (app and Telegram);
+    // the model itself only ever gets the text parts.
     '--image-responses',
-    'omit',
+    'allow',
     '--output-dir',
     outputDir,
   ];

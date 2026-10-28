@@ -130,9 +130,17 @@ export type Project = z.infer<typeof Project>;
 export const InputKind = z.enum(['text', 'choice', 'approval']);
 export type InputKind = z.infer<typeof InputKind>;
 
+/** A picture attached to a question, e.g. a screenshot of a QR code; stored in Storage. */
+export const InputImage = z.object({
+  storagePath: z.string(),
+  mimeType: z.string(),
+});
+export type InputImage = z.infer<typeof InputImage>;
+
 export const InputRequest = z.object({
   kind: InputKind,
   prompt: z.string(),
+  image: InputImage.optional(),
   options: z.array(z.string()).optional(),
   /** For approvals: the rule that "Always allow" would add, e.g. `Bash(git push:*)`. */
   suggestedRule: z.string().optional(),
