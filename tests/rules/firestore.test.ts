@@ -268,6 +268,18 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(run(), 'vaultDev/values')));
   });
 
+  it('shows the GitHub connection to the owner only and keeps its key server-side', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'github/app'), { repos: [] });
+      await setDoc(doc(ctx.firestore(), 'githubDev/app'), { values: { app: { pem: 'k' } } });
+    });
+    await assertSucceeds(getDoc(doc(owner(), 'github/app')));
+    await assertFails(setDoc(doc(owner(), 'github/app'), { repos: [] }));
+    await assertFails(getDoc(doc(run(), 'github/app')));
+    await assertFails(getDoc(doc(stranger(), 'github/app')));
+    await assertFails(getDoc(doc(owner(), 'githubDev/app')));
+  });
+
   it('denies unknown collections', async () => {
     await assertFails(setDoc(doc(owner(), 'anything/x'), { a: 1 }));
   });

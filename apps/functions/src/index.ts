@@ -6,6 +6,7 @@ import {
   DeviceReleaseRequest,
   FinishRequest,
   GenerateRequest,
+  GitHubTokenRequest,
   HeartbeatRequest,
   paths,
   RequestInputRequest,
@@ -29,6 +30,17 @@ import { claimOwnership as claim } from './claim-ownership.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
+import {
+  completeGitHubConnect,
+  disconnectGitHub,
+  GITHUB_SECRET,
+  type GitHubDeps,
+  GitHubError,
+  openPullRequest,
+  runGitHubToken,
+  startGitHubConnect,
+  syncRepos,
+} from './github.js';
 import { createApiToken, handleApiRequest, IngestError } from './ingest.js';
 import {
   completeGoogleConnect,
@@ -541,6 +553,103 @@ export const vaultResolve = onCall(
     const deps = vaultDeps();
     const run = await loadRunForCaller(deps.db, c, req.runId);
     return vaultCall(() => resolveVaultValue(deps, run, req));
+  },
+);
+
+/* ----------------------------- GitHub ---------------------------- */
+
+const githubDeps = (): GitHubDeps => {
+  const db = getFirestore();
+  return {
+    db,
+    secrets: isEmulator
+      ? firestoreDevStore(db, 'githubDev/app')
+      : secretManagerStore(projectId(), GITHUB_SECRET),
+    appUrl: isEmulator ? 'http://localhost:5173' : APP_URL.value(),
+    callbackUrl: isEmulator
+      ? `http://127.0.0.1:5001/${projectId()}/${REGION}/githubCallback`
+      : `https://${REGION}-${projectId()}.cloudfunctions.net/githubCallback`,
+    projectId: projectId(),
+    log: logger.info,
+  };
+};
+
+const githubCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof GitHubError) throw new HttpsError(err.code, err.message);
+    logger.error('github call failed', { err: String(err) });
+    throw new HttpsError('unknown', String(err).slice(0, 300));
+  }
+};
+
+/** Settings › GitHub: the manifest to create the app, or the page to install it. */
+export const githubConnect = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { org } = (request.data ?? {}) as { org?: string };
+    return githubCall(() => startGitHubConnect(githubDeps(), request.auth?.uid ?? '', org));
+  },
+);
+
+/** GitHub redirects here after creating the app and after installing it. */
+export const githubCallback = onRequest(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1, invoker: 'public', timeoutSeconds: 60 },
+  async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const target = await completeGitHubConnect(githubDeps(), {
+      code: q.code,
+      state: q.state,
+      installation_id: q.installation_id,
+      setup_action: q.setup_action,
+    });
+    res.redirect(302, target);
+  },
+);
+
+/** Settings › GitHub: refresh the repo list after you changed it on GitHub. */
+export const githubSync = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return githubCall(() => syncRepos(githubDeps()));
+  },
+);
+
+export const githubDisconnect = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return githubCall(() => disconnectGitHub(githubDeps()));
+  },
+);
+
+/** A run's token for its own repo: read to clone, write to push after your approval. */
+export const githubToken = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<GitHubTokenRequest>(GitHubTokenRequest, request.data);
+    const c = caller(request.auth);
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const deps = githubDeps();
+    const run = await loadRunForCaller(deps.db, c, req.runId);
+    return githubCall(() => runGitHubToken(deps, run, req.access));
+  },
+);
+
+/** A run opens a pull request for the branch it pushed (after your approval). */
+export const githubOpenPr = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2 },
+  async (request) => {
+    const data = (request.data ?? {}) as { runId?: string };
+    const c = caller(request.auth);
+    if (!c || !data.runId || c.claims.run !== data.runId)
+      throw new HttpsError('permission-denied', 'Runs only');
+    const deps = githubDeps();
+    const run = await loadRunForCaller(deps.db, c, data.runId);
+    return githubCall(() => openPullRequest(deps, run, data));
   },
 );
 

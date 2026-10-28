@@ -3,6 +3,7 @@ import {
   Artifact,
   Device,
   eur,
+  GitHubConnection,
   GlobalSettings,
   type NewTask,
   PersonalInfo,
@@ -359,6 +360,43 @@ export async function saveVaultEntry(entry: VaultSaveRequest) {
 
 export async function deleteVaultEntry(id: string) {
   await httpsCallable(functions, 'vaultDelete')({ id });
+}
+
+/* ------------------------------ GitHub ------------------------------ */
+
+export const useGitHub = () => useLiveDoc(paths.github(), GitHubConnection);
+
+/**
+ * Settings › GitHub: before the app exists, posts the manifest to GitHub (which creates the app
+ * and comes back); afterwards, opens the page to install it on your repos.
+ */
+export async function connectGitHub(org?: string) {
+  const res = await httpsCallable<
+    { org?: string },
+    { kind: 'manifest'; postUrl: string; manifest: string } | { kind: 'install'; url: string }
+  >(functions, 'githubConnect')(org ? { org } : {});
+  if (res.data.kind === 'install') {
+    window.location.assign(res.data.url);
+    return;
+  }
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = res.data.postUrl;
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'manifest';
+  input.value = res.data.manifest;
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}
+
+export async function syncGitHub() {
+  await httpsCallable(functions, 'githubSync')({});
+}
+
+export async function disconnectGitHub() {
+  await httpsCallable(functions, 'githubDisconnect')({});
 }
 
 export const EUR = eur;

@@ -269,6 +269,7 @@ Workers never write budget state and never hold model or cloud credentials. Ever
 | `run.reserveAction` / `run.settleAction` | Cost of paid tools (Maps, purchases) around the tool's execution.                                                                                             |
 | `run.requestInput` / `run.finish`        | State transitions that end a run; revoke the run identity.                                                                                                    |
 | `secrets.resolve` (phase 5)              | Returns a credential to the browser tool only for a service the task is approved for.                                                                         |
+| `githubToken` / `githubOpenPr`           | A token for the run's own repo (read to clone; write only after an approved push or PR), and opening the PR itself. See [GITHUB.md](GITHUB.md).               |
 
 The gateway:
 

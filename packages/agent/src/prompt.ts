@@ -3,7 +3,7 @@ import type { Project, Task } from '@dodo/core';
 export function systemPrompt(
   _task: Task,
   project: Project | undefined,
-  features: { browser?: boolean } = {},
+  features: { browser?: boolean; github?: string } = {},
 ): string {
   const lines = [
     "You are dodo, a personal asynchronous task agent working on one task from the user's board.",
@@ -26,6 +26,12 @@ export function systemPrompt(
     lines.push(
       '',
       "Browser: the browser_* tools drive the user's own Chrome, with their logins. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. When a page needs the user (a password, a code, an approval on their phone), do not guess: tell them which tab in ask_user, wait for the answer, then continue in the same tab. Never type credentials you were not given as a vault reference.",
+    );
+  }
+  if (features.github) {
+    lines.push(
+      '',
+      `Repository: ${features.github} is checked out in the task folder. Work on a new branch (git checkout -b dodo/<short-name>), commit with bash, and publish with open_pull_request (or push_branch to update a branch you already opened a pull request for). Both ask the user first; plain git push has no credentials. Never push to the default branch. Put the pull request link in the Summary.`,
     );
   }
   if (project) {
