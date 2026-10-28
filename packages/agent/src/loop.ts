@@ -12,7 +12,7 @@ import {
 } from './control-plane.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
-import { findTool, type ToolDef, toDeclarations } from './tools.js';
+import { findTool, type ToolContext, type ToolDef, toDeclarations } from './tools.js';
 
 export interface LoopOptions {
   control: ControlPlane;
@@ -23,6 +23,8 @@ export interface LoopOptions {
   workdir?: string;
   /** Vault values for tools that type into sites; every value it hands out is redacted. */
   secrets?: SecretResolver;
+  /** Screenshots of the browser page for ask_user; absent when the run has no browser. */
+  screenshot?: ToolContext['screenshot'];
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -243,6 +245,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 policy: opts.policy,
                 workdir: opts.workdir,
                 secrets: opts.secrets,
+                screenshot: opts.screenshot,
               };
               const claim = tool.policy?.(parsed.data, ctx);
               const decision = claim
@@ -286,7 +289,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 session.push({ role: 'user', parts: responses });
                 await trace.emit({
                   type: 'tool_result',
-                  summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}`,
+                  summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}${outcome.askUser.image ? ' (with screenshot)' : ''}`,
                   data: { name: fc.name },
                 });
                 pendingInput = { ...outcome.askUser, session };

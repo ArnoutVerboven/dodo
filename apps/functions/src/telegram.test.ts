@@ -141,6 +141,55 @@ describe('Always from Telegram', () => {
   });
 });
 
+describe('notifyTelegram with a picture', () => {
+  it('sends the photo before the question, and a reply to the photo finds the question', async () => {
+    const { db, g } = fakeDb({ telegram: { chatId: 42 } });
+    const d = deps(db);
+    const forms: Array<[string, FormData]> = [];
+    d.upload = vi.fn(async (method: string, form: FormData) => {
+      forms.push([method, form]);
+      return { message_id: 99 };
+    });
+    await notifyTelegram(d, {
+      title: 'Needs you: Engie bill',
+      body: 'Scan the QR code with itsme',
+      taskId: 't1',
+      appUrl: 'https://app',
+      input: { messageId: 'm1', kind: 'text' },
+      image: { data: Buffer.from([0x89, 0x50, 0x4e, 0x47]), mimeType: 'image/png' },
+    });
+    expect(forms).toHaveLength(1);
+    const [method, form] = forms[0] as [string, FormData];
+    expect(method).toBe('sendPhoto');
+    expect(form.get('chat_id')).toBe('42');
+    expect(form.get('caption')).toBe('Needs you: Engie bill');
+    const photo = form.get('photo') as File;
+    expect(photo.type).toBe('image/png');
+    expect(photo.size).toBe(4);
+    // The text with the question still follows, as before.
+    expect(d.send.mock.calls[0]?.[0]).toBe('sendMessage');
+    expect(g('telegramMessages/42_99')).toMatchObject({ taskId: 't1', inputMessageId: 'm1' });
+  });
+
+  it('still sends the question when the photo fails', async () => {
+    const { db } = fakeDb({ telegram: { chatId: 42 } });
+    const d = deps(db);
+    d.upload = vi.fn(async () => {
+      throw new Error('Telegram sendPhoto: Bad Request: PHOTO_INVALID_DIMENSIONS');
+    });
+    expect(
+      await notifyTelegram(d, {
+        title: 'T',
+        body: 'b',
+        taskId: 't1',
+        appUrl: 'https://app',
+        image: { data: Buffer.from([1]), mimeType: 'image/png' },
+      }),
+    ).toBe(true);
+    expect(d.send).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('notifyTelegram formatting', () => {
   it('renders Markdown as Telegram HTML', async () => {
     const { db } = fakeDb({ telegram: { chatId: 42 } });

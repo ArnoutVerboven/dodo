@@ -320,6 +320,11 @@ export async function addLinkArtifact(taskId: string, name: string, url: string)
   });
 }
 
+/** A download URL for a file the control plane stored, e.g. a question's screenshot. */
+export function storedFileUrl(storagePath: string): Promise<string> {
+  return getDownloadURL(ref(storage, storagePath));
+}
+
 async function uploadTaskFile(taskId: string, file: File) {
   const storagePath = `tasks/${taskId}/${Date.now()}-${file.name}`;
   await uploadBytes(ref(storage, storagePath), file, { contentType: file.type || undefined });

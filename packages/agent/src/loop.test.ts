@@ -79,6 +79,66 @@ describe('runAgent', () => {
     expect(result.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
   });
 
+  it('attaches a browser screenshot to ask_user, cropped when a ref is given, never in the session', async () => {
+    const control = new FakeControlPlane([
+      {
+        calls: [
+          {
+            name: 'ask_user',
+            args: {
+              kind: 'text',
+              prompt: 'Scan the QR code with itsme',
+              screenshot: true,
+              screenshotElement: 'QR code',
+              screenshotRef: 'e12',
+            },
+          },
+        ],
+      },
+    ]);
+    const store = new MemoryTaskStore(sampleTask());
+    const targets: unknown[] = [];
+    const result = await runAgent(
+      {
+        runId: 'r1',
+        task: store.task,
+        project: undefined,
+        model: 'm',
+        trigger: 'new',
+        session: [],
+      },
+      {
+        control,
+        store,
+        trace: new MemoryTrace(),
+        tools: taskTools,
+        heartbeatMs: 0,
+        screenshot: async (target) => {
+          targets.push(target);
+          return { mimeType: 'image/png', data: 'iVBORw0KGgo=' };
+        },
+      },
+    );
+    expect(result.reason).toBe('waiting_input');
+    expect(targets).toEqual([{ element: 'QR code', ref: 'e12' }]);
+    expect(control.inputRequests[0]?.image).toEqual({
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgo=',
+    });
+    expect(JSON.stringify(result.session)).not.toContain('iVBORw0KGgo=');
+  });
+
+  it('still asks when no screenshot can be taken', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Log in', screenshot: true } }] },
+    ]);
+    const result = await run();
+    expect(result.reason).toBe('waiting_input');
+    expect(control.inputRequests[0]?.prompt).toBe('Log in');
+    expect(control.inputRequests[0]?.image).toBeUndefined();
+    expect(JSON.stringify(result.session)).toContain('No screenshot could be taken');
+  });
+
   it('resumes with the answer', async () => {
     const { control, run } = setup([{ calls: [{ name: 'finish', args: { outcome: 'done' } }] }]);
     const prior = [

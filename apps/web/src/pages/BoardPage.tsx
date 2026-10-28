@@ -280,7 +280,7 @@ function Kanban({ tasks, projectName }: { tasks: Task[]; projectName: Map<string
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<TaskStatus | null>(null);
   return (
-    <div className="grid auto-cols-[minmax(240px,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2">
+    <div className="grid auto-cols-[minmax(200px,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2">
       {BOARD_COLUMNS.map((status) => {
         const col = tasks.filter(
           (t) => t.status === status || (status === 'todo' && t.status === 'backlog'),

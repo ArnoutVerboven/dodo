@@ -62,6 +62,7 @@ import {
   interruptRun,
   postUserMessage,
   replaceArtifact,
+  storedFileUrl,
   updateTask,
   useArtifacts,
   useBudgets,
@@ -736,12 +737,40 @@ function MessageView({
         <div className="prose-sm cursor-auto text-sm">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
+        {m.input?.image && <QuestionImage storagePath={m.input.image.storagePath} />}
         {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
         {m.input && (
           <InputRequestView taskId={taskId} message={m} open={inputOpen} latest={inputLatest} />
         )}
       </div>
     </div>
+  );
+}
+
+/** The screenshot the agent sent with a question (a QR code to scan, the icon to pick). */
+function QuestionImage({ storagePath }: { storagePath: string }) {
+  const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    storedFileUrl(storagePath).then(
+      (u) => live && setUrl(u),
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, [storagePath]);
+  if (failed) return <p className="mt-2 text-xs text-muted-foreground">Screenshot unavailable.</p>;
+  if (!url) return <div className="mt-2 h-40 w-64 animate-pulse rounded-md bg-muted" />;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="mt-2 inline-block cursor-zoom-in">
+      <img
+        src={url}
+        alt="Screenshot from the agent's browser"
+        className="max-h-96 max-w-full rounded-md border bg-white object-contain"
+      />
+    </a>
   );
 }
 

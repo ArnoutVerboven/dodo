@@ -1,4 +1,4 @@
-import { vaultRefs } from '@dodo/core';
+import { type ImageUpload, vaultRefs } from '@dodo/core';
 import { z } from 'zod';
 import { define, type PolicyClaim, type ToolContext, type ToolDef } from './tools.js';
 
@@ -30,8 +30,31 @@ export interface BrowserClient {
   callTool(
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ text: string; isError: boolean }>;
+  ): Promise<{ text: string; isError: boolean; images?: ImageUpload[] }>;
   close(): Promise<void>;
+}
+
+/** Decoded size cap for a screenshot sent with a question (Telegram takes photos up to 10 MB). */
+const MAX_IMAGE_BYTES = 6_000_000;
+
+/**
+ * A screenshot of the page the agent is on, or of one element (by its snapshot ref), for
+ * ask_user. Only the user sees it: it never goes back to the model.
+ */
+export async function takeScreenshot(
+  client: BrowserClient,
+  target?: { element: string; ref: string },
+): Promise<ImageUpload | undefined> {
+  const res = await client.callTool('browser_take_screenshot', {
+    type: 'png',
+    ...(target ? { element: target.element, ref: target.ref } : {}),
+  });
+  if (res.isError) return undefined;
+  return res.images?.find(
+    (i) =>
+      ['image/png', 'image/jpeg', 'image/webp'].includes(i.mimeType) &&
+      (i.data.length * 3) / 4 <= MAX_IMAGE_BYTES,
+  );
 }
 
 /** The MCP tools the agent gets, in the order the model sees them. */
@@ -227,13 +250,17 @@ export async function connectBrowser(url: string): Promise<BrowserClient> {
     },
     async callTool(name, args) {
       const res = (await client.callTool({ name, arguments: args })) as {
-        content?: Array<{ type: string; text?: string }>;
+        content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
         isError?: boolean;
       };
-      const text = (res.content ?? [])
+      const content = res.content ?? [];
+      const text = content
         .map((c) => (c.type === 'text' ? (c.text ?? '') : `[${c.type}]`))
         .join('\n');
-      return { text, isError: res.isError === true };
+      const images = content
+        .filter((c) => c.type === 'image' && c.data && c.mimeType)
+        .map((c) => ({ data: c.data, mimeType: c.mimeType }) as ImageUpload);
+      return { text, isError: res.isError === true, ...(images.length ? { images } : {}) };
     },
     async close() {
       await client.close().catch(() => {});

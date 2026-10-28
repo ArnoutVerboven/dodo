@@ -193,6 +193,8 @@ The agent writes to the task only through task tools, so the UI stays structured
 | `add_artifact` / `read_artifact`         | Attachments and links, as reference or output.                               |
 | `finish(outcome)`                        | Marks the task `review` or `done`.                                           |
 
+`ask_user` can also attach a screenshot of the browser page (or one element on it). The thread shows it and Telegram gets it as a photo, so a QR code or a "pick this icon" check can be done from your phone.
+
 The system prompt carries the communication style from task-ai (top-down, concise, ask only when a decision would otherwise waste your review time), rewritten for this contract.
 
 ---
