@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { browserReport, EXTENSION_ID, profilesWithExtension } from './browser.js';
+import {
+  browserReport,
+  EXTENSION_ID,
+  endedWaitingInput,
+  profilesWithExtension,
+} from './browser.js';
 
 const chrome = () => mkdtempSync(path.join(os.tmpdir(), 'dodo-chrome-'));
 
@@ -61,5 +66,12 @@ describe.runIf(process.platform === 'darwin')('browserReport on a Mac', () => {
 describe.runIf(process.platform !== 'darwin')('browserReport elsewhere', () => {
   it('says macOS only', () => {
     expect(browserReport({}).problems.join('\n')).toMatch(/macOS only/);
+  });
+});
+
+describe('endedWaitingInput', () => {
+  it("spots the worker's closing line for a question to the user", () => {
+    expect(endedWaitingInput('run abc ended: waiting_input after 7 steps')).toBe(true);
+    expect(endedWaitingInput('run abc ended: finished after 7 steps')).toBe(false);
   });
 });
