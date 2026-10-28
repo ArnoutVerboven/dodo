@@ -29,7 +29,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
       <header className="sticky top-0 z-10 border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-12 max-w-6xl items-center gap-1 px-4">
+        <div className="mx-auto flex h-12 max-w-[96rem] items-center gap-1 px-4">
           <span className="mr-4 font-semibold tracking-tight">dodo</span>
           <nav className="flex flex-1 gap-1 overflow-x-auto">
             {nav.map(({ to, label, icon: Icon }) => (
@@ -59,7 +59,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-[96rem] px-4 py-6">{children}</main>
     </div>
   );
 }
