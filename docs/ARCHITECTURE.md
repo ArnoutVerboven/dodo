@@ -189,7 +189,7 @@ The agent writes to the task only through task tools, so the UI stays structured
 | `update_summary(markdown)`               | Replaces the Summary: answer first, then supporting points (top-down, MECE). |
 | `set_status(text, nextAction, needsYou)` | One-line state and the single next action or decision.                       |
 | `post_message(markdown)`                 | Final message of the run in the thread (the collapsed message).              |
-| `ask_user(kind, prompt, options?)`       | `text`, `choice` (buttons), or `approval`. Ends the run; resumes on answer.  |
+| `ask_user(kind, prompt, options?, screenshot?)` | `text`, `choice` (buttons), or `approval`. Ends the run; resumes on answer. `screenshot` attaches the browser page (or one element), shown in the thread and sent as a Telegram photo: QR codes and "pick this icon" checks from your phone. |
 | `add_artifact` / `read_artifact`         | Attachments and links, as reference or output.                               |
 | `finish(outcome)`                        | Marks the task `review` or `done`.                                           |
 

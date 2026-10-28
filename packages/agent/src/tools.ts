@@ -1,4 +1,4 @@
-import type { FunctionDeclaration } from '@dodo/core';
+import type { FunctionDeclaration, ImageUpload } from '@dodo/core';
 import { vaultRef, vaultRule } from '@dodo/core';
 import type { ActionCategory, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
@@ -18,6 +18,8 @@ export interface ToolContext {
   workdir?: string;
   /** Vault values for tools that type into a site; absent when the run has no such tool. */
   secrets?: SecretResolver;
+  /** A screenshot of the browser page (or one element on it); absent when the run has no browser. */
+  screenshot?: (target?: { element: string; ref: string }) => Promise<ImageUpload | undefined>;
 }
 
 /** What a call does, for the policy engine: the rule tool name, the key rules match, the category. */
@@ -38,6 +40,8 @@ export type ToolOutcome =
         prompt: string;
         options?: string[];
         suggestedRule?: string;
+        /** Shown with the question in the app and sent as a photo on Telegram. */
+        image?: ImageUpload;
       };
     }
   | { result: Record<string, unknown>; finish: { outcome: 'done' | 'review' | 'blocked' } };
@@ -93,18 +97,44 @@ export const taskTools = [
   define({
     name: 'ask_user',
     description:
-      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run ends after this call; the answer arrives with the next run.',
+      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run ends after this call; the answer arrives with the next run. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. a QR code to scan, a code or the icon to pick in their phone app; they may be answering from their phone.',
     schema: z.object({
       kind: z.enum(['text', 'choice', 'approval']),
       prompt: z.string().min(1).max(4000),
       options: z.array(z.string().min(1)).min(2).max(6).optional(),
       /** For approvals: the permission rule "Always allow" would add, e.g. Bash(git push:*). */
       suggestedRule: z.string().optional(),
+      screenshot: z
+        .boolean()
+        .optional()
+        .describe('Attach a screenshot of the current browser page to the question.'),
+      screenshotElement: z
+        .string()
+        .optional()
+        .describe(
+          'With screenshotRef: only this element (e.g. "QR code"), described for the user.',
+        ),
+      screenshotRef: z
+        .string()
+        .optional()
+        .describe('The element ref from the page snapshot, to crop the screenshot to it.'),
     }),
-    async execute(args) {
+    async execute({ screenshot, screenshotElement, screenshotRef, ...question }, ctx) {
+      let image: ImageUpload | undefined;
+      let note = 'The run pauses here until the user answers.';
+      if (screenshot) {
+        const target =
+          screenshotRef && screenshotElement
+            ? { element: screenshotElement, ref: screenshotRef }
+            : undefined;
+        image = await ctx.screenshot?.(target).catch(() => undefined);
+        // A crop that failed (stale ref) still beats no picture: fall back to the whole page.
+        if (!image && target) image = await ctx.screenshot?.().catch(() => undefined);
+        if (!image) note += ' No screenshot could be taken, so the question was sent without it.';
+      }
       return {
-        result: { ok: true, note: 'The run pauses here until the user answers.' },
-        askUser: args,
+        result: { ok: true, note, ...(image ? { screenshot: 'attached' } : {}) },
+        askUser: { ...question, ...(image ? { image } : {}) },
       };
     },
   }),

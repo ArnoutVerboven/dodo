@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { type CostGate, computeCost } from '@dodo/budget';
 import {
   type Content,
@@ -27,6 +28,8 @@ export type Notify = (n: {
   body: string;
   taskId: string;
   input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+  /** A picture that goes with the question (a QR code, the icon to pick), sent as a photo. */
+  image?: { data: Buffer; mimeType: string };
 }) => Promise<void>;
 
 export interface RunControlDeps {
@@ -196,8 +199,11 @@ export async function requestInput(
 ) {
   const now = (deps.now ?? Date.now)();
   const sessionPath = await saveSession(deps, run.id, req.session);
-  const batch = deps.db.batch();
   const messageRef = deps.db.collection(paths.messages(run.taskId)).doc();
+  const image = req.image
+    ? await saveInputImage(deps, run.taskId, messageRef.id, req.image)
+    : undefined;
+  const batch = deps.db.batch();
   batch.create(
     messageRef,
     stripUndefined({
@@ -210,6 +216,7 @@ export async function requestInput(
         options: req.options,
         suggestedRule: req.suggestedRule,
         costEstimate: req.costEstimate,
+        image: image && { storagePath: image.storagePath, mimeType: image.mimeType },
       }),
       createdAt: now,
     }),
@@ -237,7 +244,42 @@ export async function requestInput(
     body: req.prompt,
     taskId: run.taskId,
     input: { messageId: messageRef.id, kind: req.kind, options: req.options },
+    image: image && { data: image.data, mimeType: image.mimeType },
   });
+}
+
+const IMAGE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
+
+/** A question's picture, next to the task's files, so the owner's app can show it. */
+async function saveInputImage(
+  deps: RunControlDeps,
+  taskId: string,
+  messageId: string,
+  image: NonNullable<RequestInputRequest['image']>,
+): Promise<{ storagePath: string; mimeType: string; data: Buffer } | undefined> {
+  const data = Buffer.from(image.data, 'base64');
+  if (!data.length) return undefined;
+  const storagePath = `tasks/${taskId}/inputs/${messageId}.${IMAGE_EXT[image.mimeType] ?? 'img'}`;
+  try {
+    await deps.storage
+      .bucket()
+      .file(storagePath)
+      .save(data, {
+        contentType: image.mimeType,
+        resumable: false,
+        // The web app reads it with getDownloadURL, which needs a download token.
+        metadata: { metadata: { firebaseStorageDownloadTokens: randomUUID() } },
+      });
+  } catch (err) {
+    // The question matters more than its picture.
+    deps.log?.('input image save failed', { err: String(err) });
+    return undefined;
+  }
+  return { storagePath, mimeType: image.mimeType, data };
 }
 
 const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {

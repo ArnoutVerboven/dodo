@@ -106,6 +106,13 @@ export const FinishRequest = z.object({
 });
 export type FinishRequest = z.infer<typeof FinishRequest>;
 
+/** Image bytes a worker sends with a question: base64, at most ~6 MB decoded. */
+export const ImageUpload = z.object({
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  data: z.string().min(1).max(8_000_000),
+});
+export type ImageUpload = z.infer<typeof ImageUpload>;
+
 export const RequestInputRequest = z.object({
   runId: z.string(),
   kind: z.enum(['text', 'choice', 'approval']),
@@ -113,6 +120,8 @@ export const RequestInputRequest = z.object({
   options: z.array(z.string()).optional(),
   suggestedRule: z.string().optional(),
   costEstimate: MicroEur.optional(),
+  /** A screenshot to show with the question (in the app and as a Telegram photo). */
+  image: ImageUpload.optional(),
   session: z.array(Content),
 });
 export type RequestInputRequest = z.infer<typeof RequestInputRequest>;
