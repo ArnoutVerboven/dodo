@@ -75,6 +75,21 @@ function budgetExhausted(key: string, room: MicroEur, needed: MicroEur, inputTok
   });
 }
 
+/** The scope with the least room; on a tie the task's own, which a top-up can fix. */
+export async function tightestScope(
+  costGate: Pick<CostGate, 'available'>,
+  scopes: Scope[],
+): Promise<{ key: string; room: MicroEur }> {
+  let tightest = { key: scopeKey(scopes[0] as Scope), room: Number.POSITIVE_INFINITY };
+  for (const s of scopes) {
+    const key = scopeKey(s);
+    const room = await costGate.available([s]);
+    if (room < tightest.room || (room === tightest.room && scopeKind(key) === 'task'))
+      tightest = { key, room };
+  }
+  return tightest;
+}
+
 export interface GatewayContext {
   scopes: Scope[];
   /** Absent for job runs, which are charged to the job's scope instead of a task. */
@@ -108,11 +123,7 @@ export async function generateWithBudget(
   );
   if (maxOutputTokens < MIN_USEFUL_OUTPUT) {
     // Name the tightest cap: a task top-up is no help when the month or the project is out.
-    let tightest = { key: scopeKey(ctx.scopes[0] as Scope), room: available };
-    for (const s of ctx.scopes) {
-      const room = await deps.costGate.available([s]);
-      if (room < tightest.room) tightest = { key: scopeKey(s), room };
-    }
+    const tightest = await tightestScope(deps.costGate, ctx.scopes);
     throw budgetExhausted(
       tightest.key,
       tightest.room,
