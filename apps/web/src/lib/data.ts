@@ -20,6 +20,7 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   type DocumentData,
   limit,
@@ -32,10 +33,11 @@ import {
   where,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import type { z } from 'zod';
 import { db, functions, storage } from './firebase';
+import { isTextual } from './files';
 
 export interface Live<T> {
   data: T;
@@ -301,10 +303,21 @@ export async function addLinkArtifact(taskId: string, name: string, url: string)
   });
 }
 
-export async function addFileArtifact(taskId: string, file: File) {
+async function uploadTaskFile(taskId: string, file: File) {
   const storagePath = `tasks/${taskId}/${Date.now()}-${file.name}`;
-  await uploadBytes(ref(storage, storagePath), file, { contentType: file.type });
+  await uploadBytes(ref(storage, storagePath), file, { contentType: file.type || undefined });
   const url = await getDownloadURL(ref(storage, storagePath));
+  return { storagePath, url };
+}
+
+/** Best effort: a stored file left behind costs a little space, never correctness. */
+async function removeStoredFile(storagePath?: string) {
+  if (!storagePath) return;
+  await deleteObject(ref(storage, storagePath)).catch(() => {});
+}
+
+export async function addFileArtifact(taskId: string, file: File) {
+  const { storagePath, url } = await uploadTaskFile(taskId, file);
   await addDoc(collection(db, paths.artifacts(taskId)), {
     kind: 'file',
     role: 'reference',
@@ -316,8 +329,30 @@ export async function addFileArtifact(taskId: string, file: File) {
   });
 }
 
-export async function deleteArtifact(taskId: string, artifactId: string) {
-  await deleteDoc(doc(db, paths.artifacts(taskId), artifactId));
+/**
+ * Replaces an artifact's content with an uploaded file, keeping its place and role. A note the
+ * agent wrote stays a note when the new file is text, so the agent keeps reading it directly.
+ */
+export async function replaceArtifact(taskId: string, artifact: Artifact, file: File) {
+  const target = doc(db, paths.artifacts(taskId), artifact.id);
+  if (artifact.kind === 'text' && isTextual(file.name, file.type)) {
+    await updateDoc(target, { name: file.name, text: await file.text() });
+    return;
+  }
+  const { storagePath, url } = await uploadTaskFile(taskId, file);
+  await updateDoc(target, {
+    kind: 'file',
+    name: file.name,
+    storagePath,
+    url,
+    text: deleteField(),
+  });
+  if (artifact.storagePath !== storagePath) await removeStoredFile(artifact.storagePath);
+}
+
+export async function deleteArtifact(taskId: string, artifact: Artifact) {
+  await deleteDoc(doc(db, paths.artifacts(taskId), artifact.id));
+  await removeStoredFile(artifact.storagePath);
 }
 
 export async function saveProject(project: Partial<Project> & { name: string }) {

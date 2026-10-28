@@ -1,5 +1,6 @@
 import {
   type AiConfig,
+  type Artifact,
   type Run,
   resolveAiConfig,
   type Task,
@@ -14,6 +15,7 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  Download,
   FileText,
   Folder,
   Link2,
@@ -26,6 +28,7 @@ import {
   Settings2,
   Square,
   Trash2,
+  Upload,
   User,
   X,
 } from 'lucide-react';
@@ -34,6 +37,7 @@ import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { ArtifactPreview, canPreview, downloadArtifact } from '@/components/ArtifactPreview';
 import { parseTags } from '@/components/NewTaskDialog';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import { SourceLink } from '@/components/SourceIcon';
@@ -57,6 +61,7 @@ import {
   deleteTask,
   interruptRun,
   postUserMessage,
+  replaceArtifact,
   updateTask,
   useArtifacts,
   useBudgets,
@@ -1042,10 +1047,57 @@ function Switch({
 function ArtifactsCard({ taskId }: { taskId: string }) {
   const { data: artifacts } = useArtifacts(taskId);
   const [url, setUrl] = useState('');
-  const [uploading, setUploading] = useState(false);
+  const [busy, setBusy] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [dragging, setDragging] = useState(false);
+  const [previewId, setPreviewId] = useState<string>();
+  const replacing = useRef<Artifact>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const preview = artifacts.find((a) => a.id === previewId);
+
+  const run = async (label: string, work: () => Promise<void>) => {
+    setBusy(label);
+    setError(undefined);
+    try {
+      await work();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  const upload = (files: File[]) =>
+    files.length > 0 &&
+    run(
+      files.length === 1 ? `Uploading ${files[0]?.name}…` : `Uploading ${files.length} files…`,
+      async () => {
+        for (const f of files) await addFileArtifact(taskId, f);
+      },
+    );
+  const startReplace = (a: Artifact) => {
+    replacing.current = a;
+    replaceInput.current?.click();
+  };
+
   return (
-    <Card>
+    <Card
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setDragging(false);
+        upload([...e.dataTransfer.files]);
+      }}
+      className={cn(dragging && 'ring-2 ring-primary')}
+    >
       <CardHeader
         title="Files & links"
         action={
@@ -1053,10 +1105,10 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
             size="icon"
             variant="ghost"
             className="-my-1 h-7 w-7"
-            disabled={uploading}
+            disabled={!!busy}
             onClick={() => fileInput.current?.click()}
-            aria-label="Attach file"
-            title="Attach file"
+            aria-label="Attach files"
+            title="Attach files"
           >
             <Paperclip className="h-4 w-4" />
           </Button>
@@ -1066,17 +1118,25 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
         <input
           ref={fileInput}
           type="file"
+          multiple
           className="hidden"
-          onChange={async (e) => {
+          onChange={(e) => {
+            const files = [...(e.target.files ?? [])];
+            e.target.value = '';
+            upload(files);
+          }}
+        />
+        <input
+          ref={replaceInput}
+          type="file"
+          className="hidden"
+          onChange={(e) => {
             const file = e.target.files?.[0];
-            if (!file) return;
-            setUploading(true);
-            try {
-              await addFileArtifact(taskId, file);
-            } finally {
-              setUploading(false);
-              e.target.value = '';
-            }
+            const target = replacing.current;
+            e.target.value = '';
+            replacing.current = undefined;
+            if (!file || !target) return;
+            run(`Replacing ${target.name}…`, () => replaceArtifact(taskId, target, file));
           }}
         />
         {artifacts.length > 0 && (
@@ -1091,27 +1151,67 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
                 ) : (
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 flex-1 truncate hover:underline"
-                >
-                  {a.name}
-                </a>
+                {canPreview(a) ? (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left hover:underline"
+                    onClick={() => setPreviewId(a.id)}
+                    title={`Preview ${a.name}`}
+                  >
+                    {a.name}
+                  </button>
+                ) : (
+                  <a
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 truncate hover:underline"
+                  >
+                    {a.name}
+                  </a>
+                )}
                 {a.role === 'output' && <span className="text-xs text-success">output</span>}
-                <button
-                  type="button"
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  onClick={() => deleteArtifact(taskId, a.id)}
-                  aria-label={`Remove ${a.name}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-danger" />
-                </button>
+                <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                  {canPreview(a) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => run(`Downloading ${a.name}…`, () => downloadArtifact(a))}
+                        aria-label={`Download ${a.name}`}
+                        title="Download"
+                      >
+                        <Download className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => startReplace(a)}
+                        aria-label={`Replace ${a.name}`}
+                        title="Replace with a file"
+                      >
+                        <Upload className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => run(`Removing ${a.name}…`, () => deleteArtifact(taskId, a))}
+                    aria-label={`Remove ${a.name}`}
+                    title="Remove"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-danger" />
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
         )}
+        {busy && (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {busy}
+          </p>
+        )}
+        {error && <p className="text-xs text-danger">Didn't work: {error}</p>}
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -1129,7 +1229,13 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
             onChange={(e) => setUrl(e.target.value)}
           />
         </form>
+        <p className="text-xs text-muted-foreground">Drop files here to attach them.</p>
       </CardBody>
+      <ArtifactPreview
+        artifact={preview}
+        onClose={() => setPreviewId(undefined)}
+        onReplace={startReplace}
+      />
     </Card>
   );
 }

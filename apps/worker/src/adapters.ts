@@ -81,6 +81,23 @@ export async function signInAsRun(clients: Clients, token: string) {
   await signInWithCustomToken(clients.auth, token);
 }
 
+const READ_LIMIT = 200_000;
+const TEXT_EXT =
+  /\.(md|markdown|mdx|txt|text|log|csv|tsv|json|jsonl|ya?ml|toml|ini|xml|html?|css|[cm]?js|tsx?|jsx|py|rb|go|rs|java|sh|sql|ics|vcf|srt)$/i;
+
+/** An uploaded file's text, through its download URL (which carries its own access token). */
+export async function readStoredFile(name: string, url: string, fetchFn: typeof fetch = fetch) {
+  const res = await fetchFn(url);
+  if (!res.ok) return `(file) ${name}: download failed with HTTP ${res.status}.`;
+  const type = res.headers.get('content-type') ?? '';
+  const textual = TEXT_EXT.test(name) || type.startsWith('text/') || type.includes('json');
+  if (!textual) return `(file) ${name} is ${type || 'binary'}, not text. Its download URL: ${url}`;
+  const text = await res.text();
+  return text.length > READ_LIMIT
+    ? `${text.slice(0, READ_LIMIT)}\n\n[cut at ${READ_LIMIT} of ${text.length} characters]`
+    : text;
+}
+
 /** Maps callable error codes to the typed errors the loop reacts to. */
 function translate(err: unknown): Error {
   const e = err as { code?: string; message?: string };
@@ -215,8 +232,8 @@ export class FirestoreTaskStore implements TaskStore {
     if (!snap.exists()) throw new Error(`No artifact ${id}`);
     const a = Artifact.parse({ id: snap.id, ...snap.data() });
     if (a.text) return a.text;
-    if (a.url)
-      return `(${a.kind}) ${a.url}\nReading file and link contents arrives with the browser/http tools in a later phase.`;
+    if (a.kind === 'file' && a.url) return readStoredFile(a.name, a.url);
+    if (a.url) return `(link) ${a.url}\nOpen it with the browser or http tools to read it.`;
     return '';
   }
   async addArtifact(a: { kind: 'link' | 'text'; name: string; url?: string; text?: string }) {
