@@ -66,9 +66,11 @@ import {
   useSettings,
   useTask,
 } from '@/lib/data';
+import { pendingInputs } from '@/lib/thread';
 import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
 
 const PENDING_INPUT_ID = 'pending-input';
+const REPLY_ID = 'thread-reply';
 
 export function TaskPage() {
   const { id } = useParams();
@@ -375,11 +377,13 @@ function StatusCard({ task }: { task: Task }) {
               size="sm"
               variant="ghost"
               className="-my-1 h-7"
-              onClick={() =>
-                document
-                  .getElementById(PENDING_INPUT_ID)
-                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }
+              onClick={() => {
+                // The latest open question, or the reply box when you already answered in the thread.
+                const target =
+                  document.getElementById(PENDING_INPUT_ID) ?? document.getElementById(REPLY_ID);
+                target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (target?.id === REPLY_ID) target.focus({ preventScroll: true });
+              }}
             >
               Answer <ArrowDown className="h-3.5 w-3.5" />
             </Button>
@@ -552,6 +556,7 @@ function Thread({ taskId }: { taskId: string }) {
   const byRun = new Map<string, ThreadMessage[]>();
   for (const m of messages) if (m.runId) byRun.set(m.runId, [...(byRun.get(m.runId) ?? []), m]);
   const liveRun = runs.find(isLive);
+  const inputs = pendingInputs(messages);
   const items: TimelineItem[] = [
     ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, message: m })),
     ...runs
@@ -597,6 +602,8 @@ function Thread({ taskId }: { taskId: string }) {
               run={run}
               traceFrom={from}
               traceTo={to}
+              inputOpen={inputs.open.has(m.id)}
+              inputLatest={inputs.latest === m.id}
             />
           );
         })}
@@ -611,6 +618,7 @@ function Thread({ taskId }: { taskId: string }) {
         >
           <div className="flex items-end gap-2 rounded-lg border bg-card p-1.5 focus-within:ring-2 focus-within:ring-primary/30">
             <Textarea
+              id={REPLY_ID}
               rows={1}
               className="max-h-48 min-h-9 resize-none border-0 field-sizing-content focus-visible:ring-0"
               placeholder={
@@ -676,16 +684,21 @@ function MessageView({
   run,
   traceFrom,
   traceTo,
+  inputOpen,
+  inputLatest,
 }: {
   taskId: string;
   message: ThreadMessage;
   run?: Run;
   traceFrom?: number;
   traceTo?: number;
+  /** An unanswered question with no later message from you. */
+  inputOpen: boolean;
+  /** The latest such question: the "Answer" button takes you here. */
+  inputLatest: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const Icon = m.author === 'user' ? User : Bot;
-  const pending = !!m.input && !m.input.answer;
   const toggle = run ? () => setOpen((v) => !v) : undefined;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: a shortcut for the steps button in the header
@@ -694,7 +707,7 @@ function MessageView({
       onClick={(e) => toggle && isPlainClick(e) && toggle()}
       className={cn(
         'group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60',
-        pending && 'bg-attention-bg/50',
+        inputOpen && 'bg-attention-bg/50',
         run && 'cursor-pointer',
         open && 'bg-accent/40',
       )}
@@ -719,7 +732,9 @@ function MessageView({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
         {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
-        {m.input && <InputRequestView taskId={taskId} message={m} />}
+        {m.input && (
+          <InputRequestView taskId={taskId} message={m} open={inputOpen} latest={inputLatest} />
+        )}
       </div>
     </div>
   );
@@ -781,8 +796,19 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
-function InputRequestView({ taskId, message }: { taskId: string; message: ThreadMessage }) {
+function InputRequestView({
+  taskId,
+  message,
+  open,
+  latest,
+}: {
+  taskId: string;
+  message: ThreadMessage;
+  open: boolean;
+  latest: boolean;
+}) {
   const req = message.input;
+  const [reopened, setReopened] = useState(false);
   const [text, setText] = useState('');
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
   // A vault entry is approved per task: the server ignores project and global rules for it.
@@ -799,6 +825,21 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
       </p>
     );
   }
+  if (!open && !reopened) {
+    // You posted a later message in the thread, which replies to this one.
+    return (
+      <p className="mt-2 text-xs text-muted-foreground">
+        You replied in the thread.{' '}
+        <button
+          type="button"
+          className="underline-offset-2 hover:text-foreground hover:underline"
+          onClick={() => setReopened(true)}
+        >
+          Answer this anyway
+        </button>
+      </p>
+    );
+  }
   const answer = (value: string, alwaysAllow?: { rule: string; scope: typeof scope }) =>
     answerInput(taskId, message.id, req, value, alwaysAllow);
   const sendText = () => {
@@ -807,7 +848,7 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
   };
   return (
     <div
-      id={PENDING_INPUT_ID}
+      id={latest ? PENDING_INPUT_ID : undefined}
       className="mt-2 scroll-mt-20 space-y-2 rounded-md border border-attention bg-attention-bg p-3 text-sm"
     >
       {req.prompt.trim() !== message.body.trim() && <p className="font-medium">{req.prompt}</p>}
