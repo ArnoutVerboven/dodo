@@ -154,6 +154,17 @@ export async function createApiToken(
   return res.data;
 }
 
+/** Task view › Compact: summarise the conversation now, or at the working run's next step. */
+export async function compactTask(
+  taskId: string,
+): Promise<{ state: 'requested' | 'nothing' | 'compacted'; before?: number; after?: number }> {
+  const res = await httpsCallable<
+    { taskId: string },
+    { state: 'requested' | 'nothing' | 'compacted'; before?: number; after?: number }
+  >(functions, 'taskCompact', { timeout: 300_000 })({ taskId });
+  return res.data;
+}
+
 export async function revokeApiToken(id: string) {
   await updateDoc(doc(db, paths.apiToken(id)), { revoked: true });
 }

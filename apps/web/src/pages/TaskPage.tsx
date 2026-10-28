@@ -1,5 +1,7 @@
 import {
   type AiConfig,
+  compactThreshold,
+  formatTokens,
   type Run,
   resolveAiConfig,
   type Task,
@@ -19,6 +21,7 @@ import {
   Link2,
   Loader2,
   type LucideIcon,
+  Minimize2,
   Paperclip,
   Pencil,
   Plus,
@@ -53,6 +56,7 @@ import {
   addFileArtifact,
   addLinkArtifact,
   answerInput,
+  compactTask,
   deleteArtifact,
   deleteTask,
   interruptRun,
@@ -934,6 +938,7 @@ function AiCard({ task }: { task: Task }) {
             </p>
           )}
         </div>
+        <ContextUsage task={task} />
         <details className="group/adv" open={dirty || undefined}>
           <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <Settings2 className="h-3.5 w-3.5" />
@@ -963,6 +968,79 @@ function AiCard({ task }: { task: Task }) {
         </details>
       </CardBody>
     </Card>
+  );
+}
+
+/**
+ * How much of the model's context window the conversation takes, as of its last model call,
+ * and Compact: replace the conversation with a summary (now, or at a working run's next step).
+ */
+function ContextUsage({ task }: { task: Task }) {
+  const ctx = task.context;
+  const [state, setState] = useState<
+    { kind: 'idle' } | { kind: 'busy' } | { kind: 'requested' } | { kind: 'note'; text: string }
+  >({ kind: 'idle' });
+  // A compaction that landed ends the "at the next step" wait.
+  useEffect(() => {
+    if (ctx?.compactedAt) setState({ kind: 'idle' });
+  }, [ctx?.compactedAt]);
+  if (!ctx?.max) return null;
+  const threshold = compactThreshold(ctx.max);
+  const compact = async () => {
+    setState({ kind: 'busy' });
+    try {
+      const r = await compactTask(task.id);
+      setState(
+        r.state === 'requested'
+          ? { kind: 'requested' }
+          : r.state === 'nothing'
+            ? { kind: 'note', text: 'Nothing to compact yet.' }
+            : { kind: 'idle' },
+      );
+    } catch (err) {
+      setState({ kind: 'note', text: (err as Error).message || 'Compaction failed.' });
+    }
+  };
+  return (
+    <div>
+      <div className="mb-1 flex justify-between text-xs">
+        <span className="text-muted-foreground">Context</span>
+        <span
+          title={`${ctx.tokens.toLocaleString()} of ${ctx.max.toLocaleString()} tokens${
+            ctx.model ? ` (${ctx.model})` : ''
+          }`}
+        >
+          {formatTokens(ctx.tokens)} of {formatTokens(ctx.max)} tokens
+        </span>
+      </div>
+      <Meter value={ctx.tokens} max={ctx.max} />
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0">
+          {state.kind === 'requested'
+            ? 'Compacting at the next step…'
+            : state.kind === 'note'
+              ? state.text
+              : ctx.compactedAt
+                ? `Compacted ${timeAgo(ctx.compactedAt)}; again at ${formatTokens(threshold)}`
+                : `Compacts automatically at ${formatTokens(threshold)}`}
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 shrink-0 px-2 text-xs"
+          onClick={() => void compact()}
+          disabled={state.kind === 'busy' || state.kind === 'requested'}
+          title="Replace the conversation with a summary, so each step sends less"
+        >
+          {state.kind === 'busy' ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Minimize2 className="h-3 w-3" />
+          )}
+          Compact
+        </Button>
+      </div>
+    </div>
   );
 }
 

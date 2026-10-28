@@ -109,6 +109,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       project,
       model: started.model,
       trigger: started.trigger,
+      contextWindow: started.contextWindow,
       session: started.session,
       answer: started.answer,
     },

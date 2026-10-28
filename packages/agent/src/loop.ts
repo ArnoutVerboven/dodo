@@ -1,4 +1,13 @@
-import type { Content, Part, RunEndReason } from '@dodo/core';
+import {
+  COMPACT_SYSTEM,
+  type Content,
+  compactedSession,
+  compactionRequest,
+  compactThreshold,
+  type Part,
+  type RunEndReason,
+  summaryText,
+} from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
 import {
   type ControlPlane,
@@ -86,15 +95,23 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   // tool call cannot let the lease expire.
   let latestFlags: Awaited<ReturnType<ControlPlane['heartbeat']>> | undefined;
   let heartbeatError: Error | undefined;
+  // The server hands a compaction request over once, possibly to a timer beat: keep it.
+  let compactAsked = false;
   const beat = async () => {
     try {
       latestFlags = await control.heartbeat();
+      if (latestFlags.compact) compactAsked = true;
     } catch (err) {
       heartbeatError = err as Error;
     }
   };
   const timer = opts.heartbeatMs ? setInterval(beat, opts.heartbeatMs) : undefined;
   const seenMessages = new Set<string>();
+
+  // Tokens the conversation held at the last model call: the task's figure for a restored one.
+  const window = input.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+  let contextTokens = input.session.length ? (input.task.context?.tokens ?? 0) : 0;
+  let autoCompact = true;
 
   let steps = 0;
   let nudges = 0;
@@ -147,6 +164,52 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         break;
       }
 
+      // Compaction: on request, or before the conversation grows past the threshold.
+      const asked = compactAsked;
+      if (
+        (asked || (autoCompact && contextTokens >= compactThreshold(window))) &&
+        session.length > 1
+      ) {
+        compactAsked = false;
+        const before = contextTokens;
+        const replaced = session.length;
+        let summary = '';
+        try {
+          const reply = await control.generate({
+            model: input.model,
+            systemInstruction: COMPACT_SYSTEM,
+            contents: compactionRequest(session),
+            purpose: 'compact',
+          });
+          summary = summaryText(redact(reply.content));
+        } catch (err) {
+          if (err instanceof GatewayBudgetError) {
+            finishWith('budget_exhausted', { error: err.message });
+            break;
+          }
+          if (err instanceof GatewayHaltedError) {
+            finishWith('halted');
+            break;
+          }
+          if (err instanceof LeaseLostError) {
+            finishWith('lease_lost');
+            break;
+          }
+          log('compaction failed', { err: String(err) });
+        }
+        // An empty or failed summary keeps the conversation as it is; the next step goes on.
+        if (summary) session.splice(0, session.length, ...compactedSession(summary));
+        else autoCompact = false; // no retry on every step
+        contextTokens = 0;
+        await trace.emit({
+          type: 'compacted',
+          summary: summary
+            ? `Compacted the conversation (${asked ? 'asked' : 'automatic'}): ${replaced} turns, ${Math.round(before / 1000)}k tokens → a summary`
+            : 'Compaction failed; continuing with the full conversation',
+          data: { asked, before, turns: replaced, summary: truncate(summary, 2000) },
+        });
+      }
+
       steps++;
       await trace.emit({
         type: 'model_call',
@@ -182,6 +245,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       }
       response = { ...response, content: redact(response.content) };
       session.push(response.content);
+      contextTokens = response.usage.inputTokens + response.usage.outputTokens;
       const calls = response.content.parts.filter((p) => p.functionCall);
       const text = response.content.parts
         .filter((p) => p.text && !p.thought)
@@ -352,6 +416,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   }
   return { reason: final.reason, steps, session };
 }
+
+/** Every current Gemini model takes 1M input tokens. */
+const DEFAULT_CONTEXT_WINDOW = 1_048_576;
 
 const user = (text: string): Content => ({ role: 'user', parts: [{ text }] });
 

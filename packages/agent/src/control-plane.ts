@@ -83,6 +83,8 @@ export interface RunInput {
   project: Project | undefined;
   model: string;
   trigger: 'new' | 'comment' | 'resume';
+  /** The model's context window in tokens; the conversation is compacted well before it. */
+  contextWindow?: number;
   /** Restored conversation for resumes and comment runs; empty for a new run. */
   session: Content[];
   /** The user's answer when resuming after `ask_user` or an approval card. */

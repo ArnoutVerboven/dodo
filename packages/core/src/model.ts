@@ -81,6 +81,17 @@ export const TaskSource = z.object({
 });
 export type TaskSource = z.infer<typeof TaskSource>;
 
+export const TaskContextUsage = z.object({
+  tokens: z.number().int().nonnegative().default(0),
+  /** The model's context window. */
+  max: z.number().int().positive().optional(),
+  model: z.string().optional(),
+  updatedAt: Timestamp.optional(),
+  /** When the conversation was last compacted (automatically or by hand). */
+  compactedAt: Timestamp.optional(),
+});
+export type TaskContextUsage = z.infer<typeof TaskContextUsage>;
+
 export const Task = z.object({
   id: z.string(),
   title: z.string(),
@@ -96,6 +107,8 @@ export const Task = z.object({
   statusLine: StatusLine.optional(),
   /** The run currently queued or working on this task; at most one. */
   activeRunId: z.string().optional(),
+  /** How much of the model's context window the conversation used at its last model call. */
+  context: TaskContextUsage.optional(),
   externalRefs: z.record(z.string(), z.string()).default({}),
   source: TaskSource.optional(),
   createdAt: Timestamp,
@@ -192,11 +205,14 @@ export const Run = z.object({
   device: z.string(),
   model: z.string(),
   state: RunState,
-  trigger: z.enum(['new', 'comment', 'resume']),
+  /** `compact`: the conversation was compacted by hand while no run was working. */
+  trigger: z.enum(['new', 'comment', 'resume', 'compact']),
   /** Lease generation: every worker write carries it and is rejected when it changed. */
   generation: z.number().int().nonnegative().default(0),
   lease: z.object({ owner: z.string(), expiresAt: Timestamp }).optional(),
   interrupt: z.boolean().default(false),
+  /** The owner asked to compact the conversation at the run's next step. */
+  compact: z.boolean().default(false),
   attempts: z.number().int().nonnegative().default(0),
   /** Cloud Run execution (remote) or process id (local) started for this run. */
   execution: z.string().optional(),

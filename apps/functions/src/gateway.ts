@@ -1,6 +1,7 @@
 import {
   BudgetExceededError,
   type CostGate,
+  contextWindow,
   HaltedError,
   maxAffordableOutputTokens,
   modelPrice,
@@ -168,6 +169,24 @@ export async function generateWithBudget(
         steps: FieldValue.increment(1),
         updatedAt: now(),
       });
+    }
+    if (ctx.runId && ctx.taskId) {
+      // An agent step's conversation (not a title): what the next call carries is this
+      // request plus the reply that joins it. A summary call says nothing of that size.
+      const usage =
+        req.purpose === 'compact'
+          ? { 'context.compactedAt': now() }
+          : {
+              'context.tokens': result.usage.inputTokens + result.usage.outputTokens,
+              'context.max': contextWindow(req.model),
+              'context.model': req.model,
+              'context.updatedAt': now(),
+            };
+      // A display value: never fail a paid-for call over it.
+      await deps.db
+        .doc(paths.task(ctx.taskId))
+        .update(usage)
+        .catch(() => undefined);
     }
     return {
       content: result.content,

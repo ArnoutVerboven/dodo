@@ -1,3 +1,4 @@
+export * from './compaction.js';
 export * from './device.js';
 export * from './ingest.js';
 export * from './model.js';

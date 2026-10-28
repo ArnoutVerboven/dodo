@@ -171,4 +171,75 @@ describe('toDeclarations', () => {
     expect(d?.parameters).toMatchObject({ type: 'object' });
     expect(JSON.stringify(d?.parameters)).not.toContain('$schema');
   });
+
+  it('compacts the conversation once it passes the threshold and carries on from the summary', async () => {
+    const { control, trace, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: 'Summary: read the document, next write the summary.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.inputTokens = 250_000;
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    const summaryCall = control.requests[1];
+    expect(summaryCall?.purpose).toBe('compact');
+    expect(summaryCall?.tools).toBeUndefined();
+    expect(summaryCall?.contents).toHaveLength(1);
+    expect(summaryCall?.contents[0]?.parts[0]?.text).toContain('[agent → set_status]');
+    // The next step sees only the summary, not the old turns.
+    const next = control.requests[2];
+    expect(next?.contents[0]?.parts[0]?.text).toContain('This conversation was compacted');
+    expect(next?.contents[0]?.parts[0]?.text).toContain('next write the summary');
+    expect(next?.contents).toHaveLength(1);
+    expect(trace.types()).toContain('compacted');
+  });
+
+  it('compacts on request from the heartbeat, below the threshold', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: 'Summary of the work.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    const heartbeat = control.heartbeat.bind(control);
+    control.heartbeat = async () => {
+      const r = await heartbeat();
+      return { ...r, compact: control.heartbeats === 2 };
+    };
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    expect(control.requests[1]?.purpose).toBe('compact');
+    expect(control.requests).toHaveLength(3);
+  });
+
+  it('keeps the conversation when the summary is empty and does not retry every step', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: '' },
+      { calls: [{ name: 'set_status', args: { text: 'Still going' } }] },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.inputTokens = 250_000;
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    expect(control.requests.filter((r) => r.purpose === 'compact')).toHaveLength(1);
+    expect(control.requests[2]?.contents.length).toBeGreaterThan(1);
+  });
+
+  it('compacts a restored conversation that is already over the threshold', async () => {
+    const { control, store, run } = setup([
+      { text: 'Summary.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    store.messages.push({ author: 'user', body: 'Go on', createdAt: 1 });
+    await run({
+      trigger: 'comment',
+      task: { ...store.task, context: { tokens: 300_000 } },
+      session: [
+        { role: 'user', parts: [{ text: 'Task' }] },
+        { role: 'model', parts: [{ text: 'Working on it' }] },
+      ],
+    });
+    expect(control.requests[0]?.purpose).toBe('compact');
+    expect(control.requests[0]?.contents[0]?.parts[0]?.text).toContain('Go on');
+  });
 });

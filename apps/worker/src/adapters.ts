@@ -122,6 +122,7 @@ export class CallableControlPlane implements ControlPlane {
       answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
       trigger: 'new' | 'comment' | 'resume';
       model: string;
+      contextWindow?: number;
       policy: {
         profile: 'agent-decides' | 'untrusted';
         allow: string[];
