@@ -27,7 +27,12 @@ export type Notify = (n: {
   title: string;
   body: string;
   taskId: string;
-  input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+  input?: {
+    messageId: string;
+    kind: 'text' | 'choice' | 'approval';
+    options?: string[];
+    suggestedRule?: string;
+  };
   /** A picture that goes with the question (a QR code, the icon to pick), sent as a photo. */
   image?: { data: Buffer; mimeType: string };
 }) => Promise<void>;
@@ -243,7 +248,12 @@ export async function requestInput(
     title: `Needs you: ${title}`,
     body: req.prompt,
     taskId: run.taskId,
-    input: { messageId: messageRef.id, kind: req.kind, options: req.options },
+    input: stripUndefined({
+      messageId: messageRef.id,
+      kind: req.kind,
+      options: req.options,
+      suggestedRule: req.suggestedRule,
+    }),
     image: image && { data: image.data, mimeType: image.mimeType },
   });
 }

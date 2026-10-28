@@ -87,6 +87,57 @@ describe('notifyTelegram', () => {
     expect(method).toBe('sendMessage');
     expect(body.chat_id).toBe(42);
     expect(JSON.stringify(body.reply_markup)).toContain('a:t1:m1:yes');
+    expect(JSON.stringify(body.reply_markup)).not.toContain('a:t1:m1:always');
+  });
+
+  it('adds an Always button when the approval has a rule to store', async () => {
+    const { db } = fakeDb({ telegram: { chatId: 42 } });
+    const d = deps(db);
+    await notifyTelegram(d, {
+      title: 'Needs you',
+      body: 'Allow Browser(navigate:x.com)?',
+      taskId: 't1',
+      appUrl: 'https://app',
+      input: { messageId: 'm1', kind: 'approval', suggestedRule: 'Browser(navigate:x.com)' },
+    });
+    const body = (d.send.mock.calls[0] as [string, Record<string, unknown>])[1];
+    expect(JSON.stringify(body.reply_markup)).toContain('a:t1:m1:always');
+  });
+});
+
+describe('Always from Telegram', () => {
+  const press = (d: ReturnType<typeof deps>) =>
+    handleTelegramUpdate(d, {
+      callback_query: {
+        id: 'q',
+        data: 'a:t1:m1:always',
+        message: { chat: { id: 7 }, message_id: 1 },
+      },
+    });
+  const answer = (g: (p: string) => Record<string, unknown>) =>
+    (g('tasks/t1/messages/m1').input as { answer: Record<string, unknown> }).answer;
+
+  it("stores the rule on the task's project", async () => {
+    const { db, g, docs } = fakeDb(
+      { telegram: { chatId: 7 } },
+      { input: { kind: 'approval', prompt: 'ok?', suggestedRule: 'Browser(navigate:x.com)' } },
+    );
+    docs.set('tasks/t1', { projectId: 'p1' });
+    await press(deps(db));
+    expect(answer(g)).toMatchObject({
+      value: 'yes',
+      alwaysAllow: { rule: 'Browser(navigate:x.com)', scope: 'project' },
+    });
+  });
+
+  it('stores it on the task when there is no project, and always for a vault entry', async () => {
+    const { db, g, docs } = fakeDb(
+      { telegram: { chatId: 7 } },
+      { input: { kind: 'approval', prompt: 'ok?', suggestedRule: 'Vault(v1)' } },
+    );
+    docs.set('tasks/t1', { projectId: 'p1' });
+    await press(deps(db));
+    expect(answer(g)).toMatchObject({ alwaysAllow: { scope: 'task' } });
   });
 });
 

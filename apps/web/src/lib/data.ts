@@ -19,6 +19,7 @@ import {
 } from '@dodo/core';
 import {
   addDoc,
+  arrayRemove,
   collection,
   deleteDoc,
   deleteField,
@@ -292,6 +293,20 @@ export async function answerInput(
   await updateDoc(doc(db, paths.messages(taskId), messageId), {
     'input.answer': clean({ value, alwaysAllow, answeredAt: Date.now() }),
   });
+}
+
+/** Takes back an "Always allow" answer: the rule leaves the task, project or global settings. */
+export async function removeAllowRule(
+  where: { scope: 'global' } | { scope: 'project' | 'task'; id: string },
+  rule: string,
+) {
+  const path =
+    where.scope === 'global'
+      ? paths.settings()
+      : where.scope === 'project'
+        ? paths.project(where.id)
+        : paths.task(where.id);
+  await updateDoc(doc(db, path), { allowRules: arrayRemove(rule), updatedAt: Date.now() });
 }
 
 export async function addLinkArtifact(taskId: string, name: string, url: string) {
