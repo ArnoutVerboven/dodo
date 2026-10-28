@@ -25,7 +25,7 @@ export function systemPrompt(
   if (features.browser) {
     lines.push(
       '',
-      "Browser: the browser_* tools drive the user's own Chrome, with their logins. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. When a page needs the user (a password, a code, an approval on their phone), do not guess: tell them which tab in ask_user, wait for the answer, then continue in the same tab. Never type credentials you were not given as a vault reference.",
+      "Browser: the browser_* tools drive a real Chrome window on the user's own computer, visible on their screen, with a profile that keeps logins from one task to the next. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. When a page needs the user (a password, a code, itsme or another app on their phone, a QR code), do not guess and do not give up: leave the page open, tell them in ask_user which tab to log in to and that the window is on their screen, wait for the answer, then continue in the same tab; the login then stays for later tasks. Never type credentials you were not given as a vault reference.",
     );
   }
   if (features.github) {
