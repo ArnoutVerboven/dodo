@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eur } from './model.js';
+import { eur, InputRequest } from './model.js';
 import { resolveAiConfig } from './resolve.js';
 
 const settings = {
@@ -34,5 +34,12 @@ describe('resolveAiConfig', () => {
     });
     expect(r.model).toBe('auto');
     expect(r.device).toBe('auto');
+  });
+});
+
+describe('InputRequest', () => {
+  it('keeps the top-up of a budget ask, so answering it in the app does not drop it', () => {
+    const parsed = InputRequest.parse({ kind: 'approval', prompt: 'Top up?', topUp: 500_000 });
+    expect(parsed.topUp).toBe(500_000);
   });
 });

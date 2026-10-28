@@ -137,6 +137,8 @@ export const InputRequest = z.object({
   /** For approvals: the rule that "Always allow" would add, e.g. `Bash(git push:*)`. */
   suggestedRule: z.string().optional(),
   costEstimate: MicroEur.optional(),
+  /** For a budget ask: what approving adds to the task's budget. */
+  topUp: MicroEur.optional(),
   answer: z
     .object({
       value: z.string(),

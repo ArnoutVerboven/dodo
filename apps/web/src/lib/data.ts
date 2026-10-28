@@ -287,8 +287,9 @@ export async function answerInput(
   alwaysAllow?: { rule: string; scope: 'task' | 'project' | 'global' },
 ) {
   if (!input) return;
+  // Only the answer: the request itself stays as the control plane wrote it.
   await updateDoc(doc(db, paths.messages(taskId), messageId), {
-    input: clean({ ...input, answer: { value, alwaysAllow, answeredAt: Date.now() } }),
+    'input.answer': clean({ value, alwaysAllow, answeredAt: Date.now() }),
   });
 }
 
