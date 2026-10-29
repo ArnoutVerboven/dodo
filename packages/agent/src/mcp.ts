@@ -45,6 +45,23 @@ export async function connectMcp(
   return wrapClient(client);
 }
 
+/**
+ * An MCP server running in this process (the worker's own Playwright MCP): wire a client to
+ * it over an in-memory transport, no port involved.
+ */
+export async function connectMcpServer(
+  server: { connect(transport: unknown): Promise<void> },
+  name = 'dodo-worker',
+): Promise<McpClient> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name, version: '0.1.0' });
+  await client.connect(clientTransport);
+  return wrapClient(client);
+}
+
 type SdkClient = {
   listTools(params?: { cursor?: string }): Promise<{
     tools: Array<{

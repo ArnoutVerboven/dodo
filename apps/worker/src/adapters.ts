@@ -191,6 +191,17 @@ export class CallableControlPlane implements ControlPlane {
       throw new Error((err as Error).message || 'Vault value not available');
     }
   }
+  /** The task's remote-browser logins: `get` before the browser starts, `put` when the run ends. */
+  async browserState(action: 'get'): Promise<string | undefined>;
+  async browserState(action: 'put', state: string): Promise<undefined>;
+  async browserState(action: 'get' | 'put', state?: string): Promise<string | undefined> {
+    const r = await httpsCallable(this.fns, 'runBrowserState', { timeout: 60_000 })({
+      runId: this.runId,
+      action,
+      ...(state !== undefined ? { state } : {}),
+    });
+    return (r.data as { state?: string }).state;
+  }
   /** A token for the run's own repo (docs/GITHUB.md); refusals come back as plain Errors. */
   async githubToken(access: 'read' | 'write'): Promise<GitHubTokenResponse> {
     try {

@@ -157,6 +157,26 @@ export const RequestInputResponse = z.object({
 });
 export type RequestInputResponse = z.infer<typeof RequestInputResponse>;
 
+/**
+ * The remote browser's logins (Playwright `storageState`: cookies and local storage) for the
+ * run's task, kept between runs by the control plane, encrypted. `get` at the start of a run
+ * with a browser, `put` at its end; the Mac keeps its own Chrome profile instead.
+ */
+export const BrowserStateRequest = z.object({
+  runId: z.string(),
+  action: z.enum(['get', 'put']),
+  /** `put`: the storage state as JSON. */
+  state: z.string().max(2_000_000).optional(),
+});
+export type BrowserStateRequest = z.infer<typeof BrowserStateRequest>;
+
+export const BrowserStateResponse = z.object({
+  ok: z.boolean(),
+  /** `get`: the stored state as JSON, when the task has one. */
+  state: z.string().optional(),
+});
+export type BrowserStateResponse = z.infer<typeof BrowserStateResponse>;
+
 /** One step in the live trace of a run. Written per step, never per token. */
 export const RunEventType = z.enum([
   'run_started',

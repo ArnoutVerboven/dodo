@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  BrowserStateRequest,
   DeviceClaimRequest,
   DeviceEgressRequest,
   DeviceRegisterRequest,
@@ -28,6 +29,13 @@ import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/fire
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import {
+  firestoreDevKey,
+  loadBrowserState,
+  onTaskClosed,
+  saveBrowserState,
+  secretManagerKey,
+} from './browser-state.js';
 import { claimOwnership as claim } from './claim-ownership.js';
 import { compactTask } from './compact.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
@@ -271,6 +279,28 @@ export const runRequestInput = onCall(
   },
 );
 
+/** The remote browser's logins for the run's task: restored at start, kept at the end. */
+const browserStateDeps = () => ({
+  storage: getStorage(),
+  key: isEmulator ? firestoreDevKey(getFirestore()) : secretManagerKey(projectId()),
+  log: logger.warn,
+});
+
+export const runBrowserState = onCall(
+  { serviceAccount: GATEWAY_SA, memory: '512MiB', maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<BrowserStateRequest>(BrowserStateRequest, request.data);
+    const run = await loadRunForCaller(getFirestore(), caller(request.auth), req.runId);
+    const deps = browserStateDeps();
+    if (req.action === 'get') {
+      return { ok: true, state: await loadBrowserState(deps, run.taskId) };
+    }
+    if (!req.state) throw new HttpsError('invalid-argument', 'put needs a state');
+    await saveBrowserState(deps, run.taskId, req.state);
+    return { ok: true };
+  },
+);
+
 export const runFinish = onCall(
   { serviceAccount: GATEWAY_SA, memory: '512MiB', maxInstances: 5 },
   async (request) => {
@@ -365,6 +395,12 @@ export const onTaskWritten = onDocumentWritten(
       : undefined;
     // biome-ignore lint/suspicious/noExplicitAny: Firestore data is validated downstream
     await onTaskChanged(triggerDeps(db), before as any, after as any);
+    await onTaskClosed(
+      browserStateDeps(),
+      event.params.taskId,
+      before as { status?: string } | undefined,
+      after as { status?: string } | undefined,
+    );
     if (after && !before && (after as { titleSource?: string }).titleSource === 'ai') {
       await generateTitle(
         { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
