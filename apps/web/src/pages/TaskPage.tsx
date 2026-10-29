@@ -873,7 +873,10 @@ function InputRequestView({
             {' '}
             (always allow <code className="text-xs">{req.answer.alwaysAllow.rule}</code>{' '}
             {SCOPE_LABEL[req.answer.alwaysAllow.scope]},{' '}
-            <Link to="/settings#allowed-actions" className="underline underline-offset-2">
+            <Link
+              to="/tools?tab=permissions#allowed-actions"
+              className="underline underline-offset-2"
+            >
               manage
             </Link>
             )

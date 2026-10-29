@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TaskPage } from './pages/TaskPage';
+import { ToolsPage } from './pages/ToolsPage';
 
 function Gate() {
   const { user, isOwner, loading } = useAuth();
@@ -20,6 +21,7 @@ function Gate() {
         <Route path="/tasks/:id" element={<TaskPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/tools" element={<ToolsPage />} />
         <Route path="/budget" element={<BudgetPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

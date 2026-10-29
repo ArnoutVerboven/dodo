@@ -17,10 +17,12 @@
     "@google-cloud/run": "^4.2.0",
     "@google-cloud/secret-manager": "^6.3.0",
     "@google/genai": "^1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "firebase-admin": "^13.5.0",
     "firebase-functions": "^7.4.0"
   },
   "devDependencies": {
+    "@dodo/agent": "workspace:*",
     "@dodo/budget": "workspace:*",
     "@dodo/core": "workspace:*",
     "@dodo/jobs": "workspace:*",

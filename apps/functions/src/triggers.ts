@@ -250,8 +250,9 @@ export async function onInputAnswered(
 
   if (after.input?.topUp) {
     if (!/^(y|yes|approve|ok)/i.test(answer.value)) {
+      // Not `todo`: that starts a run, which would hit the same budget and ask again.
       await db.doc(paths.task(taskId)).update({
-        status: 'todo',
+        status: 'needs_input',
         statusLine: { text: 'Stopped: budget not topped up', needsYou: false },
         updatedAt: now,
       });

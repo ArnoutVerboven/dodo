@@ -17,6 +17,7 @@ import {
 import { hostAllowedBy } from '@dodo/policy';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { mcpHostAllowed } from './mcp.js';
 import { policyForRun } from './run-control.js';
 import { type Caller, LEASE_MS, runUid, stripUndefined } from './runtime.js';
 
@@ -216,7 +217,9 @@ export async function egressCheck(
     answer?.suggestedRule && /^(y|yes|ok|approve|allow)/i.test(String(answer.value ?? '').trim())
       ? [answer.suggestedRule]
       : [];
-  const by = hostAllowedBy({ ...policy, allow: [...policy.allow, ...approved] }, req.host);
+  const by =
+    hostAllowedBy({ ...policy, allow: [...policy.allow, ...approved] }, req.host) ??
+    (await mcpHostAllowed(deps.db, run, req.host).catch(() => undefined));
   deps.log?.('device egress', { deviceId: req.deviceId, runId: req.runId, host: req.host, by });
   return by ? { allow: true, by } : { allow: false };
 }
