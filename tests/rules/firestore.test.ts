@@ -280,6 +280,54 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(owner(), 'githubDev/app')));
   });
 
+  it('lets a Mac list its own local MCP servers and their tools, not turn them on', async () => {
+    const local = {
+      name: 'Outlook',
+      slug: 'outlook',
+      runsOn: 'local',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['outlook-mcp'],
+      deviceId: 'd1',
+      enabled: true,
+      disabledTools: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    await assertSucceeds(setDoc(doc(device(), 'mcpServers/d1-outlook'), local));
+    await assertSucceeds(getDoc(doc(device(), 'mcpServers/d1-outlook')));
+    await assertSucceeds(
+      getDocs(query(collection(device(), 'mcpServers'), where('deviceId', '==', 'd1'))),
+    );
+    await assertSucceeds(
+      updateDoc(doc(device(), 'mcpServers/d1-outlook'), {
+        catalog: { tools: [], fetchedAt: 2, by: 'mac:d1' },
+        updatedAt: 2,
+      }),
+    );
+    await assertFails(updateDoc(doc(device(), 'mcpServers/d1-outlook'), { disabledTools: ['x'] }));
+    // Not under another Mac's name, not as a remote server, not for a revoked Mac.
+    await assertFails(setDoc(doc(device(), 'mcpServers/d2-outlook'), { ...local, deviceId: 'd2' }));
+    await assertFails(setDoc(doc(device(), 'mcpServers/d1-x'), { ...local, runsOn: 'remote' }));
+    await assertFails(
+      setDoc(doc(device('d2'), 'mcpServers/d2-outlook'), { ...local, deviceId: 'd2' }),
+    );
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'mcpServers/linear'), {
+        slug: 'linear',
+        runsOn: 'remote',
+        url: 'https://mcp.linear.app/mcp',
+      });
+    });
+    await assertFails(getDoc(doc(device(), 'mcpServers/linear')));
+    await assertFails(getDoc(doc(run(), 'mcpServers/linear')));
+    await assertSucceeds(updateDoc(doc(owner(), 'mcpServers/d1-outlook'), { enabled: false }));
+    await assertSucceeds(setDoc(doc(owner(), 'toolsets/mail'), { name: 'Mail', tools: [] }));
+    await assertSucceeds(setDoc(doc(owner(), 'settings/tools'), { disabledBuiltins: ['bash'] }));
+    await assertFails(getDoc(doc(run(), 'toolsets/mail')));
+    await assertFails(getDoc(doc(stranger(), 'settings/tools')));
+  });
+
   it('denies unknown collections', async () => {
     await assertFails(setDoc(doc(owner(), 'anything/x'), { a: 1 }));
   });

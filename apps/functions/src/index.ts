@@ -8,6 +8,8 @@ import {
   GenerateRequest,
   GitHubTokenRequest,
   HeartbeatRequest,
+  McpServerIdRequest,
+  McpServerSaveRequest,
   paths,
   RequestInputRequest,
   VaultDeleteRequest,
@@ -54,6 +56,7 @@ import {
   tick,
 } from './jobs.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
+import { deleteMcpServer, type McpDeps, McpError, refreshMcpServer, saveMcpServer } from './mcp.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
 import { needsBrowser } from './routing.js';
@@ -155,6 +158,7 @@ const controlDeps = () => {
     storage: getStorage(),
     costGate: costGateFor(db),
     log: logger.warn,
+    mcpSecrets: vaultDeps().secrets,
     notify: async (n: Omit<Parameters<typeof notifyTelegram>[1], 'appUrl'>) => {
       const full = { ...n, appUrl: APP_URL.value() };
       await Promise.all([notifyTelegram(telegramDeps(), full), notifyPush(pushDeps(), full)]).catch(
@@ -568,6 +572,55 @@ export const vaultResolve = onCall(
     const deps = vaultDeps();
     const run = await loadRunForCaller(deps.db, c, req.runId);
     return vaultCall(() => resolveVaultValue(deps, run, req));
+  },
+);
+
+/* ------------------------------ tools ---------------------------- */
+
+const mcpDeps = (): McpDeps => ({
+  ...vaultDeps(),
+  connect: async (url, headers) => {
+    const { connectMcp } = await import('@dodo/agent');
+    return connectMcp(url, { headers, name: 'dodo-tools' });
+  },
+});
+
+const mcpCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof McpError) throw new HttpsError(err.code, err.message);
+    throw err;
+  }
+};
+
+/** Tools › Add server: a remote MCP server; its header goes to Secret Manager. */
+export const mcpServerSave = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1, timeoutSeconds: 60 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const req = parseOr<McpServerSaveRequest>(McpServerSaveRequest, request.data);
+    return mcpCall(() => saveMcpServer(mcpDeps(), req));
+  },
+);
+
+export const mcpServerDelete = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { id } = parseOr<{ id: string }>(McpServerIdRequest, request.data);
+    await mcpCall(() => deleteMcpServer(mcpDeps(), id));
+    return { ok: true };
+  },
+);
+
+/** Tools › Refresh: fetch a remote server's tools now, or ask its Mac to for a local one. */
+export const mcpRefresh = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2, timeoutSeconds: 60 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { id } = parseOr<{ id: string }>(McpServerIdRequest, request.data);
+    return mcpCall(() => refreshMcpServer(mcpDeps(), id));
   },
 );
 

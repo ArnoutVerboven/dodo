@@ -54,6 +54,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   schema: S;
   /** The JSON schema the model sees, when it is not the zod schema's (tools proxied from MCP). */
   parameters?: Record<string, unknown>;
+  /** A full JSON schema the model sees as is (MCP servers' tools; Gemini's parametersJsonSchema). */
+  jsonSchema?: Record<string, unknown>;
   /** Absent for task tools: they cannot reach anything outside the task. */
   policy?: (args: z.infer<S>, ctx: ToolContext) => PolicyClaim;
   execute(args: z.infer<S>, ctx: ToolContext): Promise<ToolOutcome>;
@@ -277,6 +279,10 @@ export const taskTools = [
 
 export function toDeclarations(tools: ToolDef[]): FunctionDeclaration[] {
   return tools.map((t) => {
+    if (t.jsonSchema) {
+      const { $schema: _s, ...schema } = t.jsonSchema;
+      return { name: t.name, description: t.description, parametersJsonSchema: schema };
+    }
     if (t.parameters) return { name: t.name, description: t.description, parameters: t.parameters };
     const schema = z.toJSONSchema(t.schema, { target: 'openapi-3.0', io: 'input' }) as Record<
       string,

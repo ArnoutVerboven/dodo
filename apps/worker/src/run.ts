@@ -7,17 +7,29 @@ import {
   authHeaderArgs,
   browserTools,
   connectBrowser,
+  connectMcp,
   createSecretResolver,
   execTools,
   type GitHubAccess,
   githubTools,
   inheritedEnv,
+  type McpClient,
+  mcpTools,
   requestBrowserTool,
   runAgent,
+  type ToolDef,
   takeScreenshot,
   taskTools,
 } from '@dodo/agent';
-import { type GitHubTokenResponse, Project, repoFor, Task } from '@dodo/core';
+import {
+  CORE_TOOLS,
+  type GitHubTokenResponse,
+  Project,
+  type RunToolAccess,
+  repoFor,
+  Task,
+  toolAllowed,
+} from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
 import {
@@ -133,7 +145,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
           return undefined;
         })
       : undefined;
+  const mcp = await connectMcpServers(started.tools, env);
   const notes = [
+    ...mcp.notes,
     repo
       ? `Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.`
       : undefined,
@@ -157,7 +171,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
           openPullRequest: (req) => control.githubOpenPr(req),
         }
       : undefined;
-  const tools = [
+  const builtins = [
     ...taskTools,
     ...execTools,
     ...(githubAccess ? githubTools(githubAccess) : []),
@@ -165,6 +179,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     // Browser "auto" without one yet: the agent can step up when the task needs it.
     ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
   ];
+  const tools = [...filterBuiltins(builtins, started.tools), ...mcp.tools];
+  if (started.tools?.toolsets.length)
+    console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
 
   const result = await runAgent(
     {
@@ -196,8 +213,54 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   );
   await browser?.close();
   await headless?.stop();
+  await Promise.all(mcp.clients.map((c) => c.close()));
   console.log(`run ${env.runId} ended: ${result.reason} after ${result.steps} steps`);
   return result.reason;
+}
+
+/** The built-ins the Tools view leaves this run; the core task tools always stay. */
+export function filterBuiltins(tools: ToolDef[], access: RunToolAccess | undefined): ToolDef[] {
+  if (!access) return tools;
+  return tools.filter((t) => CORE_TOOLS.includes(t.name) || toolAllowed(access.builtins, t.name));
+}
+
+const MCP_CONNECT_MS = 15_000;
+
+/**
+ * Connect to the MCP servers this run may use: remote ones directly, this Mac's local ones
+ * through the daemon. A server that does not answer is left out, and the agent is told.
+ */
+async function connectMcpServers(
+  access: RunToolAccess | undefined,
+  env: WorkerEnv,
+): Promise<{ tools: ToolDef[]; clients: McpClient[]; notes: string[] }> {
+  const out = { tools: [] as ToolDef[], clients: [] as McpClient[], notes: [] as string[] };
+  const taken = new Set<string>();
+  for (const server of access?.mcp ?? []) {
+    const url = server.runsOn === 'local' ? env.mcpUrls?.[server.id] : server.url;
+    if (!url) {
+      out.notes.push(
+        `MCP server ${server.name} is not running on this Mac; its tools are missing.`,
+      );
+      continue;
+    }
+    try {
+      const client = await Promise.race([
+        connectMcp(url, {
+          headers: server.authorization ? { Authorization: server.authorization } : undefined,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('no answer')), MCP_CONNECT_MS),
+        ),
+      ]);
+      out.clients.push(client);
+      out.tools.push(...(await mcpTools(client, server, taken)));
+    } catch (err) {
+      console.log(`mcp ${server.slug} unavailable: ${(err as Error).message}`);
+      out.notes.push(`MCP server ${server.name} is unavailable (${(err as Error).message}).`);
+    }
+  }
+  return out;
 }
 
 /**
@@ -242,6 +305,9 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       : undefined,
     browserUrl: process.env.DODO_BROWSER_URL || undefined,
     headlessBrowser: process.env.DODO_BROWSER === 'headless',
+    mcpUrls: process.env.DODO_MCP_URLS
+      ? (JSON.parse(process.env.DODO_MCP_URLS) as Record<string, string>)
+      : undefined,
     ...overrides,
   };
 }

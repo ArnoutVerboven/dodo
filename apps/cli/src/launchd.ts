@@ -60,3 +60,16 @@ export function uninstallAgent() {
 }
 
 export const agentInstalled = () => existsSync(plistPath());
+
+/** Restart the background daemon so it reads its config again; false when none is installed. */
+export function restartAgent(): boolean {
+  if (!agentInstalled()) return false;
+  try {
+    execFileSync('launchctl', ['kickstart', '-k', `gui/${process.getuid?.() ?? 501}/${LABEL}`], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}

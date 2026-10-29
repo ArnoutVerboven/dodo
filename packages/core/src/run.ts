@@ -36,6 +36,8 @@ export const FunctionDeclaration = z.object({
   name: z.string(),
   description: z.string(),
   parameters: z.record(z.string(), z.unknown()).optional(),
+  /** Full JSON schema instead of `parameters` (MCP servers' own schemas, passed as they are). */
+  parametersJsonSchema: z.record(z.string(), z.unknown()).optional(),
 });
 export type FunctionDeclaration = z.infer<typeof FunctionDeclaration>;
 

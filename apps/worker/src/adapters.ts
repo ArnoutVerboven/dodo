@@ -19,6 +19,7 @@ import {
   paths,
   type RequestInputRequest,
   type RunEvent,
+  type RunToolAccess,
   type StatusLine,
   Task,
   VaultEntry,
@@ -60,6 +61,8 @@ export interface WorkerEnv {
   browserUrl?: string;
   /** The browser worker image: start headless Chromium for runs that want a browser. */
   headlessBrowser?: boolean;
+  /** Mac: the daemon's endpoints for this Mac's local MCP servers, by server id. */
+  mcpUrls?: Record<string, string>;
 }
 
 export interface Clients {
@@ -150,6 +153,7 @@ export class CallableControlPlane implements ControlPlane {
         deny: string[];
         allowedHosts: string[];
       };
+      tools?: RunToolAccess;
     }>('runStart', { runId: this.runId });
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {

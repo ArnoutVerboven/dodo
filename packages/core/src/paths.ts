@@ -17,6 +17,12 @@ export const paths = {
   runs: () => 'runs',
   run: (id: string) => `runs/${id}`,
   runEvents: (runId: string) => `runs/${runId}/events`,
+  /** Tools view: built-ins turned off, MCP servers, toolsets. */
+  toolSettings: () => 'settings/tools',
+  mcpServers: () => 'mcpServers',
+  mcpServer: (id: string) => `mcpServers/${id}`,
+  toolsets: () => 'toolsets',
+  toolset: (id: string) => `toolsets/${id}`,
   devices: () => 'devices',
   device: (id: string) => `devices/${id}`,
   /** Storage paths. */

@@ -30,5 +30,6 @@ export function resolveAiConfig(
     folder: pick('folder'),
     browser: pick('browser'),
     tools: pick('tools'),
+    toolsets: pick('toolsets'),
   };
 }

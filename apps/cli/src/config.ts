@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { LocalMcpConfig } from './mcp.js';
 
 /** Everything the daemon needs besides its sign-in, in ~/.dodo/config.json. */
 export interface CliConfig {
@@ -14,6 +15,8 @@ export interface CliConfig {
   folders: string[];
   /** The browser: dodo's own Chrome window, or your Chrome through the Playwright Extension. */
   browser?: { mode?: 'window' | 'extension'; token?: string };
+  /** MCP servers this Mac runs for the agent (`dodo mcp add`); env values never leave the Mac. */
+  mcp?: LocalMcpConfig[];
 }
 
 export const VERSION = '0.1.0';

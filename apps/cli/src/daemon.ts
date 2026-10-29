@@ -25,6 +25,7 @@ import {
 } from './browser.js';
 import { type CliConfig, chromeProfile, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
+import { LocalMcpHost } from './mcp.js';
 import {
   finishSandboxed,
   sandboxConfig,
@@ -105,8 +106,11 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       },
     );
   }
+  // Local MCP servers: listed in the Tools view, started when a run first needs them.
+  const mcp = new LocalMcpHost(clients.db, config.deviceId, config.mcp ?? [], log);
+  await mcp.start().catch((err: Error) => log(`mcp: ${err.message}`));
   log(
-    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, waiting for runs`,
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, ${mcp.count} MCP server${mcp.count === 1 ? '' : 's'}, waiting for runs`,
   );
 
   return new Promise<StopReason>((resolve) => {
@@ -120,7 +124,9 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       log(why);
       for (const s of subs) s();
       clearInterval(beat);
-      void Promise.all([stopSandbox(), browserServer?.stop()]).then(() => resolve(reason));
+      void Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop()]).then(() =>
+        resolve(reason),
+      );
     };
 
     // Presence. Firestore rules let the device write only these fields on its own document.
@@ -205,6 +211,10 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
               }
             }
           }
+          const mcpUrls = await mcp.urlsForRun().catch((err: Error) => {
+            log(`run ${runId}: mcp: ${err.message}; running without local MCP servers`);
+            return {};
+          });
           const { code, askedUser } = await execute(
             config,
             runId,
@@ -212,6 +222,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             log,
             report.state === 'on',
             browserUrl,
+            mcpUrls,
           );
           current = undefined;
           // The agent stopped to ask something while it had the window: put it in front of them.
@@ -305,6 +316,7 @@ async function execute(
   log: (m: string) => void,
   sandboxed: boolean,
   browserUrl?: string,
+  mcpUrls: Record<string, string> = {},
 ): Promise<{ code: number | null; askedUser: boolean }> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
@@ -329,10 +341,12 @@ async function execute(
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;
   if (process.env.TMPDIR) env.TMPDIR = process.env.TMPDIR;
   if (browserUrl) env.DODO_BROWSER_URL = browserUrl;
+  const local = Object.keys(mcpUrls).length > 0;
+  if (local) env.DODO_MCP_URLS = JSON.stringify(mcpUrls);
   const argv = sandboxed
     ? await sandboxedArgv([process.execPath, entry], workRoot(), runId, {
         proxyLoopback: !!config.emulatorHost,
-        localBinding: !!browserUrl,
+        localBinding: !!browserUrl || local,
       })
     : [process.execPath, entry];
   return new Promise((resolve) => {
