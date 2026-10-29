@@ -134,6 +134,8 @@ export class FirestoreJobStore implements JobStore {
     const snap = await this.db
       .collection(jobPaths.threads(jobId))
       .where('open', '==', true)
+      // Least recently checked first: every check touches updatedAt, so all links get a turn.
+      .orderBy('updatedAt', 'asc')
       .limit(limit)
       .get();
     return snap.docs.flatMap((d) => {

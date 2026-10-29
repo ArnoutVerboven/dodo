@@ -12,6 +12,10 @@ Jobs are a separate feature: their own tab, their own Firestore collections, the
 Cloud Scheduler (every 15 min) ─► jobsTick ─► for each enabled job that is due
                                                │  lock (lease) per job
                                                ▼
+                         sync existing tasks with their source (§3a, sync.ts)
+                           deleted → cancel task · you replied → recheck → done or next step
+                                               │
+                                               ▼
                          source scan (Gmail inbox, WhatsApp via Mac, …)
                                                │  cheap filters, no model
                                                ▼
@@ -56,13 +60,36 @@ When the agent step decides a reply is needed, the job creates a real **Gmail dr
 - **Deny** or **No** keeps the draft in Gmail and does nothing else.
 - **Deny with a reason** ("propose Thursday instead") rewrites the draft with that instruction and posts a new card.
 - Sending happens once: the card's state moves `pending → sending → sent` in a transaction before the Gmail call.
-- If you reply in Gmail yourself, the next run sees it and marks the task done.
+- If you reply in Gmail yourself, the next run sees it and rechecks the task (§3a).
 
 **Calendar events.** When a thread settles an appointment (the other side confirms a time, or
 the drafted reply accepts one), the job puts an "Add to your calendar?" card on the task, with
 a note when the slot clashes with something already in your calendar. Approving it inserts the
 event once on your primary calendar (a fixed event id per thread and start, `sendUpdates=none`,
 no attendees); denying it does nothing.
+
+## 3a. Keeping tasks in sync with their source
+
+New messages are only half of it: a task must also follow what happens to the mail it came
+from. Every run first walks the job's open links (`jobs/{jobId}/threads/{ref}`, least recently
+checked first, at most 20 per run) and asks the source what became of each one:
+
+| Source says  | When (Gmail)                                                                | dodo does                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **gone**     | the thread is deleted, or all mail from the other side is in Trash or Spam  | the task is **cancelled** with a note, pending cards are withdrawn, the link closes                                                      |
+| **answered** | your message is the last one (sent from Gmail, or a draft you approved)     | one short agent step: **done** (nothing left for you, or waiting on them) or **open** with the next step as the status line and due date |
+| **waiting**  | the other side wrote last, or the thread is archived                        | nothing; a new message from them goes through the normal scan and updates the task                                                       |
+| **unknown**  | a passing error                                                             | try again next run                                                                                                                       |
+
+Each answer of yours is rechecked once (`checkedRef` on the link), so an open task does not
+cost a model call every run. Tasks you close or cancel on the board just close the link. A
+task marked done reopens when the other side writes again. Archiving is not deleting: an
+archived thread keeps its task.
+
+**For new integrations.** The shape is the same for every source: implement `SourceSync`
+(`packages/jobs/src/sync.ts`) with `inspect(link)` returning one of the four states above and
+`recheck(link, task)` for the agent step, and call `syncLinkedTasks` before scanning for new
+items. The cancel / done / next-step handling, cards, counts and run entries come with it.
 
 ## 4. Connectors
 

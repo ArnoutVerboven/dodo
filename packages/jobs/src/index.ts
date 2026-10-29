@@ -7,3 +7,4 @@ export * from './model.js';
 export * from './ports.js';
 export * from './replies.js';
 export * from './slots.js';
+export * from './sync.js';

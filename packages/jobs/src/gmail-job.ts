@@ -4,16 +4,17 @@ import {
   type Decision,
   decideThread,
   type Generate,
+  recheckThread,
 } from './agent.js';
 import { type EventProposal, eventTimes, postEventCard } from './events.js';
-import { type GmailThread, GoogleAuthError } from './google.js';
+import { type GmailThread, GoogleApiError, GoogleAuthError } from './google.js';
 import {
   inboxQuery,
-  isFromMe,
   type MailMessage,
   type MailThread,
   nameOf,
   replyMime,
+  threadState,
   threadUrl,
   toThread,
   unanswered,
@@ -27,6 +28,13 @@ import {
 } from './model.js';
 import type { JobStore, Notifier, TaskSink } from './ports.js';
 import { formatLocal, localDay, type Slot, zonedTime } from './slots.js';
+import {
+  BudgetStop,
+  OPEN_STATUSES as OPEN,
+  pushEntry,
+  type SourceSync,
+  syncLinkedTasks,
+} from './sync.js';
 
 /** Gmail and Calendar as the job uses them (the REST clients, or fakes in tests). */
 export interface GmailLike {
@@ -39,13 +47,6 @@ export interface GmailLike {
 export interface CalendarLike {
   timeZone(): Promise<string | undefined>;
   busy(from: Date, to: Date): Promise<Slot[]>;
-}
-
-/** The gateway refused for money reasons: stop the run, give the message back. */
-export class BudgetStop extends Error {
-  constructor(readonly kind: 'budget_exhausted' | 'halted') {
-    super(kind);
-  }
 }
 
 export interface GmailJobDeps {
@@ -86,9 +87,8 @@ export interface RunOptions {
 
 const LOCK_TTL_MS = 9 * 60_000;
 const MAX_LIST = 50;
-const MAX_RESOLVE = 20;
+const MAX_SYNC = 20;
 const DEFAULT_TZ = 'Europe/Brussels';
-const OPEN = ['backlog', 'todo', 'in_progress', 'needs_input', 'review'];
 
 /**
  * One run of the Gmail follow-up job. Returns the run record; scheduled runs that found
@@ -104,7 +104,16 @@ export async function runGmailJob(deps: GmailJobDeps, opts: RunOptions): Promise
     trigger: opts.trigger,
     dryRun: !!opts.dryRun,
     state: 'running',
-    counts: { scanned: 0, skipped: 0, ignored: 0, created: 0, updated: 0, resolved: 0, failed: 0 },
+    counts: {
+      scanned: 0,
+      skipped: 0,
+      ignored: 0,
+      created: 0,
+      updated: 0,
+      resolved: 0,
+      removed: 0,
+      failed: 0,
+    },
     entries: [],
     spent: 0,
     startedAt: started,
@@ -156,8 +165,21 @@ export async function runGmailJob(deps: GmailJobDeps, opts: RunOptions): Promise
       account: connector.email ?? me,
       about: userContext(profile, config.context),
     };
-    await resolveAnswered(ctx);
-    await scanInbox(ctx);
+    const stopped = await syncLinkedTasks(
+      {
+        jobId: opts.jobId,
+        dryRun: !!opts.dryRun,
+        store: deps.store,
+        tasks: deps.tasks,
+        run,
+        now,
+        max: MAX_SYNC,
+        fatal: (err) => err instanceof GoogleAuthError,
+        log,
+      },
+      gmailSync(ctx),
+    );
+    if (!stopped) await scanInbox(ctx);
     if (run.state === 'running') run.state = 'succeeded';
   } catch (err) {
     failed = true;
@@ -221,6 +243,7 @@ function summarise(run: JobRun): string {
     c.created && `${c.created} new`,
     c.updated && `${c.updated} updated`,
     c.resolved && `${c.resolved} closed`,
+    c.removed && `${c.removed} removed`,
     c.ignored && `${c.ignored} ignored`,
     c.failed && `${c.failed} failed`,
   ].filter(Boolean);
@@ -228,60 +251,39 @@ function summarise(run: JobRun): string {
   return `${run.dryRun ? 'Dry run: ' : ''}${label}${parts.length ? parts.join(', ') : 'nothing new'}`;
 }
 
-/** Tasks whose thread you answered yourself (in Gmail, or by approving the draft) are done. */
-async function resolveAnswered(ctx: RunContext) {
-  const { deps, opts, run } = ctx;
-  const threads = await deps.store.openThreads(opts.jobId, MAX_RESOLVE);
-  for (const t of threads) {
-    const task = await deps.tasks.get(t.taskId);
-    if (!task || !OPEN.includes(task.status)) {
-      if (!opts.dryRun)
-        await deps.store.setThread(opts.jobId, { ...t, open: false, updatedAt: ctx.now() });
-      continue;
-    }
-    let thread: MailThread;
-    try {
-      thread = toThread(await deps.gmail.getThread(t.id, 'metadata'));
-    } catch (err) {
-      if (err instanceof GoogleAuthError) throw err;
-      continue; // deleted thread or a passing error: try again next run
-    }
-    const last = thread.messages.at(-1);
-    if (!last || !isFromMe(last, ctx.me)) continue;
-    run.counts.resolved++;
-    pushEntry(run, {
-      threadId: t.id,
-      subject: thread.subject,
-      from: 'you',
-      decision: 'update',
-      reason: 'You replied, so the task is done.',
-      title: task.title,
-      taskId: task.id,
-    });
-    if (opts.dryRun) continue;
-    await deps.tasks.update(task.id, {
-      status: 'done',
-      statusLine: { text: 'You replied in Gmail', needsYou: false },
-    });
-    await deps.tasks.post(task.id, 'You replied in the thread, so this task is done.');
-    if (t.approval) {
-      await deps.tasks.transition(
-        t.approval.taskId,
-        t.approval.messageId,
-        ['pending'],
-        'superseded',
-        {},
-        'You replied in Gmail',
-      );
-    }
-    await deps.store.setThread(opts.jobId, {
-      ...t,
-      open: false,
-      approval: null,
-      lastMessageId: last.id,
-      updatedAt: ctx.now(),
-    });
-  }
+/** Gmail as a source for syncLinkedTasks: deleted threads, and threads you answered. */
+function gmailSync(ctx: RunContext): SourceSync {
+  const { deps, config } = ctx;
+  return {
+    label: 'Gmail',
+    async inspect(link) {
+      let thread: MailThread;
+      try {
+        thread = toThread(await deps.gmail.getThread(link.id, 'metadata'));
+      } catch (err) {
+        if (err instanceof GoogleAuthError) throw err;
+        if (err instanceof GoogleApiError && err.status === 404) {
+          return { kind: 'gone', reason: 'The email was deleted in Gmail' };
+        }
+        return { kind: 'unknown' }; // a passing error: try again next run
+      }
+      return { ...threadState(thread, ctx.me), subject: thread.subject };
+    },
+    async recheck(_link, task) {
+      const thread = toThread(await deps.gmail.getThread(_link.id, 'full'));
+      return recheckThread({
+        model: config.model,
+        me: ctx.me,
+        now: ctx.now(),
+        timeZone: ctx.timeZone,
+        hours: config.workingHours,
+        thread,
+        task,
+        userContext: ctx.about,
+        generate: deps.generate,
+      });
+    },
+  };
 }
 
 async function scanInbox(ctx: RunContext) {
@@ -692,8 +694,4 @@ function describe(d: Decision, thread: MailThread, last: MailMessage, ctx: RunCo
     '',
     quoted,
   ].join('\n');
-}
-
-function pushEntry(run: JobRun, e: RunEntry) {
-  if (run.entries.length < 30) run.entries.push(e);
 }
