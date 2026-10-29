@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,6 +29,43 @@ export function mcpCli(): string {
   );
 }
 
+/**
+ * Headless Chromium announces itself as "HeadlessChrome", and login providers (itsme among
+ * them) refuse sessions from such a browser: a QR code taken from that page is rejected by
+ * the phone app the moment it is scanned. Present the same Chromium the way a headed one does,
+ * with its own major version.
+ */
+export function chromeUserAgent(version = chromiumVersion()): string {
+  const major = version.split('.')[0] || '131';
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
+/** The Chromium that Playwright MCP's own Playwright installs, from its browsers.json. */
+function chromiumVersion(): string {
+  let mcpDir: string;
+  try {
+    mcpDir = path.dirname(mcpCli());
+  } catch {
+    return '131.0.0.0';
+  }
+  const candidates = [
+    path.join(mcpDir, 'node_modules', 'playwright-core', 'browsers.json'),
+    path.join(mcpDir, '..', '..', 'playwright-core', 'browsers.json'),
+  ];
+  for (const file of candidates) {
+    try {
+      const json = JSON.parse(readFileSync(file, 'utf8')) as {
+        browsers?: Array<{ name: string; browserVersion?: string }>;
+      };
+      const v = json.browsers?.find((b) => b.name === 'chromium')?.browserVersion;
+      if (v) return v;
+    } catch {
+      // Not here; try the next place.
+    }
+  }
+  return '131.0.0.0';
+}
+
 export function startHeadlessBrowser(opts: {
   outputDir: string;
   log: (message: string) => void;
@@ -49,6 +86,8 @@ export function startHeadlessBrowser(opts: {
     '--shared-browser-context',
     '--viewport-size',
     '1280x900',
+    '--user-agent',
+    chromeUserAgent(),
     // Screenshots come back as images so ask_user can show them to the user; the model only
     // ever gets the text parts.
     '--image-responses',
