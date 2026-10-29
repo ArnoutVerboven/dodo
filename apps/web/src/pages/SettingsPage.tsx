@@ -1,4 +1,4 @@
-import type { AiConfig } from '@dodo/core';
+import { type AiConfig, NOTIFICATION_KINDS, type NotificationKind } from '@dodo/core';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { AiConfigFields } from '@/components/AiConfigFields';
@@ -184,6 +184,7 @@ export function SettingsPage() {
                 Paired. Approval cards and results are sent to your Telegram chat. Reply to one to
                 comment on its task; a message sent without replying goes to the latest task.
               </p>
+              <TelegramKinds muted={settings.telegram.muted ?? []} />
               <Button
                 variant="outline"
                 size="sm"
@@ -243,5 +244,28 @@ export function SettingsPage() {
         <Button onClick={save}>Save settings</Button>
       </div>
     </div>
+  );
+}
+
+/** One checkbox per notification kind; unchecking one stops Telegram sending it. */
+function TelegramKinds({ muted }: { muted: NotificationKind[] }) {
+  const toggle = (kind: NotificationKind, on: boolean) =>
+    saveSettings({
+      telegram: { muted: on ? muted.filter((k) => k !== kind) : [...muted, kind] },
+    });
+  return (
+    <fieldset className="space-y-1.5 py-1">
+      <legend className="mb-1 font-medium">Send me</legend>
+      {NOTIFICATION_KINDS.map(({ kind, label }) => (
+        <label key={kind} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={!muted.includes(kind)}
+            onChange={(e) => toggle(kind, e.target.checked)}
+          />
+          {label}
+        </label>
+      ))}
+    </fieldset>
   );
 }

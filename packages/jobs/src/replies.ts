@@ -149,6 +149,7 @@ export async function handleReplyAnswer(
     if (config.notify) {
       await deps.notify
         ?.notify({
+          kind: 'job_approval',
           title: `Rewritten reply to ${name}`,
           body: text.slice(0, 1500),
           taskId,

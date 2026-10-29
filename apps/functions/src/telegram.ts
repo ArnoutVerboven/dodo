@@ -1,4 +1,4 @@
-import { paths } from '@dodo/core';
+import { type NotificationKind, paths } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { esc, markdownToTelegram } from './telegram-format.js';
 
@@ -22,6 +22,8 @@ export interface TelegramDeps {
 }
 
 export interface Notification {
+  /** Muted kinds (Settings › Telegram) are not sent there. Absent: always sent. */
+  kind?: NotificationKind;
   title: string;
   body: string;
   taskId: string;
@@ -100,6 +102,8 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const chatId = settings.telegram?.chatId as number | undefined;
   if (!chatId) return false;
+  const muted = (settings.telegram?.muted as NotificationKind[] | undefined) ?? [];
+  if (n.kind && muted.includes(n.kind)) return false;
   const text = `<b>${esc(n.title)}</b>\n${markdownToTelegram(n.body.slice(0, 3500))}\n<a href="${n.appUrl}/tasks/${n.taskId}">Open task</a>`;
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
   if (n.input) {
