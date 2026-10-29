@@ -74,12 +74,12 @@ New messages are only half of it: a task must also follow what happens to the ma
 from. Every run first walks the job's open links (`jobs/{jobId}/threads/{ref}`, least recently
 checked first, at most 20 per run) and asks the source what became of each one:
 
-| Source says  | When (Gmail)                                                                | dodo does                                                                                                                                |
-| ------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **gone**     | the thread is deleted, or all mail from the other side is in Trash or Spam  | the task is **cancelled** with a note, pending cards are withdrawn, the link closes                                                      |
-| **answered** | your message is the last one (sent from Gmail, or a draft you approved)     | one short agent step: **done** (nothing left for you, or waiting on them) or **open** with the next step as the status line and due date |
-| **waiting**  | the other side wrote last, or the thread is archived                        | nothing; a new message from them goes through the normal scan and updates the task                                                       |
-| **unknown**  | a passing error                                                             | try again next run                                                                                                                       |
+| Source says  | When (Gmail)                                                               | dodo does                                                                                                                                |
+| ------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **gone**     | the thread is deleted, or all mail from the other side is in Trash or Spam | the task is **cancelled** with a note, pending cards are withdrawn, the link closes                                                      |
+| **answered** | your message is the last one (sent from Gmail, or a draft you approved)    | one short agent step: **done** (nothing left for you, or waiting on them) or **open** with the next step as the status line and due date |
+| **waiting**  | the other side wrote last, or the thread is archived                       | nothing; a new message from them goes through the normal scan and updates the task                                                       |
+| **unknown**  | a passing error                                                            | try again next run                                                                                                                       |
 
 Each answer of yours is rechecked once (`checkedRef` on the link), so an open task does not
 cost a model call every run. Tasks you close or cancel on the board just close the link. A
