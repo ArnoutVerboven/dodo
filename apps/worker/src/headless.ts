@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The browser of a remote run: headless Chromium in the browser worker image, driven by
@@ -22,8 +22,11 @@ const START_TIMEOUT_MS = 30_000;
 
 /** `@playwright/mcp`'s command, installed in the image next to the bundle (not bundled). */
 export function mcpCli(): string {
-  const require = createRequire(import.meta.url);
-  return path.join(path.dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js');
+  // Resolved at runtime, as the Mac daemon does: the bundle keeps the package external.
+  return path.join(
+    path.dirname(fileURLToPath(import.meta.resolve('@playwright/mcp/package.json'))),
+    'cli.js',
+  );
 }
 
 export function startHeadlessBrowser(opts: {
