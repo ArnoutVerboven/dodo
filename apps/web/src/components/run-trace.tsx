@@ -19,6 +19,10 @@ export const RUN_STATE_LABEL: Record<Run['state'], string> = {
   failed: 'Failed',
 };
 
+/** "22:41:07": when an event happened, to line a screenshot up with the user's own clock. */
+export const clock = (at: number) =>
+  new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
 export const isLive = (run: Run) => LIVE_STATES.includes(run.state);
 
 /** "5 steps · €0.012 · gemini-3.8-flash" */
@@ -110,7 +114,9 @@ function EventLine({ event }: { event: RunEvent }) {
         onClick={() => hasData && setOpen((v) => !v)}
         aria-expanded={hasData ? open : undefined}
       >
-        <span className="text-muted-foreground">{String(event.seq).padStart(3, '0')} </span>
+        <span className="text-muted-foreground">
+          {String(event.seq).padStart(3, '0')} {clock(event.createdAt)}{' '}
+        </span>
         {event.summary}
         {event.cost !== undefined && (
           <span className="text-muted-foreground"> · {formatEur(event.cost, 4)}</span>
