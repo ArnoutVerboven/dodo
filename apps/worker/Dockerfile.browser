@@ -1,0 +1,22 @@
+# The worker with a browser: the same bundle, plus Playwright MCP and headless Chromium.
+# Built by the deploy workflow after `pnpm build`; expects apps/worker/dist/index.js.
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+# Tells the worker to start headless Chromium for runs that want a browser (headless.ts).
+ENV DODO_BROWSER=headless
+# Browsers outside root's home, readable by the unprivileged user the worker runs as.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --create-home --shell /usr/sbin/nologin dodo
+# Playwright MCP (the version the Mac daemon uses too) and the Chromium its own Playwright
+# wants, with the system libraries it needs. Pinned so the image is reproducible.
+RUN npm init -y >/dev/null \
+  && npm install --omit=dev --no-audit --no-fund --no-package-lock @playwright/mcp@0.0.83 \
+  && ./node_modules/.bin/playwright install --with-deps chromium \
+  && rm -rf /var/lib/apt/lists/* /root/.npm \
+  && chmod -R a+rX /ms-playwright
+COPY apps/worker/dist/index.js ./index.js
+USER dodo
+CMD ["node", "index.js"]

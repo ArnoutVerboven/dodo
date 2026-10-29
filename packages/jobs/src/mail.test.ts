@@ -6,6 +6,7 @@ import {
   nameOf,
   replyMime,
   stripQuoted,
+  threadState,
   toThread,
   unanswered,
 } from './mail.js';
@@ -138,5 +139,41 @@ describe('mail helpers', () => {
     expect(Buffer.from(body.replace(/\r\n/g, ''), 'base64').toString('utf8')).toBe(
       'Dag Jan, dinsdag om 10u?',
     );
+  });
+});
+
+describe('threadState', () => {
+  const me = 'arnout@example.com';
+  const thread = (...m: GmailMessage[]) => toThread({ id: 't1', messages: m });
+
+  it('is gone when the thread was deleted, emptied or marked as spam', () => {
+    expect(
+      threadState(
+        thread(msg('a', 'jan@immo.be', 5, ['TRASH']), msg('b', me, 4, ['SENT', 'TRASH'])),
+        me,
+      ),
+    ).toMatchObject({ kind: 'gone', reason: 'The email was deleted in Gmail' });
+    expect(threadState(thread(), me).kind).toBe('gone');
+    expect(threadState(thread(msg('a', 'jan@immo.be', 5, ['SPAM'])), me)).toMatchObject({
+      kind: 'gone',
+      reason: 'The email was marked as spam in Gmail',
+    });
+    // Deleting their mail is enough, even when your earlier message stays in Sent.
+    expect(
+      threadState(thread(msg('a', me, 9, ['SENT']), msg('b', 'jan@immo.be', 5, ['TRASH'])), me)
+        .kind,
+    ).toBe('gone');
+  });
+
+  it('is answered when your message is the last one, else waiting', () => {
+    expect(threadState(thread(msg('a', 'jan@immo.be', 5), msg('b', me, 1, ['SENT'])), me)).toEqual({
+      kind: 'answered',
+      ref: 'b',
+    });
+    expect(
+      threadState(thread(msg('a', me, 5, ['SENT']), msg('b', 'jan@immo.be', 1)), me).kind,
+    ).toBe('waiting');
+    // Archived mail is not deleted: still linked.
+    expect(threadState(thread(msg('a', 'jan@immo.be', 5, [])), me).kind).toBe('waiting');
   });
 });

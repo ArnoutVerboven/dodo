@@ -12,6 +12,7 @@ import {
   type FinishRequest,
   type GenerateRequest,
   GenerateResponse,
+  GitHubTokenResponse,
   HeartbeatResponse,
   PersonalInfo,
   Project,
@@ -57,6 +58,10 @@ export interface WorkerEnv {
   allowedFolders?: string[];
   /** Playwright MCP endpoint for the browser tools (the daemon's server on your Chrome). */
   browserUrl?: string;
+  /** The browser worker image: start headless Chromium for runs that want a browser. */
+  headlessBrowser?: boolean;
+  /** When the worker is killed (epoch ms), from DODO_TIMEOUT_S; a hold for an answer ends before it. */
+  deadline?: number;
 }
 
 export interface Clients {
@@ -79,6 +84,23 @@ export function connect(app: FirebaseApp, env: WorkerEnv): Clients {
 
 export async function signInAsRun(clients: Clients, token: string) {
   await signInWithCustomToken(clients.auth, token);
+}
+
+const READ_LIMIT = 200_000;
+const TEXT_EXT =
+  /\.(md|markdown|mdx|txt|text|log|csv|tsv|json|jsonl|ya?ml|toml|ini|xml|html?|css|[cm]?js|tsx?|jsx|py|rb|go|rs|java|sh|sql|ics|vcf|srt)$/i;
+
+/** An uploaded file's text, through its download URL (which carries its own access token). */
+export async function readStoredFile(name: string, url: string, fetchFn: typeof fetch = fetch) {
+  const res = await fetchFn(url);
+  if (!res.ok) return `(file) ${name}: download failed with HTTP ${res.status}.`;
+  const type = res.headers.get('content-type') ?? '';
+  const textual = TEXT_EXT.test(name) || type.startsWith('text/') || type.includes('json');
+  if (!textual) return `(file) ${name} is ${type || 'binary'}, not text. Its download URL: ${url}`;
+  const text = await res.text();
+  return text.length > READ_LIMIT
+    ? `${text.slice(0, READ_LIMIT)}\n\n[cut at ${READ_LIMIT} of ${text.length} characters]`
+    : text;
 }
 
 /** Maps callable error codes to the typed errors the loop reacts to. */
@@ -123,6 +145,8 @@ export class CallableControlPlane implements ControlPlane {
       trigger: 'new' | 'comment' | 'resume';
       model: string;
       contextWindow?: number;
+      browser?: boolean;
+      browserSetting?: 'none' | 'auto' | 'chrome';
       policy: {
         profile: 'agent-decides' | 'untrusted';
         allow: string[];
@@ -140,7 +164,7 @@ export class CallableControlPlane implements ControlPlane {
     return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }));
   }
   async requestInput(req: Omit<RequestInputRequest, 'runId'>) {
-    await this.call('runRequestInput', { runId: this.runId, ...req });
+    return this.call<{ messageId?: string }>('runRequestInput', { runId: this.runId, ...req });
   }
   async finish(req: Omit<FinishRequest, 'runId'>) {
     await this.call('runFinish', { runId: this.runId, ...req });
@@ -161,6 +185,34 @@ export class CallableControlPlane implements ControlPlane {
       return (r.data as { value: string }).value;
     } catch (err) {
       throw new Error((err as Error).message || 'Vault value not available');
+    }
+  }
+  /** A token for the run's own repo (docs/GITHUB.md); refusals come back as plain Errors. */
+  async githubToken(access: 'read' | 'write'): Promise<GitHubTokenResponse> {
+    try {
+      const r = await httpsCallable(this.fns, 'githubToken', { timeout: 30_000 })({
+        runId: this.runId,
+        access,
+      });
+      return GitHubTokenResponse.parse(r.data);
+    } catch (err) {
+      throw new Error((err as Error).message || 'GitHub token not available');
+    }
+  }
+  async githubOpenPr(req: {
+    head: string;
+    base?: string;
+    title: string;
+    body: string;
+    draft: boolean;
+  }): Promise<{ url: string; number: number; existing: boolean }> {
+    try {
+      const r = await httpsCallable(this.fns, 'githubOpenPr', { timeout: 60_000 })(
+        JSON.parse(JSON.stringify({ runId: this.runId, ...req })),
+      );
+      return r.data as { url: string; number: number; existing: boolean };
+    } catch (err) {
+      throw new Error((err as Error).message || 'Could not open the pull request');
     }
   }
 }
@@ -216,8 +268,8 @@ export class FirestoreTaskStore implements TaskStore {
     if (!snap.exists()) throw new Error(`No artifact ${id}`);
     const a = Artifact.parse({ id: snap.id, ...snap.data() });
     if (a.text) return a.text;
-    if (a.url)
-      return `(${a.kind}) ${a.url}\nReading file and link contents arrives with the browser/http tools in a later phase.`;
+    if (a.kind === 'file' && a.url) return readStoredFile(a.name, a.url);
+    if (a.url) return `(link) ${a.url}\nOpen it with the browser or http tools to read it.`;
     return '';
   }
   async addArtifact(a: { kind: 'link' | 'text'; name: string; url?: string; text?: string }) {

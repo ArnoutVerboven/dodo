@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type BrowserClient, browserClaim, browserTools, pageUrlIn } from './browser.js';
+import {
+  type BrowserClient,
+  browserClaim,
+  browserTools,
+  pageUrlIn,
+  takeScreenshot,
+} from './browser.js';
 import type { TaskStore } from './control-plane.js';
 import { createSecretResolver } from './secrets.js';
 
@@ -179,5 +185,38 @@ describe('browserTools', () => {
     expect((await run('browser_evaluate', { function: '() => 1' })).result).not.toHaveProperty(
       'error',
     );
+  });
+
+  it('takes a screenshot for ask_user from the image part of the result', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const client: BrowserClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool(name, args) {
+        calls.push([name, args]);
+        return {
+          text: 'Took the screenshot',
+          isError: false,
+          images: [{ mimeType: 'image/png', data: 'AAAA' }],
+        };
+      },
+      async close() {},
+    };
+    expect(await takeScreenshot(client, { element: 'QR code', ref: 'e3' })).toEqual({
+      mimeType: 'image/png',
+      data: 'AAAA',
+    });
+    expect(calls[0]).toEqual([
+      'browser_take_screenshot',
+      { type: 'png', element: 'QR code', ref: 'e3' },
+    ]);
+    const failing: BrowserClient = {
+      ...client,
+      async callTool() {
+        return { text: 'no page', isError: true };
+      },
+    };
+    expect(await takeScreenshot(failing)).toBeUndefined();
   });
 });

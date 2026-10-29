@@ -1,5 +1,6 @@
 import {
   type AiConfig,
+  type Artifact,
   compactThreshold,
   formatTokens,
   type Run,
@@ -16,6 +17,7 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  Download,
   FileText,
   Folder,
   Link2,
@@ -29,6 +31,7 @@ import {
   Settings2,
   Square,
   Trash2,
+  Upload,
   User,
   X,
 } from 'lucide-react';
@@ -37,6 +40,7 @@ import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { ArtifactPreview, canPreview, downloadArtifact } from '@/components/ArtifactPreview';
 import { parseTags } from '@/components/NewTaskDialog';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import { SourceLink } from '@/components/SourceIcon';
@@ -61,6 +65,8 @@ import {
   deleteTask,
   interruptRun,
   postUserMessage,
+  replaceArtifact,
+  storedFileUrl,
   updateTask,
   useArtifacts,
   useBudgets,
@@ -70,9 +76,11 @@ import {
   useSettings,
   useTask,
 } from '@/lib/data';
+import { pendingInputs } from '@/lib/thread';
 import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
 
 const PENDING_INPUT_ID = 'pending-input';
+const REPLY_ID = 'thread-reply';
 
 export function TaskPage() {
   const { id } = useParams();
@@ -379,11 +387,13 @@ function StatusCard({ task }: { task: Task }) {
               size="sm"
               variant="ghost"
               className="-my-1 h-7"
-              onClick={() =>
-                document
-                  .getElementById(PENDING_INPUT_ID)
-                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }
+              onClick={() => {
+                // The latest open question, or the reply box when you already answered in the thread.
+                const target =
+                  document.getElementById(PENDING_INPUT_ID) ?? document.getElementById(REPLY_ID);
+                target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (target?.id === REPLY_ID) target.focus({ preventScroll: true });
+              }}
             >
               Answer <ArrowDown className="h-3.5 w-3.5" />
             </Button>
@@ -556,6 +566,7 @@ function Thread({ taskId }: { taskId: string }) {
   const byRun = new Map<string, ThreadMessage[]>();
   for (const m of messages) if (m.runId) byRun.set(m.runId, [...(byRun.get(m.runId) ?? []), m]);
   const liveRun = runs.find(isLive);
+  const inputs = pendingInputs(messages);
   const items: TimelineItem[] = [
     ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, message: m })),
     ...runs
@@ -601,6 +612,8 @@ function Thread({ taskId }: { taskId: string }) {
               run={run}
               traceFrom={from}
               traceTo={to}
+              inputOpen={inputs.open.has(m.id)}
+              inputLatest={inputs.latest === m.id}
             />
           );
         })}
@@ -615,6 +628,7 @@ function Thread({ taskId }: { taskId: string }) {
         >
           <div className="flex items-end gap-2 rounded-lg border bg-card p-1.5 focus-within:ring-2 focus-within:ring-primary/30">
             <Textarea
+              id={REPLY_ID}
               rows={1}
               className="max-h-48 min-h-9 resize-none border-0 field-sizing-content focus-visible:ring-0"
               placeholder={
@@ -680,16 +694,21 @@ function MessageView({
   run,
   traceFrom,
   traceTo,
+  inputOpen,
+  inputLatest,
 }: {
   taskId: string;
   message: ThreadMessage;
   run?: Run;
   traceFrom?: number;
   traceTo?: number;
+  /** An unanswered question with no later message from you. */
+  inputOpen: boolean;
+  /** The latest such question: the "Answer" button takes you here. */
+  inputLatest: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const Icon = m.author === 'user' ? User : Bot;
-  const pending = !!m.input && !m.input.answer;
   const toggle = run ? () => setOpen((v) => !v) : undefined;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: a shortcut for the steps button in the header
@@ -698,7 +717,7 @@ function MessageView({
       onClick={(e) => toggle && isPlainClick(e) && toggle()}
       className={cn(
         'group -mx-2 flex gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60',
-        pending && 'bg-attention-bg/50',
+        inputOpen && 'bg-attention-bg/50',
         run && 'cursor-pointer',
         open && 'bg-accent/40',
       )}
@@ -722,10 +741,40 @@ function MessageView({
         <div className="prose-sm cursor-auto text-sm">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
+        {m.input?.image && <QuestionImage storagePath={m.input.image.storagePath} />}
         {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
-        {m.input && <InputRequestView taskId={taskId} message={m} />}
+        {m.input && (
+          <InputRequestView taskId={taskId} message={m} open={inputOpen} latest={inputLatest} />
+        )}
       </div>
     </div>
+  );
+}
+
+/** The screenshot the agent sent with a question (a QR code to scan, the icon to pick). */
+function QuestionImage({ storagePath }: { storagePath: string }) {
+  const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    storedFileUrl(storagePath).then(
+      (u) => live && setUrl(u),
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, [storagePath]);
+  if (failed) return <p className="mt-2 text-xs text-muted-foreground">Screenshot unavailable.</p>;
+  if (!url) return <div className="mt-2 h-40 w-64 animate-pulse rounded-md bg-muted" />;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="mt-2 inline-block cursor-zoom-in">
+      <img
+        src={url}
+        alt="Screenshot from the agent's browser"
+        className="max-h-96 max-w-full rounded-md border bg-white object-contain"
+      />
+    </a>
   );
 }
 
@@ -785,21 +834,66 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
-function InputRequestView({ taskId, message }: { taskId: string; message: ThreadMessage }) {
+const SCOPE_LABEL = {
+  task: 'for this task',
+  project: 'for this project',
+  global: 'everywhere',
+} as const;
+
+function InputRequestView({
+  taskId,
+  message,
+  open,
+  latest,
+}: {
+  taskId: string;
+  message: ThreadMessage;
+  open: boolean;
+  latest: boolean;
+}) {
   const req = message.input;
+  const [reopened, setReopened] = useState(false);
   const [text, setText] = useState('');
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
   // A vault entry is approved per task: the server ignores project and global rules for it.
   const isVault = req?.suggestedRule?.startsWith('Vault(') ?? false;
-  const [scope, setScope] = useState<'task' | 'project' | 'global'>(isVault ? 'task' : 'project');
+  const { data: task } = useTask(taskId);
+  // Without a project the server stores a "project" rule on the task, so offer task instead.
+  const hasProject = !!task?.projectId;
+  const [pickedScope, setScope] = useState<'task' | 'project' | 'global'>();
+  const scope = pickedScope ?? (isVault || !hasProject ? 'task' : 'project');
   const [showRule, setShowRule] = useState(false);
   if (!req) return null;
   if (req.answer) {
     return (
       <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
         Answered: <b>{req.answer.value}</b>
-        {req.answer.alwaysAllow &&
-          ` (always allow ${req.answer.alwaysAllow.rule} in ${req.answer.alwaysAllow.scope})`}
+        {req.answer.alwaysAllow && (
+          <>
+            {' '}
+            (always allow <code className="text-xs">{req.answer.alwaysAllow.rule}</code>{' '}
+            {SCOPE_LABEL[req.answer.alwaysAllow.scope]},{' '}
+            <Link to="/settings#allowed-actions" className="underline underline-offset-2">
+              manage
+            </Link>
+            )
+          </>
+        )}
+      </p>
+    );
+  }
+  if (!open && !reopened) {
+    // You posted a later message in the thread, which replies to this one.
+    return (
+      <p className="mt-2 text-xs text-muted-foreground">
+        You replied in the thread.{' '}
+        <button
+          type="button"
+          className="underline-offset-2 hover:text-foreground hover:underline"
+          onClick={() => setReopened(true)}
+        >
+          Answer this anyway
+        </button>
       </p>
     );
   }
@@ -811,7 +905,7 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
   };
   return (
     <div
-      id={PENDING_INPUT_ID}
+      id={latest ? PENDING_INPUT_ID : undefined}
       className="mt-2 scroll-mt-20 space-y-2 rounded-md border border-attention bg-attention-bg p-3 text-sm"
     >
       {req.prompt.trim() !== message.body.trim() && <p className="font-medium">{req.prompt}</p>}
@@ -831,20 +925,41 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => answer('approve')}>
-              Approve once
+              Allow once
             </Button>
+            {req.suggestedRule !== undefined && (
+              <span className="relative inline-flex">
+                <Button size="sm" variant="outline" tabIndex={-1} aria-hidden>
+                  Allow always <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+                <select
+                  aria-label="Allow always"
+                  title={`Always allow ${req.suggestedRule}`}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === 'edit') setShowRule(true);
+                    else if (v)
+                      void answer('approve', {
+                        rule: req.suggestedRule ?? '',
+                        scope: v as typeof scope,
+                      });
+                  }}
+                >
+                  <option value="" disabled hidden>
+                    Allow always
+                  </option>
+                  <option value="task">For this task</option>
+                  {!isVault && hasProject && <option value="project">For this project</option>}
+                  {!isVault && <option value="global">Everywhere</option>}
+                  <option value="edit">Edit the rule first…</option>
+                </select>
+              </span>
+            )}
             <Button size="sm" variant="outline" onClick={() => answer('deny')}>
               Deny
             </Button>
-            {req.suggestedRule !== undefined && (
-              <button
-                type="button"
-                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => setShowRule((v) => !v)}
-              >
-                {showRule ? 'Hide' : 'Always allow…'}
-              </button>
-            )}
           </div>
           {req.suggestedRule !== undefined && showRule && (
             <div className="flex flex-wrap items-center gap-2">
@@ -858,8 +973,8 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
                 value={scope}
                 onChange={(e) => setScope(e.target.value as typeof scope)}
               >
-                <option value="task">this task</option>
-                {!isVault && <option value="project">this project</option>}
+                <option value="task">for this task</option>
+                {!isVault && hasProject && <option value="project">for this project</option>}
                 {!isVault && <option value="global">everywhere</option>}
               </Select>
               <Button
@@ -870,6 +985,13 @@ function InputRequestView({ taskId, message }: { taskId: string; message: Thread
               >
                 Always allow
               </Button>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setShowRule(false)}
+              >
+                Cancel
+              </button>
             </div>
           )}
         </div>
@@ -944,6 +1066,9 @@ function AiCard({ task }: { task: Task }) {
             <Settings2 className="h-3.5 w-3.5" />
             <span className="min-w-0 flex-1 truncate">
               {resolved.model} · {resolved.device}
+              {resolved.browser && resolved.browser !== 'none'
+                ? ` · browser ${resolved.browser}`
+                : ''}
             </span>
             <ChevronRight className="h-3.5 w-3.5 transition group-open/adv:rotate-90" />
           </summary>
@@ -1079,10 +1204,57 @@ function Switch({
 function ArtifactsCard({ taskId }: { taskId: string }) {
   const { data: artifacts } = useArtifacts(taskId);
   const [url, setUrl] = useState('');
-  const [uploading, setUploading] = useState(false);
+  const [busy, setBusy] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [dragging, setDragging] = useState(false);
+  const [previewId, setPreviewId] = useState<string>();
+  const replacing = useRef<Artifact>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const preview = artifacts.find((a) => a.id === previewId);
+
+  const run = async (label: string, work: () => Promise<void>) => {
+    setBusy(label);
+    setError(undefined);
+    try {
+      await work();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  const upload = (files: File[]) =>
+    files.length > 0 &&
+    run(
+      files.length === 1 ? `Uploading ${files[0]?.name}…` : `Uploading ${files.length} files…`,
+      async () => {
+        for (const f of files) await addFileArtifact(taskId, f);
+      },
+    );
+  const startReplace = (a: Artifact) => {
+    replacing.current = a;
+    replaceInput.current?.click();
+  };
+
   return (
-    <Card>
+    <Card
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setDragging(false);
+        upload([...e.dataTransfer.files]);
+      }}
+      className={cn(dragging && 'ring-2 ring-primary')}
+    >
       <CardHeader
         title="Files & links"
         action={
@@ -1090,10 +1262,10 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
             size="icon"
             variant="ghost"
             className="-my-1 h-7 w-7"
-            disabled={uploading}
+            disabled={!!busy}
             onClick={() => fileInput.current?.click()}
-            aria-label="Attach file"
-            title="Attach file"
+            aria-label="Attach files"
+            title="Attach files"
           >
             <Paperclip className="h-4 w-4" />
           </Button>
@@ -1103,17 +1275,25 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
         <input
           ref={fileInput}
           type="file"
+          multiple
           className="hidden"
-          onChange={async (e) => {
+          onChange={(e) => {
+            const files = [...(e.target.files ?? [])];
+            e.target.value = '';
+            upload(files);
+          }}
+        />
+        <input
+          ref={replaceInput}
+          type="file"
+          className="hidden"
+          onChange={(e) => {
             const file = e.target.files?.[0];
-            if (!file) return;
-            setUploading(true);
-            try {
-              await addFileArtifact(taskId, file);
-            } finally {
-              setUploading(false);
-              e.target.value = '';
-            }
+            const target = replacing.current;
+            e.target.value = '';
+            replacing.current = undefined;
+            if (!file || !target) return;
+            run(`Replacing ${target.name}…`, () => replaceArtifact(taskId, target, file));
           }}
         />
         {artifacts.length > 0 && (
@@ -1128,27 +1308,67 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
                 ) : (
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 flex-1 truncate hover:underline"
-                >
-                  {a.name}
-                </a>
+                {canPreview(a) ? (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left hover:underline"
+                    onClick={() => setPreviewId(a.id)}
+                    title={`Preview ${a.name}`}
+                  >
+                    {a.name}
+                  </button>
+                ) : (
+                  <a
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 truncate hover:underline"
+                  >
+                    {a.name}
+                  </a>
+                )}
                 {a.role === 'output' && <span className="text-xs text-success">output</span>}
-                <button
-                  type="button"
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  onClick={() => deleteArtifact(taskId, a.id)}
-                  aria-label={`Remove ${a.name}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-danger" />
-                </button>
+                <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                  {canPreview(a) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => run(`Downloading ${a.name}…`, () => downloadArtifact(a))}
+                        aria-label={`Download ${a.name}`}
+                        title="Download"
+                      >
+                        <Download className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => startReplace(a)}
+                        aria-label={`Replace ${a.name}`}
+                        title="Replace with a file"
+                      >
+                        <Upload className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => run(`Removing ${a.name}…`, () => deleteArtifact(taskId, a))}
+                    aria-label={`Remove ${a.name}`}
+                    title="Remove"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-danger" />
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
         )}
+        {busy && (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {busy}
+          </p>
+        )}
+        {error && <p className="text-xs text-danger">Didn't work: {error}</p>}
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -1166,7 +1386,13 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
             onChange={(e) => setUrl(e.target.value)}
           />
         </form>
+        <p className="text-xs text-muted-foreground">Drop files here to attach them.</p>
       </CardBody>
+      <ArtifactPreview
+        artifact={preview}
+        onClose={() => setPreviewId(undefined)}
+        onReplace={startReplace}
+      />
     </Card>
   );
 }

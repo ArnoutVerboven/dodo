@@ -149,9 +149,12 @@ export async function resolveVaultValue(
   return { value };
 }
 
-/** Production store: Secret Manager. Each write adds a version and destroys the older ones. */
-export function secretManagerStore(projectId: string): VaultSecretStore {
-  const name = `projects/${projectId}/secrets/${VAULT_SECRET}`;
+/**
+ * Production store: one JSON secret in Secret Manager (`dodo-vault`, or another such as
+ * `dodo-github-app`). Each write adds a version and destroys the older ones.
+ */
+export function secretManagerStore(projectId: string, secret = VAULT_SECRET): VaultSecretStore {
+  const name = `projects/${projectId}/secrets/${secret}`;
   // Loaded lazily so the emulator and tests never need Google credentials.
   const client = import('@google-cloud/secret-manager').then(
     (m) => new m.SecretManagerServiceClient(),
@@ -186,8 +189,8 @@ export function secretManagerStore(projectId: string): VaultSecretStore {
 }
 
 /** Emulator store: a server-only Firestore document (rules deny every client). */
-export function firestoreDevStore(db: Firestore): VaultSecretStore {
-  const ref = db.doc('vaultDev/values');
+export function firestoreDevStore(db: Firestore, path = 'vaultDev/values'): VaultSecretStore {
+  const ref = db.doc(path);
   return {
     read: async () => ((await ref.get()).get('values') as VaultValues | undefined) ?? {},
     write: async (values) => {

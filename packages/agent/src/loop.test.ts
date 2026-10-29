@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
-import { runAgent } from './loop.js';
+import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
-import { taskTools, toDeclarations } from './tools.js';
+import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
 
 function setup(script: ConstructorParameters<typeof FakeControlPlane>[0]) {
   const control = new FakeControlPlane(script);
   const store = new MemoryTaskStore(sampleTask());
   const trace = new MemoryTrace();
-  const run = (extra: Partial<Parameters<typeof runAgent>[0]> = {}) =>
+  const run = (
+    extra: Partial<Parameters<typeof runAgent>[0]> = {},
+    options: Partial<Parameters<typeof runAgent>[1]> = {},
+  ) =>
     runAgent(
       {
         runId: 'r1',
@@ -19,7 +22,7 @@ function setup(script: ConstructorParameters<typeof FakeControlPlane>[0]) {
         session: [],
         ...extra,
       },
-      { control, store, trace, tools: taskTools, heartbeatMs: 0 },
+      { control, store, trace, tools: taskTools, heartbeatMs: 0, ...options },
     );
   return { control, store, trace, run };
 }
@@ -77,6 +80,130 @@ describe('runAgent', () => {
     expect(control.finishes).toHaveLength(0);
     // Session ends with the function response, so the resume can append the answer.
     expect(result.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('holds for the answer after ask_user and continues in the same run', async () => {
+    const { control, trace, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.heldAnswers.push({ messageId: 'm1', prompt: 'Enter the SMS code', value: '123456' });
+    const result = await run({}, { inputHoldMs: 5000, heartbeatMs: 10 });
+    expect(result.reason).toBe('finished');
+    expect(control.inputRequests[0]?.holdMs).toBe(5000);
+    // One run: the question, the answer, then the second model call saw the answer.
+    expect(control.requests).toHaveLength(2);
+    expect(control.requests[1]?.contents.at(-1)?.parts[0]?.text).toContain('123456');
+    expect(control.finishes[0]?.reason).toBe('finished');
+    expect(trace.types()).toContain('steer');
+  });
+
+  it('parks the run when the hold runs out without an answer', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    const result = await run({}, { inputHoldMs: 30, heartbeatMs: 10 });
+    expect(result.reason).toBe('waiting_input');
+    expect(control.inputRequests).toHaveLength(1);
+    // The question is already posted; the park goes through finish, with the session.
+    expect(control.finishes[0]?.reason).toBe('waiting_input');
+    expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('does not hold past the worker deadline: it parks the run the old way', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    const result = await run(
+      {},
+      { inputHoldMs: 5000, heartbeatMs: 10, deadline: Date.now() + HOLD_DEADLINE_MARGIN_MS },
+    );
+    expect(result.reason).toBe('waiting_input');
+    // No hold: the question goes with the park, not as a held request.
+    expect(control.inputRequests[0]?.holdMs).toBeUndefined();
+  });
+
+  it('stops the hold when the heartbeat says interrupted', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    control.flags = { ok: false, reason: 'interrupted' };
+    const result = await run({}, { inputHoldMs: 5000, heartbeatMs: 10 });
+    expect(result.reason).toBe('interrupted');
+    expect(control.finishes[0]?.reason).toBe('interrupted');
+  });
+
+  it('restarts with a browser when the agent asks for one', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'request_browser', args: { reason: 'the site needs a login' } }] },
+    ]);
+    const result = await run({}, { tools: [...taskTools, requestBrowserTool] });
+    expect(result.reason).toBe('needs_browser');
+    expect(control.finishes[0]?.reason).toBe('needs_browser');
+    expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe(
+      'request_browser',
+    );
+    expect(control.requests[0]?.systemInstruction).toContain('request_browser');
+  });
+
+  it('attaches a browser screenshot to ask_user, cropped when a ref is given, never in the session', async () => {
+    const control = new FakeControlPlane([
+      {
+        calls: [
+          {
+            name: 'ask_user',
+            args: {
+              kind: 'text',
+              prompt: 'Scan the QR code with itsme',
+              screenshot: true,
+              screenshotElement: 'QR code',
+              screenshotRef: 'e12',
+            },
+          },
+        ],
+      },
+    ]);
+    const store = new MemoryTaskStore(sampleTask());
+    const targets: unknown[] = [];
+    const result = await runAgent(
+      {
+        runId: 'r1',
+        task: store.task,
+        project: undefined,
+        model: 'm',
+        trigger: 'new',
+        session: [],
+      },
+      {
+        control,
+        store,
+        trace: new MemoryTrace(),
+        tools: taskTools,
+        heartbeatMs: 0,
+        screenshot: async (target) => {
+          targets.push(target);
+          return { mimeType: 'image/png', data: 'iVBORw0KGgo=' };
+        },
+      },
+    );
+    expect(result.reason).toBe('waiting_input');
+    expect(targets).toEqual([{ element: 'QR code', ref: 'e12' }]);
+    expect(control.inputRequests[0]?.image).toEqual({
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgo=',
+    });
+    expect(JSON.stringify(result.session)).not.toContain('iVBORw0KGgo=');
+  });
+
+  it('still asks when no screenshot can be taken', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Log in', screenshot: true } }] },
+    ]);
+    const result = await run();
+    expect(result.reason).toBe('waiting_input');
+    expect(control.inputRequests[0]?.prompt).toBe('Log in');
+    expect(control.inputRequests[0]?.image).toBeUndefined();
+    expect(JSON.stringify(result.session)).toContain('No screenshot could be taken');
   });
 
   it('resumes with the answer', async () => {
@@ -241,5 +368,21 @@ describe('toDeclarations', () => {
     });
     expect(control.requests[0]?.purpose).toBe('compact');
     expect(control.requests[0]?.contents[0]?.parts[0]?.text).toContain('Go on');
+  });
+});
+
+describe('holdTime', () => {
+  it('holds the full time without a deadline', () => {
+    expect(holdTime(600_000, undefined, 0)).toBe(600_000);
+    expect(holdTime(undefined, 1e9, 0)).toBeUndefined();
+  });
+
+  it('cuts the hold to the time left before the deadline, minus the margin', () => {
+    expect(holdTime(600_000, 10 * 60_000 + HOLD_DEADLINE_MARGIN_MS, 5 * 60_000)).toBe(300_000);
+    expect(holdTime(600_000, 3_600_000, 0)).toBe(600_000);
+  });
+
+  it('does not hold when under a minute would be left', () => {
+    expect(holdTime(600_000, HOLD_DEADLINE_MARGIN_MS + 30_000, 0)).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import {
+  type Device,
   type GlobalSettings,
   type Project,
   paths,
@@ -7,6 +8,7 @@ import {
   type Task,
 } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
+import { routeDevice } from './routing.js';
 import { stripUndefined } from './runtime.js';
 
 /**
@@ -17,6 +19,11 @@ export interface TriggerDeps {
   db: Firestore;
   /** Ends a run whose worker died, so the task can be picked up again. */
   reap?: (runId: string) => Promise<boolean>;
+  /**
+   * Browser `auto` on a new task: does it need one? A small model answers (routing.ts). Absent
+   * (emulator, tests): no browser until the agent asks for one.
+   */
+  needsBrowser?: (task: Task) => Promise<boolean>;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -26,9 +33,6 @@ const DEFAULT_MODEL = 'gemini-3.8-flash';
 function resolveModel(choice: string): string {
   return choice === 'auto' ? DEFAULT_MODEL : choice;
 }
-function resolveDevice(choice: string): string {
-  return choice === 'auto' ? 'gcp' : choice;
-}
 
 export interface EnqueueOptions {
   trigger: Run['trigger'];
@@ -36,6 +40,31 @@ export interface EnqueueOptions {
   sessionPath?: string;
   /** For resumes after ask_user or an approval card. */
   answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
+  /**
+   * Browser for this run when already decided: the previous run's (a continued conversation
+   * keeps its browser) or true for a step-up. Only `auto` looks at it; an explicit setting wins.
+   */
+  browser?: boolean;
+}
+
+/** What the run's browser flag is, given the setting and what is already known. */
+export async function decideBrowser(
+  setting: Task['ai']['browser'],
+  opts: Pick<EnqueueOptions, 'trigger' | 'browser'>,
+  ask: (() => Promise<boolean>) | undefined,
+  log?: TriggerDeps['log'],
+): Promise<{ browser: boolean; reason?: string }> {
+  if (setting === 'chrome') return { browser: true };
+  if (setting === undefined || setting === 'none') return { browser: false };
+  if (opts.browser !== undefined) return { browser: opts.browser };
+  if (opts.trigger !== 'new' || !ask) return { browser: false };
+  try {
+    const browser = await ask();
+    return { browser, reason: browser ? 'the task needs a browser' : undefined };
+  } catch (err) {
+    log?.('browser routing failed', { err: String(err) });
+    return { browser: false };
+  }
 }
 
 export async function enqueueRun(
@@ -45,6 +74,28 @@ export async function enqueueRun(
 ): Promise<string | undefined> {
   const now = (deps.now ?? Date.now)();
   const db = deps.db;
+  const resolve = (task: Task, project: Project | undefined, settings: Partial<GlobalSettings>) =>
+    resolveAiConfig({ ai: task.ai }, project, {
+      defaults: settings.defaults ?? {},
+      defaultTaskBudget: settings.defaultTaskBudget ?? 500_000,
+    });
+
+  // The browser question may cost a model call, so it is answered before the transaction.
+  const first = (await db.doc(paths.task(taskId)).get()).data() as Task | undefined;
+  if (!first?.ai?.enabled || first.activeRunId) return undefined;
+  const firstProject = first.projectId
+    ? ((await db.doc(paths.project(first.projectId)).get()).data() as Project | undefined)
+    : undefined;
+  const firstSettings = ((await db.doc(paths.settings()).get()).data() ??
+    {}) as Partial<GlobalSettings>;
+  const ask = deps.needsBrowser;
+  const decided = await decideBrowser(
+    resolve(first, firstProject, firstSettings).browser,
+    opts,
+    ask ? () => ask({ ...first, id: taskId }) : undefined,
+    deps.log,
+  );
+
   return db.runTransaction(async (t) => {
     const taskSnap = await t.get(db.doc(paths.task(taskId)));
     const task = taskSnap.data() as Task | undefined;
@@ -55,16 +106,22 @@ export async function enqueueRun(
     const project = task.projectId
       ? ((await t.get(db.doc(paths.project(task.projectId)))).data() as Project | undefined)
       : undefined;
-    const ai = resolveAiConfig({ ai: task.ai }, project, {
-      defaults: settings.defaults ?? {},
-      defaultTaskBudget: settings.defaultTaskBudget ?? 500_000,
-    });
+    const devices = (await t.get(db.collection(paths.devices()))).docs.map(
+      (d) => ({ id: d.id, ...d.data() }) as Device,
+    );
+    const ai = resolve(task, project, settings);
+    const route = routeDevice(ai.device, ai.folder, devices, now);
+    const routing = [route.reason, decided.browser ? 'with a browser' : undefined]
+      .filter(Boolean)
+      .join(', ');
     const ref = db.collection(paths.runs()).doc();
     const run: Omit<Run, 'id'> = {
       taskId,
       projectId: task.projectId,
-      device: resolveDevice(ai.device),
+      device: route.device,
       model: resolveModel(ai.model),
+      browser: decided.browser,
+      routing,
       state: 'queued',
       trigger: opts.trigger,
       generation: 0,
@@ -82,25 +139,29 @@ export async function enqueueRun(
     t.update(db.doc(paths.task(taskId)), {
       activeRunId: ref.id,
       status: 'in_progress',
-      statusLine: { text: 'Queued', needsYou: false },
+      statusLine: { text: `Queued: ${routing}`, needsYou: false },
       updatedAt: now,
     });
     return ref.id;
   });
 }
 
-/** Latest session for a task, to continue a conversation on comment or resume. */
-export async function latestSessionPath(
+/** The task's latest run: its session continues the conversation, its browser stays. */
+export async function latestRun(
   db: Firestore,
   taskId: string,
-): Promise<string | undefined> {
+): Promise<{ sessionPath?: string; browser?: boolean }> {
   const q = await db
     .collection(paths.runs())
     .where('taskId', '==', taskId)
     .orderBy('createdAt', 'desc')
     .limit(1)
     .get();
-  return q.docs[0]?.get('sessionPath') as string | undefined;
+  const doc = q.docs[0];
+  return {
+    sessionPath: doc?.get('sessionPath') as string | undefined,
+    browser: doc?.get('browser') as boolean | undefined,
+  };
 }
 
 const isReady = (t: Task | undefined) =>
@@ -123,10 +184,11 @@ export async function onTaskChanged(
   }
   if (!isReady(current) || isReady(before)) return;
   // A task the agent already worked on continues its conversation instead of starting over.
-  const sessionPath = await latestSessionPath(deps.db, after.id);
+  const { sessionPath, browser } = await latestRun(deps.db, after.id);
   const id = await enqueueRun(deps, after.id, {
     trigger: sessionPath ? 'comment' : 'new',
     sessionPath,
+    browser,
   });
   if (id) deps.log?.('run enqueued (task ready)', { taskId: after.id, runId: id });
 }
@@ -143,10 +205,11 @@ export async function onUserMessage(
   if (task.status === 'done' || task.status === 'cancelled') return;
   // A live run picks the comment up through its heartbeat; a dead one is reaped and replaced.
   if (task.activeRunId && !(deps.reap && (await deps.reap(task.activeRunId)))) return;
-  const sessionPath = await latestSessionPath(deps.db, taskId);
+  const { sessionPath, browser } = await latestRun(deps.db, taskId);
   const id = await enqueueRun(deps, taskId, {
     trigger: sessionPath ? 'comment' : 'new',
     sessionPath,
+    browser,
   });
   if (id) deps.log?.('run enqueued (comment)', { taskId, runId: id });
 }
@@ -201,10 +264,21 @@ export async function onInputAnswered(
       .update({ 'ai.budget': current + after.input.topUp, updatedAt: now });
   }
 
-  const sessionPath = await latestSessionPath(db, taskId);
+  // A run holding its worker for this very answer gets it through its heartbeat instead.
+  if (task.activeRunId && (await isHoldingFor(db, task.activeRunId, messageId))) {
+    deps.log?.('answer delivered to the holding run', {
+      taskId,
+      messageId,
+      runId: task.activeRunId,
+    });
+    return;
+  }
+
+  const { sessionPath, browser } = await latestRun(db, taskId);
   const id = await enqueueRun(deps, taskId, {
     trigger: 'resume',
     sessionPath,
+    browser,
     answer: {
       prompt: after.input?.prompt ?? '',
       value: answer.value,
@@ -213,4 +287,14 @@ export async function onInputAnswered(
     },
   });
   if (id) deps.log?.('run enqueued (answer)', { taskId, messageId, runId: id });
+}
+
+/** Whether the run is live and waiting for this message's answer (see `requestInput`'s hold). */
+async function isHoldingFor(db: Firestore, runId: string, messageId: string): Promise<boolean> {
+  const run = (await db.doc(paths.run(runId)).get()).data() as Run | undefined;
+  return (
+    !!run &&
+    (run.state === 'running' || run.state === 'claimed') &&
+    run.awaiting?.messageId === messageId
+  );
 }

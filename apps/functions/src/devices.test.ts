@@ -109,20 +109,20 @@ describe('claimRun', () => {
     version: '0.1.0',
   });
 
-  it('offers the browser only when the task asks and the daemon can', async () => {
+  it('offers the browser only when the run wants one and the daemon can', async () => {
     const world = {
       ...base,
-      'tasks/t1': { title: 'x', ai: { enabled: true, browser: 'chrome' } },
+      'runs/r1': { state: 'queued', device: 'mac:d1', taskId: 't1', generation: 0, browser: true },
       'runs/r4': { state: 'queued', device: 'mac:d1', taskId: 't4', generation: 0 },
-      'tasks/t4': { title: 'y', ai: { enabled: true }, projectId: 'p1' },
-      'projects/p1': { name: 'p', defaults: { browser: 'chrome' } },
+      'tasks/t4': { title: 'y', ai: { enabled: true, browser: 'chrome' } },
     };
     const a = await claimRun(deps(world).deps, caller('d1'), { ...req('d1', 'r1'), browser: true });
     expect(a.browser).toBe(true);
     const b = await claimRun(deps(world).deps, caller('d1'), req('d1', 'r1'));
     expect(b.browser).toBe(false);
+    // The run, not the task setting, says: the router or a step-up decided it already.
     const c = await claimRun(deps(world).deps, caller('d1'), { ...req('d1', 'r4'), browser: true });
-    expect(c.browser).toBe(true);
+    expect(c.browser).toBe(false);
   });
 
   it('claims a queued run for its device and mints the run identity', async () => {

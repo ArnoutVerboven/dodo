@@ -6,6 +6,8 @@ export const paths = {
   /** Vault entry metadata; values are in Secret Manager. */
   vault: () => 'vault',
   vaultEntry: (id: string) => `vault/${id}`,
+  /** GitHub App connection (safe to show); its keys are in Secret Manager. */
+  github: () => 'github/app',
   tasks: () => 'tasks',
   task: (id: string) => `tasks/${id}`,
   messages: (taskId: string) => `tasks/${taskId}/messages`,

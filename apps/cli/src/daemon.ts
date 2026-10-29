@@ -16,7 +16,13 @@ import {
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
-import { type BrowserServer, browserReport, startBrowserServer } from './browser.js';
+import {
+  type BrowserServer,
+  browserReport,
+  endedWaitingInput,
+  focusBrowserWindow,
+  startBrowserServer,
+} from './browser.js';
 import { type CliConfig, chromeProfile, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
 import {
@@ -199,7 +205,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
               }
             }
           }
-          const code = await execute(
+          const { code, askedUser } = await execute(
             config,
             runId,
             claimed,
@@ -208,6 +214,9 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             browserUrl,
           );
           current = undefined;
+          // The agent stopped to ask something while it had the window: put it in front of them.
+          if (askedUser && browserUrl && browser.mode === 'window')
+            await focusBrowserWindow(chromeProfile(), log);
           for (const k of [...decided.keys()]) if (k.startsWith(`${runId} `)) decided.delete(k);
           log(`run ${runId}: worker exited with ${code}`);
           // A worker that did not report its end leaves the run claimed: end it as failed now.
@@ -296,7 +305,7 @@ async function execute(
   log: (m: string) => void,
   sandboxed: boolean,
   browserUrl?: string,
-): Promise<number | null> {
+): Promise<{ code: number | null; askedUser: boolean }> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
   const env: Record<string, string> = {
@@ -332,9 +341,13 @@ async function execute(
       cwd: workRoot(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let askedUser = false;
     const relay = (chunk: Buffer) => {
-      for (const line of chunk.toString('utf8').split('\n'))
-        if (line.trim()) log(`  [${runId.slice(0, 6)}] ${line}`);
+      for (const line of chunk.toString('utf8').split('\n')) {
+        if (!line.trim()) continue;
+        log(`  [${runId.slice(0, 6)}] ${line}`);
+        if (endedWaitingInput(line)) askedUser = true;
+      }
     };
     child.stdout.on('data', relay);
     child.stderr.on('data', relay);
@@ -347,7 +360,7 @@ async function execute(
         for (const line of refused.slice(0, 20)) log(`run ${runId}: sandbox refused ${line}`);
         if (refused.length > 20) log(`run ${runId}: …and ${refused.length - 20} more`);
       }
-      resolve(code);
+      resolve({ code, askedUser });
     };
     child.on('close', done);
     child.on('error', (err) => {

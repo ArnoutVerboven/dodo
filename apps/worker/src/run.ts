@@ -4,15 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  authHeaderArgs,
   browserTools,
   connectBrowser,
   createSecretResolver,
   execTools,
+  type GitHubAccess,
+  githubTools,
   inheritedEnv,
+  requestBrowserTool,
   runAgent,
+  takeScreenshot,
   taskTools,
 } from '@dodo/agent';
-import { Project, Task } from '@dodo/core';
+import { type GitHubTokenResponse, Project, repoFor, Task } from '@dodo/core';
 import { PolicyEngine } from '@dodo/policy';
 import { initializeApp } from 'firebase/app';
 import {
@@ -23,36 +28,50 @@ import {
   signInAsRun,
   type WorkerEnv,
 } from './adapters.js';
+import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
 
 const HEARTBEAT_MS = 15_000;
+/** How long a remote run with a browser holds its page open for an answer (MFA, a code). */
+export const REMOTE_BROWSER_HOLD_MS = 10 * 60_000;
 const execFileP = promisify(execFile);
 
 /**
- * The project's repository is checked out into the task folder before the run. Only public
- * GitHub repos work until the credential vault (phase 5) provides a token. Configured by the
- * user on the project, so it needs no approval; later pushes still go through the policy.
+ * The task's (or project's) repository is checked out into the task folder before the run.
+ * Private repos use a read-only token from the control plane (the dodo GitHub App), passed to
+ * git for the clone only; the checkout keeps no credentials, so pushing goes through the
+ * push_branch / open_pull_request tools and their approval. Configured by the user, so the
+ * checkout itself needs no approval.
  */
 async function checkout(
   workdir: string,
   repo: string,
+  github: GitHubTokenResponse | undefined,
   log: (m: string) => void,
 ): Promise<string | undefined> {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return `repo "${repo}" is not owner/name`;
-  if ((await readdir(workdir)).length > 0) return undefined; // already there (same container)
+  const env = { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir };
+  const gitIn = (args: string[]) => execFileP('git', args, { cwd: workdir, timeout: 120_000, env });
   try {
-    await execFileP(
-      'git',
-      ['clone', '--depth', '50', '--quiet', `https://github.com/${repo}.git`, '.'],
-      {
-        cwd: workdir,
-        timeout: 120_000,
-        env: { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir },
-      },
-    );
-    log(`checked out ${repo}`);
+    if ((await readdir(workdir)).length === 0) {
+      await gitIn([
+        ...(github?.token ? authHeaderArgs(github.token) : []),
+        'clone',
+        '--depth',
+        '50',
+        '--quiet',
+        `https://github.com/${repo}.git`,
+        '.',
+      ]);
+      log(`checked out ${repo}`);
+    }
+    // Commits are the app's bot (or plain dodo); only where this run cloned or a git repo exists.
+    if (github?.botLogin && github.botEmail) {
+      await gitIn(['config', 'user.name', github.botLogin]).catch(() => undefined);
+      await gitIn(['config', 'user.email', github.botEmail]).catch(() => undefined);
+    }
     return undefined;
   } catch (err) {
-    return `checkout of ${repo} failed: ${(err as Error).message.split('\n')[0]}`;
+    const msg = (err as Error).message.split('\n')[0] ?? '';
+    return `checkout of ${repo} failed: ${github?.token ? msg.split(github.token).join('***') : msg}${github?.note ? ` (${github.note})` : ''}`;
   }
 }
 
@@ -83,24 +102,69 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
   await mkdir(workdir, { recursive: true });
   const policy = new PolicyEngine(started.policy);
-  const repo = task.ai.repo ?? project?.defaults.repo;
-  const checkoutNote = repo ? await checkout(workdir, repo, (m) => console.log(m)) : undefined;
-  const taskForRun = repo
-    ? {
-        ...task,
-        description: `${task.description}\n\n(Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.)`,
-      }
-    : task;
-
-  // The browser only when the task asked for it and the daemon handed us one.
+  const repo = repoFor(task, project);
+  const github = repo
+    ? await control.githubToken('read').catch((err: Error) => {
+        console.log(`github token unavailable: ${err.message}`);
+        return undefined;
+      })
+    : undefined;
+  const checkoutNote = repo
+    ? await checkout(workdir, repo, github, (m) => console.log(m))
+    : undefined;
+  // The browser only when the run wants one: the daemon's server on your Chrome, or headless
+  // Chromium started here in the browser worker image.
+  let headless: HeadlessBrowser | undefined;
+  let browserUrl = env.browserUrl;
+  if (started.browser && !browserUrl && env.headlessBrowser) {
+    headless = await startHeadlessBrowser({
+      outputDir: path.join(workdir, '.browser'),
+      log: (m) => console.log(m),
+    }).catch((err: Error) => {
+      console.log(`headless browser unavailable: ${err.message}`);
+      return undefined;
+    });
+    browserUrl = headless?.url;
+  }
   const browser =
-    env.browserUrl && (task.ai.browser ?? project?.defaults.browser) === 'chrome'
-      ? await connectBrowser(env.browserUrl).catch((err: Error) => {
+    started.browser && browserUrl
+      ? await connectBrowser(browserUrl).catch((err: Error) => {
           console.log(`browser unavailable: ${err.message}`);
           return undefined;
         })
       : undefined;
-  const tools = [...taskTools, ...execTools, ...(browser ? await browserTools(browser) : [])];
+  const notes = [
+    repo
+      ? `Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.`
+      : undefined,
+    started.browser && !browser
+      ? 'A browser was requested for this run but none is available here; work without one and say so if the task needs it.'
+      : undefined,
+  ].filter(Boolean);
+  const taskForRun = notes.length
+    ? { ...task, description: `${task.description}\n\n(${notes.join(' ')})` }
+    : task;
+  const githubAccess: GitHubAccess | undefined =
+    repo && !checkoutNote
+      ? {
+          repo,
+          defaultBranch: github?.defaultBranch,
+          writeToken: async () => {
+            const t = await control.githubToken('write');
+            if (!t.token) throw new Error(t.note ?? `No write access to ${repo}`);
+            return t.token;
+          },
+          openPullRequest: (req) => control.githubOpenPr(req),
+        }
+      : undefined;
+  const tools = [
+    ...taskTools,
+    ...execTools,
+    ...(githubAccess ? githubTools(githubAccess) : []),
+    ...(browser ? await browserTools(browser) : []),
+    // Browser "auto" without one yet: the agent can step up when the task needs it.
+    ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
+  ];
 
   const result = await runAgent(
     {
@@ -123,11 +187,17 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       secrets: createSecretResolver((entryId, field, host) =>
         control.resolveVault(entryId, field, host),
       ),
+      screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
+      browserKind: headless ? 'headless' : 'window',
+      // A headless page is lost with the run: hold it for the answer when the agent asks.
+      inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
+      deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
   await browser?.close();
+  await headless?.stop();
   console.log(`run ${env.runId} ended: ${result.reason} after ${result.steps} steps`);
   return result.reason;
 }
@@ -173,6 +243,11 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       ? process.env.DODO_FOLDERS.split(':').filter(Boolean)
       : undefined,
     browserUrl: process.env.DODO_BROWSER_URL || undefined,
+    headlessBrowser: process.env.DODO_BROWSER === 'headless',
+    // The entrypoint's hard timeout (index.ts) fires 20 s before DODO_TIMEOUT_S.
+    deadline: process.env.DODO_TIMEOUT_S
+      ? Date.now() + (Number(process.env.DODO_TIMEOUT_S) - 20) * 1000
+      : undefined,
     ...overrides,
   };
 }

@@ -6,6 +6,7 @@ import {
   DeviceReleaseRequest,
   FinishRequest,
   GenerateRequest,
+  GitHubTokenRequest,
   HeartbeatRequest,
   paths,
   RequestInputRequest,
@@ -16,7 +17,7 @@ import { CloudBillingClient } from '@google-cloud/billing';
 import { ExecutionsClient, JobsClient } from '@google-cloud/run';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { type Firestore, getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import { defineInt, defineString } from 'firebase-functions/params';
@@ -30,6 +31,17 @@ import { compactTask } from './compact.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
+import {
+  completeGitHubConnect,
+  disconnectGitHub,
+  GITHUB_SECRET,
+  type GitHubDeps,
+  GitHubError,
+  openPullRequest,
+  runGitHubToken,
+  startGitHubConnect,
+  syncRepos,
+} from './github.js';
 import { createApiToken, handleApiRequest, IngestError } from './ingest.js';
 import {
   completeGoogleConnect,
@@ -45,9 +57,10 @@ import {
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
+import { needsBrowser } from './routing.js';
 import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
-import { handleTelegramUpdate, notifyTelegram, telegramApi } from './telegram.js';
+import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
 import {
@@ -89,6 +102,8 @@ const JOBS_SA = 'dodo-jobs@';
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT ?? '';
 const JOBS_SA_EMAIL = PROJECT_ID ? `dodo-jobs@${PROJECT_ID}.iam.gserviceaccount.com` : JOBS_SA;
 const WORKER_JOB = 'dodo-worker';
+/** Same worker with headless Chromium and more memory; runs that want a browser go here. */
+const WORKER_BROWSER_JOB = 'dodo-worker-browser';
 const GATEWAY_SA = 'dodo-gateway@';
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
 
@@ -116,6 +131,7 @@ const telegramDeps = () => {
     db: getFirestore(),
     token,
     send: token ? telegramApi(token) : async () => undefined,
+    upload: token ? telegramUpload(token) : undefined,
     log: logger.warn,
   };
 };
@@ -246,8 +262,8 @@ export const runRequestInput = onCall(
     const req = parseOr<RequestInputRequest>(RequestInputRequest, request.data);
     const deps = controlDeps();
     const run = await loadRunForCaller(deps.db, caller(request.auth), req.runId);
-    await requestInput(deps, run, req);
-    return { ok: true };
+    const { messageId } = await requestInput(deps, run, req);
+    return { ok: true, messageId };
   },
 );
 
@@ -344,7 +360,7 @@ export const onTaskWritten = onDocumentWritten(
       ? { id: event.params.taskId, ...event.data.after.data() }
       : undefined;
     // biome-ignore lint/suspicious/noExplicitAny: Firestore data is validated downstream
-    await onTaskChanged({ db, log: logger.info }, before as any, after as any);
+    await onTaskChanged(triggerDeps(db), before as any, after as any);
     if (after && !before && (after as { titleSource?: string }).titleSource === 'ai') {
       await generateTitle(
         { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
@@ -362,8 +378,7 @@ export const onMessageWritten = onDocumentWritten(
     const after = event.data?.after.exists ? event.data.after.data() : undefined;
     if (!after) return;
     const deps = {
-      db,
-      log: logger.info,
+      ...triggerDeps(db),
       reap: (runId: string) => reapIfStale(controlDeps(), runId),
     };
     if (!before) {
@@ -380,11 +395,23 @@ export const onMessageWritten = onDocumentWritten(
   },
 );
 
+/** Run triggers: the browser router (a small model call) is only used for `auto` on a new task. */
+const triggerDeps = (db: Firestore) => ({
+  db,
+  log: logger.info,
+  needsBrowser: (task: Parameters<typeof needsBrowser>[1]) =>
+    needsBrowser(
+      { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
+      task,
+    ),
+});
+
 /** Cloud Run Jobs executor: one execution per run, env carries the run identity. */
 class CloudRunExecutor implements Executor {
-  async start(_run: unknown, env: Record<string, string>, timeoutSeconds: number) {
+  async start(run: { browser?: boolean }, env: Record<string, string>, timeoutSeconds: number) {
     const jobs = new JobsClient();
-    const name = `projects/${projectId()}/locations/${REGION}/jobs/${WORKER_JOB}`;
+    const job = run.browser ? WORKER_BROWSER_JOB : WORKER_JOB;
+    const name = `projects/${projectId()}/locations/${REGION}/jobs/${job}`;
     const [op] = await jobs.runJob({
       name,
       overrides: {
@@ -568,6 +595,103 @@ export const vaultResolve = onCall(
   },
 );
 
+/* ----------------------------- GitHub ---------------------------- */
+
+const githubDeps = (): GitHubDeps => {
+  const db = getFirestore();
+  return {
+    db,
+    secrets: isEmulator
+      ? firestoreDevStore(db, 'githubDev/app')
+      : secretManagerStore(projectId(), GITHUB_SECRET),
+    appUrl: isEmulator ? 'http://localhost:5173' : APP_URL.value(),
+    callbackUrl: isEmulator
+      ? `http://127.0.0.1:5001/${projectId()}/${REGION}/githubCallback`
+      : `https://${REGION}-${projectId()}.cloudfunctions.net/githubCallback`,
+    projectId: projectId(),
+    log: logger.info,
+  };
+};
+
+const githubCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof GitHubError) throw new HttpsError(err.code, err.message);
+    logger.error('github call failed', { err: String(err) });
+    throw new HttpsError('unknown', String(err).slice(0, 300));
+  }
+};
+
+/** Settings › GitHub: the manifest to create the app, or the page to install it. */
+export const githubConnect = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { org } = (request.data ?? {}) as { org?: string };
+    return githubCall(() => startGitHubConnect(githubDeps(), request.auth?.uid ?? '', org));
+  },
+);
+
+/** GitHub redirects here after creating the app and after installing it. */
+export const githubCallback = onRequest(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1, invoker: 'public', timeoutSeconds: 60 },
+  async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const target = await completeGitHubConnect(githubDeps(), {
+      code: q.code,
+      state: q.state,
+      installation_id: q.installation_id,
+      setup_action: q.setup_action,
+    });
+    res.redirect(302, target);
+  },
+);
+
+/** Settings › GitHub: refresh the repo list after you changed it on GitHub. */
+export const githubSync = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return githubCall(() => syncRepos(githubDeps()));
+  },
+);
+
+export const githubDisconnect = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1 },
+  async (request) => {
+    ownerOnly(request.auth);
+    return githubCall(() => disconnectGitHub(githubDeps()));
+  },
+);
+
+/** A run's token for its own repo: read to clone, write to push after your approval. */
+export const githubToken = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<GitHubTokenRequest>(GitHubTokenRequest, request.data);
+    const c = caller(request.auth);
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const deps = githubDeps();
+    const run = await loadRunForCaller(deps.db, c, req.runId);
+    return githubCall(() => runGitHubToken(deps, run, req.access));
+  },
+);
+
+/** A run opens a pull request for the branch it pushed (after your approval). */
+export const githubOpenPr = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2 },
+  async (request) => {
+    const data = (request.data ?? {}) as { runId?: string };
+    const c = caller(request.auth);
+    if (!c || !data.runId || c.claims.run !== data.runId)
+      throw new HttpsError('permission-denied', 'Runs only');
+    const deps = githubDeps();
+    const run = await loadRunForCaller(deps.db, c, data.runId);
+    return githubCall(() => openPullRequest(deps, run, data));
+  },
+);
+
 /** Runs every enabled job that is due. Each job also has its own lease, budget and caps. */
 export const jobsTick = onSchedule(
   {
@@ -696,19 +820,21 @@ export const killSwitch = onMessagePublished(
         },
         cancelRunningExecutions: async () => {
           const runs = new ExecutionsClient();
-          const parent = `projects/${projectId()}/locations/${REGION}/jobs/${WORKER_JOB}`;
           let cancelled = 0;
-          try {
-            for await (const execution of runs.listExecutionsAsync({ parent })) {
-              const running = !execution.completionTime;
-              if (running && execution.name) {
-                await runs.cancelExecution({ name: execution.name });
-                cancelled++;
+          for (const job of [WORKER_JOB, WORKER_BROWSER_JOB]) {
+            const parent = `projects/${projectId()}/locations/${REGION}/jobs/${job}`;
+            try {
+              for await (const execution of runs.listExecutionsAsync({ parent })) {
+                const running = !execution.completionTime;
+                if (running && execution.name) {
+                  await runs.cancelExecution({ name: execution.name });
+                  cancelled++;
+                }
               }
+            } catch (err) {
+              // NOT_FOUND: the job does not exist yet. Nothing to cancel.
+              if ((err as { code?: number }).code !== 5) throw err;
             }
-          } catch (err) {
-            // NOT_FOUND: the worker job does not exist yet. Nothing to cancel.
-            if ((err as { code?: number }).code !== 5) throw err;
           }
           return cancelled;
         },

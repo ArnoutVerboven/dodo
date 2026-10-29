@@ -3,6 +3,7 @@ import {
   Artifact,
   Device,
   eur,
+  GitHubConnection,
   GlobalSettings,
   type NewTask,
   PersonalInfo,
@@ -18,8 +19,10 @@ import {
 } from '@dodo/core';
 import {
   addDoc,
+  arrayRemove,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   type DocumentData,
   limit,
@@ -32,10 +35,11 @@ import {
   where,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import type { z } from 'zod';
 import { db, functions, storage } from './firebase';
+import { isTextual } from './files';
 
 export interface Live<T> {
   data: T;
@@ -296,9 +300,24 @@ export async function answerInput(
   alwaysAllow?: { rule: string; scope: 'task' | 'project' | 'global' },
 ) {
   if (!input) return;
+  // Only the answer: the request itself stays as the control plane wrote it.
   await updateDoc(doc(db, paths.messages(taskId), messageId), {
-    input: clean({ ...input, answer: { value, alwaysAllow, answeredAt: Date.now() } }),
+    'input.answer': clean({ value, alwaysAllow, answeredAt: Date.now() }),
   });
+}
+
+/** Takes back an "Always allow" answer: the rule leaves the task, project or global settings. */
+export async function removeAllowRule(
+  where: { scope: 'global' } | { scope: 'project' | 'task'; id: string },
+  rule: string,
+) {
+  const path =
+    where.scope === 'global'
+      ? paths.settings()
+      : where.scope === 'project'
+        ? paths.project(where.id)
+        : paths.task(where.id);
+  await updateDoc(doc(db, path), { allowRules: arrayRemove(rule), updatedAt: Date.now() });
 }
 
 export async function addLinkArtifact(taskId: string, name: string, url: string) {
@@ -312,10 +331,26 @@ export async function addLinkArtifact(taskId: string, name: string, url: string)
   });
 }
 
-export async function addFileArtifact(taskId: string, file: File) {
+/** A download URL for a file the control plane stored, e.g. a question's screenshot. */
+export function storedFileUrl(storagePath: string): Promise<string> {
+  return getDownloadURL(ref(storage, storagePath));
+}
+
+async function uploadTaskFile(taskId: string, file: File) {
   const storagePath = `tasks/${taskId}/${Date.now()}-${file.name}`;
-  await uploadBytes(ref(storage, storagePath), file, { contentType: file.type });
+  await uploadBytes(ref(storage, storagePath), file, { contentType: file.type || undefined });
   const url = await getDownloadURL(ref(storage, storagePath));
+  return { storagePath, url };
+}
+
+/** Best effort: a stored file left behind costs a little space, never correctness. */
+async function removeStoredFile(storagePath?: string) {
+  if (!storagePath) return;
+  await deleteObject(ref(storage, storagePath)).catch(() => {});
+}
+
+export async function addFileArtifact(taskId: string, file: File) {
+  const { storagePath, url } = await uploadTaskFile(taskId, file);
   await addDoc(collection(db, paths.artifacts(taskId)), {
     kind: 'file',
     role: 'reference',
@@ -327,8 +362,30 @@ export async function addFileArtifact(taskId: string, file: File) {
   });
 }
 
-export async function deleteArtifact(taskId: string, artifactId: string) {
-  await deleteDoc(doc(db, paths.artifacts(taskId), artifactId));
+/**
+ * Replaces an artifact's content with an uploaded file, keeping its place and role. A note the
+ * agent wrote stays a note when the new file is text, so the agent keeps reading it directly.
+ */
+export async function replaceArtifact(taskId: string, artifact: Artifact, file: File) {
+  const target = doc(db, paths.artifacts(taskId), artifact.id);
+  if (artifact.kind === 'text' && isTextual(file.name, file.type)) {
+    await updateDoc(target, { name: file.name, text: await file.text() });
+    return;
+  }
+  const { storagePath, url } = await uploadTaskFile(taskId, file);
+  await updateDoc(target, {
+    kind: 'file',
+    name: file.name,
+    storagePath,
+    url,
+    text: deleteField(),
+  });
+  if (artifact.storagePath !== storagePath) await removeStoredFile(artifact.storagePath);
+}
+
+export async function deleteArtifact(taskId: string, artifact: Artifact) {
+  await deleteDoc(doc(db, paths.artifacts(taskId), artifact.id));
+  await removeStoredFile(artifact.storagePath);
 }
 
 export async function saveProject(project: Partial<Project> & { name: string }) {
@@ -370,6 +427,43 @@ export async function saveVaultEntry(entry: VaultSaveRequest) {
 
 export async function deleteVaultEntry(id: string) {
   await httpsCallable(functions, 'vaultDelete')({ id });
+}
+
+/* ------------------------------ GitHub ------------------------------ */
+
+export const useGitHub = () => useLiveDoc(paths.github(), GitHubConnection);
+
+/**
+ * Settings › GitHub: before the app exists, posts the manifest to GitHub (which creates the app
+ * and comes back); afterwards, opens the page to install it on your repos.
+ */
+export async function connectGitHub(org?: string) {
+  const res = await httpsCallable<
+    { org?: string },
+    { kind: 'manifest'; postUrl: string; manifest: string } | { kind: 'install'; url: string }
+  >(functions, 'githubConnect')(org ? { org } : {});
+  if (res.data.kind === 'install') {
+    window.location.assign(res.data.url);
+    return;
+  }
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = res.data.postUrl;
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'manifest';
+  input.value = res.data.manifest;
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}
+
+export async function syncGitHub() {
+  await httpsCallable(functions, 'githubSync')({});
+}
+
+export async function disconnectGitHub() {
+  await httpsCallable(functions, 'githubDisconnect')({});
 }
 
 export const EUR = eur;

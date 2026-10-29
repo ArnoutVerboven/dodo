@@ -16,6 +16,8 @@ export interface TelegramDeps {
   db: Firestore;
   token: string | undefined;
   send: (method: string, body: Record<string, unknown>) => Promise<unknown>;
+  /** Multipart calls, for photos. Absent: pictures are left out and the text goes alone. */
+  upload?: (method: string, form: FormData) => Promise<unknown>;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -24,7 +26,15 @@ export interface Notification {
   body: string;
   taskId: string;
   /** Present for input requests: adds answer buttons for approvals and choices. */
-  input?: { messageId: string; kind: 'text' | 'choice' | 'approval'; options?: string[] };
+  input?: {
+    messageId: string;
+    kind: 'text' | 'choice' | 'approval';
+    options?: string[];
+    /** For approvals: the rule "Always" would store; without it there is no Always button. */
+    suggestedRule?: string;
+  };
+  /** Sent as a photo before the text: a QR code to scan, the icon to pick, a code to read. */
+  image?: { data: Buffer; mimeType: string };
   appUrl: string;
 }
 
@@ -42,6 +52,49 @@ export function telegramApi(token: string) {
   };
 }
 
+/** Multipart Bot API calls (sendPhoto); same error handling as telegramApi. */
+export function telegramUpload(token: string) {
+  return async (method: string, form: FormData) => {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const json = (await res.json()) as { ok: boolean; description?: string; result?: unknown };
+    if (!json.ok) throw new Error(`Telegram ${method}: ${json.description ?? res.status}`);
+    return json.result;
+  };
+}
+
+/**
+ * The question's picture, sent just before its text. Tracked like the text, so replying to the
+ * photo answers the question too. Fails quietly: the text still carries the question.
+ */
+async function sendPhoto(
+  deps: TelegramDeps,
+  chatId: number,
+  image: NonNullable<Notification['image']>,
+  caption: string,
+  about: SentRef,
+): Promise<void> {
+  if (!deps.upload) return;
+  const form = new FormData();
+  form.set('chat_id', String(chatId));
+  form.set('caption', caption.slice(0, 1000));
+  const ext = image.mimeType.split('/')[1] ?? 'png';
+  form.set(
+    'photo',
+    new Blob([new Uint8Array(image.data)], { type: image.mimeType }),
+    `screenshot.${ext}`,
+  );
+  try {
+    const result = (await deps.upload('sendPhoto', form)) as { message_id?: number } | undefined;
+    await track(deps, chatId, result?.message_id, about);
+  } catch (err) {
+    deps.log?.('telegram photo failed', { err: String(err) });
+  }
+}
+
 export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promise<boolean> {
   if (!deps.token) return false;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
@@ -53,7 +106,8 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
     const cb = (v: string) => `a:${n.taskId}:${n.input?.messageId}:${v}`.slice(0, 64);
     if (n.input.kind === 'approval')
       buttons.push([
-        { text: '✅ Yes', callback_data: cb('yes') },
+        { text: '✅ Once', callback_data: cb('yes') },
+        ...(n.input.suggestedRule ? [{ text: '♾️ Always', callback_data: cb(ALWAYS) }] : []),
         { text: '❌ No', callback_data: cb('no') },
       ]);
     if (n.input.kind === 'choice' && n.input.options) {
@@ -66,6 +120,8 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
   }
   const about = { taskId: n.taskId, inputMessageId: n.input?.messageId };
   const reply_markup = buttons.length ? { inline_keyboard: buttons } : undefined;
+  // Photo first, then the question with its buttons: the buttons stay on the latest message.
+  if (n.image) await sendPhoto(deps, chatId, n.image, n.title, about);
   try {
     try {
       await sendTracked(
@@ -110,14 +166,23 @@ async function sendTracked(
   about: SentRef | null,
 ): Promise<void> {
   const result = (await deps.send('sendMessage', body)) as { message_id?: number } | undefined;
-  const messageId = result?.message_id;
+  await track(deps, body.chat_id, result?.message_id, about);
+}
+
+/** Remembers a sent message: its task (for replies to it) and that it is the bot's latest. */
+async function track(
+  deps: TelegramDeps,
+  chatId: number,
+  messageId: number | undefined,
+  about: SentRef | null,
+): Promise<void> {
   if (typeof messageId !== 'number') return;
   try {
     const ref = about ? stripUndef({ ...about }) : null;
     if (ref) {
       await deps.db
-        .doc(sentDoc(body.chat_id, messageId))
-        .set({ ...ref, chatId: body.chat_id, messageId, createdAt: Date.now() });
+        .doc(sentDoc(chatId, messageId))
+        .set({ ...ref, chatId, messageId, createdAt: Date.now() });
     }
     await deps.db.doc(paths.settings()).update({ 'telegram.last': { messageId, ...(ref ?? {}) } });
   } catch (err) {
@@ -318,7 +383,9 @@ export async function handleTelegramUpdate(
     }
     const ref = deps.db.doc(`${paths.messages(taskId)}/${messageId}`);
     const snap = await ref.get();
-    const input = snap.get('input') as { answer?: unknown } | undefined;
+    const input = snap.get('input') as
+      | { answer?: unknown; kind?: string; suggestedRule?: string }
+      | undefined;
     if (!snap.exists || !input) {
       await deps.send('answerCallbackQuery', {
         callback_query_id: cq.id,
@@ -333,10 +400,21 @@ export async function handleTelegramUpdate(
       });
       return;
     }
-    await ref.update({ 'input.answer': { value, answeredAt: Date.now(), via: 'telegram' } });
+    const always =
+      value === ALWAYS && input.kind === 'approval' && input.suggestedRule
+        ? { rule: input.suggestedRule, scope: await alwaysScope(deps, taskId, input.suggestedRule) }
+        : undefined;
+    await ref.update({
+      'input.answer': {
+        value: always ? 'yes' : value,
+        ...(always ? { alwaysAllow: always } : {}),
+        answeredAt: Date.now(),
+        via: 'telegram',
+      },
+    });
     await deps.send('answerCallbackQuery', {
       callback_query_id: cq.id,
-      text: `Answered: ${value}`,
+      text: always ? `Always allowed in this ${always.scope}` : `Answered: ${value}`,
     });
     await deps
       .send('editMessageReplyMarkup', {
@@ -346,4 +424,20 @@ export async function handleTelegramUpdate(
       })
       .catch(() => {});
   }
+}
+
+const ALWAYS = 'always';
+
+/**
+ * Where "Always" from Telegram stores the rule: the task's project when it has one (the same
+ * default as the app), the task itself otherwise. A vault entry is only ever approved per task.
+ */
+async function alwaysScope(
+  deps: TelegramDeps,
+  taskId: string,
+  rule: string,
+): Promise<'task' | 'project'> {
+  if (rule.startsWith('Vault(')) return 'task';
+  const task = await deps.db.doc(paths.task(taskId)).get();
+  return task.get('projectId') ? 'project' : 'task';
 }

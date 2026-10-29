@@ -22,7 +22,10 @@ import type {
 export interface ControlPlane {
   generate(req: Omit<GenerateRequest, 'runId'>): Promise<GenerateResponse>;
   heartbeat(): Promise<HeartbeatResponse>;
-  requestInput(req: Omit<RequestInputRequest, 'runId'>): Promise<void>;
+  /** The question's message id comes back so a holding worker knows what it waits for. */
+  requestInput(
+    req: Omit<RequestInputRequest, 'runId'>,
+  ): Promise<{ messageId?: string } | undefined>;
   finish(req: Omit<FinishRequest, 'runId'>): Promise<void>;
 }
 
