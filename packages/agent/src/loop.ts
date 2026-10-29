@@ -106,6 +106,19 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       user(latest ? `The user commented:\n${latest.body}` : 'The user asked you to continue.'),
     );
   }
+  // A continued conversation with a headless browser: the pages of the earlier run are gone
+  // with it, whatever the conversation says. Say so, or the agent takes one look at the blank
+  // page and gives up.
+  if (
+    input.trigger !== 'new' &&
+    session.length > 1 &&
+    hasBrowser &&
+    opts.browserKind === 'headless'
+  ) {
+    const last = session.at(-1);
+    if (last?.role === 'user') last.parts.push({ text: HEADLESS_RESTARTED });
+    else session.push(user(HEADLESS_RESTARTED));
+  }
 
   /** The user's answer goes into the conversation; a "yes" to an approval permits that call once. */
   function takeAnswer(a: NonNullable<RunInput['answer']>) {
@@ -526,6 +539,10 @@ function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
 }
+
+/** Goes into a continued conversation whose browser (and the pages it had) was started anew. */
+export const HEADLESS_RESTARTED =
+  'Note: this run has a new browser, open on a blank page. The pages and logins of the earlier run are gone. Open the site again (browser_navigate) and continue from there; do not conclude from the blank page that the site is unreachable.';
 
 /** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */
 export const HOLD_DEADLINE_MARGIN_MS = 60_000;

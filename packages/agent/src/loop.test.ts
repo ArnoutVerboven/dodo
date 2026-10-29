@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
-import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
+import { HEADLESS_RESTARTED, HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
 
@@ -217,6 +217,33 @@ describe('runAgent', () => {
     const sent = control.requests[0]?.contents ?? [];
     expect(sent).toHaveLength(4);
     expect(sent[3]?.parts[0]?.text).toContain('B');
+  });
+
+  it('tells a resumed run with a headless browser that its pages are gone', async () => {
+    const { control, run } = setup([{ calls: [{ name: 'finish', args: { outcome: 'done' } }] }]);
+    const prior = [
+      { role: 'user' as const, parts: [{ text: 'ctx' }] },
+      { role: 'model' as const, parts: [{ functionCall: { name: 'ask_user', args: {} } }] },
+      { role: 'user' as const, parts: [{ functionResponse: { name: 'ask_user', response: {} } }] },
+    ];
+    const browserTool = { ...taskTools[0], name: 'browser_navigate' };
+    await run(
+      { trigger: 'resume', session: prior, answer: { prompt: 'Which?', value: 'B' } },
+      { tools: [...taskTools, browserTool], browserKind: 'headless' },
+    );
+    const last = control.requests[0]?.contents.at(-1);
+    expect(last?.role).toBe('user');
+    expect(JSON.stringify(last)).toContain('B');
+    expect(JSON.stringify(last)).toContain(HEADLESS_RESTARTED);
+    // A window on the Mac keeps its tabs: no such note.
+    const { control: c2, run: run2 } = setup([
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    await run2(
+      { trigger: 'resume', session: prior, answer: { prompt: 'Which?', value: 'B' } },
+      { tools: [...taskTools, browserTool], browserKind: 'window' },
+    );
+    expect(JSON.stringify(c2.requests[0]?.contents)).not.toContain(HEADLESS_RESTARTED);
   });
 
   it('steers with comments from the heartbeat before the next model call', async () => {
