@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
 import { runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
-import { taskTools, toDeclarations } from './tools.js';
+import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
 
 function setup(script: ConstructorParameters<typeof FakeControlPlane>[0]) {
   const control = new FakeControlPlane(script);
   const store = new MemoryTaskStore(sampleTask());
   const trace = new MemoryTrace();
-  const run = (extra: Partial<Parameters<typeof runAgent>[0]> = {}) =>
+  const run = (
+    extra: Partial<Parameters<typeof runAgent>[0]> = {},
+    options: Partial<Parameters<typeof runAgent>[1]> = {},
+  ) =>
     runAgent(
       {
         runId: 'r1',
@@ -19,7 +22,7 @@ function setup(script: ConstructorParameters<typeof FakeControlPlane>[0]) {
         session: [],
         ...extra,
       },
-      { control, store, trace, tools: taskTools, heartbeatMs: 0 },
+      { control, store, trace, tools: taskTools, heartbeatMs: 0, ...options },
     );
   return { control, store, trace, run };
 }
@@ -77,6 +80,57 @@ describe('runAgent', () => {
     expect(control.finishes).toHaveLength(0);
     // Session ends with the function response, so the resume can append the answer.
     expect(result.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('holds for the answer after ask_user and continues in the same run', async () => {
+    const { control, trace, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.heldAnswers.push({ messageId: 'm1', prompt: 'Enter the SMS code', value: '123456' });
+    const result = await run({}, { inputHoldMs: 5000, heartbeatMs: 10 });
+    expect(result.reason).toBe('finished');
+    expect(control.inputRequests[0]?.holdMs).toBe(5000);
+    // One run: the question, the answer, then the second model call saw the answer.
+    expect(control.requests).toHaveLength(2);
+    expect(control.requests[1]?.contents.at(-1)?.parts[0]?.text).toContain('123456');
+    expect(control.finishes[0]?.reason).toBe('finished');
+    expect(trace.types()).toContain('steer');
+  });
+
+  it('parks the run when the hold runs out without an answer', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    const result = await run({}, { inputHoldMs: 30, heartbeatMs: 10 });
+    expect(result.reason).toBe('waiting_input');
+    expect(control.inputRequests).toHaveLength(1);
+    // The question is already posted; the park goes through finish, with the session.
+    expect(control.finishes[0]?.reason).toBe('waiting_input');
+    expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('stops the hold when the heartbeat says interrupted', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    control.flags = { ok: false, reason: 'interrupted' };
+    const result = await run({}, { inputHoldMs: 5000, heartbeatMs: 10 });
+    expect(result.reason).toBe('interrupted');
+    expect(control.finishes[0]?.reason).toBe('interrupted');
+  });
+
+  it('restarts with a browser when the agent asks for one', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'request_browser', args: { reason: 'the site needs a login' } }] },
+    ]);
+    const result = await run({}, { tools: [...taskTools, requestBrowserTool] });
+    expect(result.reason).toBe('needs_browser');
+    expect(control.finishes[0]?.reason).toBe('needs_browser');
+    expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe(
+      'request_browser',
+    );
+    expect(control.requests[0]?.systemInstruction).toContain('request_browser');
   });
 
   it('attaches a browser screenshot to ask_user, cropped when a ref is given, never in the session', async () => {

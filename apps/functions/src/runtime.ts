@@ -7,9 +7,15 @@ import { HttpsError } from 'firebase-functions/v2/https';
 /** Lease duration the heartbeat renews; a worker missing three beats loses the run. */
 export const LEASE_MS = 60_000;
 export const HEARTBEAT_MS = 15_000;
-/** Cloud Run worker shape; drives infra metering and the execution timeout. */
+/** Cloud Run worker shapes; they drive infra metering and the execution timeout. */
 export const WORKER_VCPU = 1;
 export const WORKER_GIB = 1;
+/** The browser job: same CPU, twice the memory for headless Chromium. */
+export const WORKER_BROWSER_GIB = 2;
+
+export function workerShape(run: Pick<RunT, 'browser'>): { vcpu: number; gib: number } {
+  return { vcpu: WORKER_VCPU, gib: run.browser ? WORKER_BROWSER_GIB : WORKER_GIB };
+}
 
 export interface Caller {
   uid: string;

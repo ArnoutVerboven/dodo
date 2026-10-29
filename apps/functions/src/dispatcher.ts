@@ -2,10 +2,11 @@ import { affordableSeconds, type CostGate } from '@dodo/budget';
 import { type Device, deviceIdFromChoice, isDeviceOnline, paths, type Run } from '@dodo/core';
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
-import { runUid, scopesForRun, WORKER_GIB, WORKER_VCPU } from './runtime.js';
+import { runUid, scopesForRun, workerShape } from './runtime.js';
 
-/** Starts a worker for a run. Remote: a Cloud Run Job execution. Local (emulator): nothing;
- * the dev worker script picks up `dispatching` runs itself. */
+/** Starts a worker for a run. Remote: a Cloud Run Job execution (the browser job when the run
+ * wants a browser). Local (emulator): nothing; the dev worker script picks up `dispatching`
+ * runs itself. */
 export interface Executor {
   start(run: Run, env: Record<string, string>, timeoutSeconds: number): Promise<string>;
 }
@@ -56,9 +57,10 @@ export async function dispatch(
 
   try {
     const remaining = await deps.costGate.available(scopesForRun(claimed, now));
+    const shape = workerShape(claimed);
     const timeoutSeconds = Math.max(
       MIN_TIMEOUT_S,
-      Math.min(MAX_TIMEOUT_S, affordableSeconds(remaining, WORKER_VCPU, WORKER_GIB)),
+      Math.min(MAX_TIMEOUT_S, affordableSeconds(remaining, shape.vcpu, shape.gib)),
     );
     // Needs roles/iam.serviceAccountTokenCreator on the gateway account itself (signBlob).
     const token = await deps.auth.createCustomToken(runUid(runId), {

@@ -80,6 +80,16 @@ export const HeartbeatResponse = z.object({
   pendingMessages: z
     .array(z.object({ id: z.string(), body: z.string(), createdAt: Timestamp }))
     .default([]),
+  /** The answer to the question the run is holding for (see `RequestInputRequest.holdMs`). */
+  answer: z
+    .object({
+      messageId: z.string(),
+      prompt: z.string(),
+      value: z.string(),
+      suggestedRule: z.string().optional(),
+      alwaysAllow: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type HeartbeatResponse = z.infer<typeof HeartbeatResponse>;
 
@@ -92,6 +102,8 @@ export const RunEndReason = z.enum([
   'lease_lost',
   'error',
   'max_steps',
+  /** The agent asked for a browser mid-task: the run restarts with one, same session. */
+  'needs_browser',
 ]);
 export type RunEndReason = z.infer<typeof RunEndReason>;
 
@@ -123,8 +135,21 @@ export const RequestInputRequest = z.object({
   /** A screenshot to show with the question (in the app and as a Telegram photo). */
   image: ImageUpload.optional(),
   session: z.array(Content),
+  /**
+   * Keep the run alive this long waiting for the answer, instead of ending it: the heartbeat
+   * delivers the answer and the worker continues in the same session (a remote browser keeps
+   * its page and logins). The worker parks the run with `finish(waiting_input)` when it runs out.
+   */
+  holdMs: z.number().int().positive().optional(),
 });
 export type RequestInputRequest = z.infer<typeof RequestInputRequest>;
+
+export const RequestInputResponse = z.object({
+  ok: z.boolean(),
+  /** The question's thread message; the worker holds for its answer when it asked to. */
+  messageId: z.string().optional(),
+});
+export type RequestInputResponse = z.infer<typeof RequestInputResponse>;
 
 /** One step in the live trace of a run. Written per step, never per token. */
 export const RunEventType = z.enum([

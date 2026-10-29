@@ -44,7 +44,9 @@ export type ToolOutcome =
         image?: ImageUpload;
       };
     }
-  | { result: Record<string, unknown>; finish: { outcome: 'done' | 'review' | 'blocked' } };
+  | { result: Record<string, unknown>; finish: { outcome: 'done' | 'review' | 'blocked' } }
+  /** Ends the run so it restarts with a browser, same session (request_browser). */
+  | { result: Record<string, unknown>; needsBrowser: true };
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
@@ -58,6 +60,28 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
 }
 
 export const define = <S extends z.ZodType>(t: ToolDef<S>): ToolDef<S> => t;
+
+/**
+ * Offered when the task's browser setting is `auto` and this run got none: the agent found
+ * out it needs one after all. The run ends and a new one with a browser continues the session.
+ */
+export const requestBrowserTool = define({
+  name: 'request_browser',
+  description:
+    'Ask for a web browser when the task turns out to need one: a site to log in to, click through or fill in, a JavaScript app that an HTTP fetch cannot read, or something you must look at. The run restarts with the browser_* tools and your conversation so far; nothing else changes. Not for pages the http tool reads fine.',
+  schema: z.object({
+    reason: z.string().min(1).max(500).describe('What you need the browser for, in one line.'),
+  }),
+  async execute({ reason }) {
+    return {
+      result: {
+        ok: true,
+        note: `Restarting with a browser (${reason}). The browser_* tools are available from your next step; continue the task there.`,
+      },
+      needsBrowser: true,
+    };
+  },
+});
 
 export const taskTools = [
   define({
@@ -97,7 +121,7 @@ export const taskTools = [
   define({
     name: 'ask_user',
     description:
-      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run ends after this call; the answer arrives with the next run. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. a QR code to scan, a code or the icon to pick in their phone app; they may be answering from their phone.',
+      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. a QR code to scan, a code or the icon to pick in their phone app; they may be answering from their phone.',
     schema: z.object({
       kind: z.enum(['text', 'choice', 'approval']),
       prompt: z.string().min(1).max(4000),

@@ -1061,6 +1061,9 @@ function AiCard({ task }: { task: Task }) {
             <Settings2 className="h-3.5 w-3.5" />
             <span className="min-w-0 flex-1 truncate">
               {resolved.model} · {resolved.device}
+              {resolved.browser && resolved.browser !== 'none'
+                ? ` · browser ${resolved.browser}`
+                : ''}
             </span>
             <ChevronRight className="h-3.5 w-3.5 transition group-open/adv:rotate-90" />
           </summary>

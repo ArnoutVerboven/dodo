@@ -9,3 +9,7 @@ output "deployer_sa" {
 output "worker_job" {
   value = google_cloud_run_v2_job.worker.id
 }
+
+output "worker_browser_job" {
+  value = google_cloud_run_v2_job.worker_browser.id
+}
