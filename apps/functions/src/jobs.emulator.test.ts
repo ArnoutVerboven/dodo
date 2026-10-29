@@ -285,9 +285,51 @@ describe.skipIf(!enabled)('Gmail follow-up job (emulator)', () => {
     const run = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
     const taskId = run.entries[0]?.taskId as string;
     gmail.add(thread, ME, 0.2, 'Here it is', ['SENT']);
+    generate.mockResolvedValueOnce(decide({ action: 'done', reason: 'You sent the lease' }));
     const next = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
     expect(next.counts.resolved).toBe(1);
+    expect(next.entries[0]).toMatchObject({ decision: 'done', taskId });
     expect((await db.doc(`tasks/${taskId}`).get()).get('status')).toBe('done');
+  });
+
+  it('keeps the task open with the next step when your reply leaves something to do', async () => {
+    const { jobId, gmail, deps, db } = await setup({ draftReplies: false });
+    const thread = `t-${randomUUID().slice(0, 8)}`;
+    gmail.add(thread, 'jan@immo.be', 2, 'Can you send the lease?');
+    const generate = vi
+      .fn<Generate>()
+      .mockResolvedValueOnce(decide({ action: 'create', reason: 'action', title: 'Send lease' }))
+      .mockResolvedValueOnce(
+        decide({ action: 'open', reason: 'You promised it for tomorrow', nextStep: 'Send lease' }),
+      );
+    const run = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
+    const taskId = run.entries[0]?.taskId as string;
+    gmail.add(thread, ME, 0.2, 'I will send it tomorrow', ['SENT']);
+    const next = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
+    expect(next.counts.updated).toBe(1);
+    const task = await db.doc(`tasks/${taskId}`).get();
+    expect(task.get('status')).not.toBe('done');
+    expect(task.get('statusLine.text')).toBe('Send lease');
+    // The same reply is not rechecked again.
+    const third = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(third.counts.updated).toBe(0);
+  });
+
+  it('removes the task when the email is deleted in Gmail', async () => {
+    const { jobId, gmail, deps, db } = await setup({ draftReplies: false });
+    const thread = `t-${randomUUID().slice(0, 8)}`;
+    gmail.add(thread, 'jan@immo.be', 2, 'Can you send the lease?');
+    const generate = vi
+      .fn<Generate>()
+      .mockResolvedValue(decide({ action: 'create', reason: 'action', title: 'Send lease' }));
+    const run = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
+    const taskId = run.entries[0]?.taskId as string;
+    for (const m of gmail.threads.get(thread) ?? []) m.labelIds = ['TRASH'];
+    const next = await runGmailJob(deps(generate), { jobId, trigger: 'manual' });
+    expect(next.counts.removed).toBe(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect((await db.doc(`tasks/${taskId}`).get()).get('status')).toBe('cancelled');
   });
 
   it('dry runs write nothing, and a budget stop gives the message back', async () => {

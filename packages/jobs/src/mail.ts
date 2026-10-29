@@ -135,6 +135,30 @@ export function toThread(t: GmailThread): MailThread {
 export const isFromMe = (m: MailMessage, me: string) =>
   m.labels.includes('SENT') || m.fromEmail === me.toLowerCase();
 
+/**
+ * What became of a thread a task was made from (see sync.ts): gone when it was deleted or
+ * marked as spam (every message from the other side is in the trash or spam, or none is left),
+ * answered when your message is the last one, else waiting on you or them.
+ */
+export function threadState(
+  thread: MailThread,
+  me: string,
+): { kind: 'gone'; reason: string } | { kind: 'answered'; ref: string } | { kind: 'waiting' } {
+  const removed = (m: MailMessage) => m.labels.includes('TRASH') || m.labels.includes('SPAM');
+  const others = thread.messages.filter((m) => !isFromMe(m, me));
+  const pool = others.length ? others : thread.messages;
+  if (!pool.length || pool.every(removed)) {
+    const spam = pool.length > 0 && pool.every((m) => m.labels.includes('SPAM'));
+    return {
+      kind: 'gone',
+      reason: spam ? 'The email was marked as spam in Gmail' : 'The email was deleted in Gmail',
+    };
+  }
+  const last = thread.messages.filter((m) => !removed(m)).at(-1);
+  if (last && isFromMe(last, me)) return { kind: 'answered', ref: last.id };
+  return { kind: 'waiting' };
+}
+
 export type Verdict =
   | { ok: true; last: MailMessage }
   | {

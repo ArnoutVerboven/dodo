@@ -426,6 +426,8 @@ function GmailSettings({
 const DECISION_LABEL: Record<RunEntry['decision'], string> = {
   create: 'New task',
   update: 'Updated',
+  done: 'Done',
+  remove: 'Removed',
   ignore: 'Ignored',
   skip: 'Skipped',
   error: 'Failed',
@@ -454,6 +456,7 @@ function RunRow({ run }: { run: JobRun }) {
     c.created && `${c.created} new`,
     c.updated && `${c.updated} updated`,
     c.resolved && `${c.resolved} closed`,
+    c.removed && `${c.removed} removed`,
     c.ignored && `${c.ignored} ignored`,
     c.skipped && `${c.skipped} skipped`,
     c.failed && `${c.failed} failed`,
