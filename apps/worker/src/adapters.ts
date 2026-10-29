@@ -60,6 +60,8 @@ export interface WorkerEnv {
   browserUrl?: string;
   /** The browser worker image: start headless Chromium for runs that want a browser. */
   headlessBrowser?: boolean;
+  /** When the worker is killed (epoch ms), from DODO_TIMEOUT_S; a hold for an answer ends before it. */
+  deadline?: number;
 }
 
 export interface Clients {
