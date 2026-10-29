@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
-import { runAgent } from './loop.js';
+import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
 
@@ -108,6 +108,19 @@ describe('runAgent', () => {
     // The question is already posted; the park goes through finish, with the session.
     expect(control.finishes[0]?.reason).toBe('waiting_input');
     expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('does not hold past the worker deadline: it parks the run the old way', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    const result = await run(
+      {},
+      { inputHoldMs: 5000, heartbeatMs: 10, deadline: Date.now() + HOLD_DEADLINE_MARGIN_MS },
+    );
+    expect(result.reason).toBe('waiting_input');
+    // No hold: the question goes with the park, not as a held request.
+    expect(control.inputRequests[0]?.holdMs).toBeUndefined();
   });
 
   it('stops the hold when the heartbeat says interrupted', async () => {
@@ -284,5 +297,21 @@ describe('toDeclarations', () => {
     const d = toDeclarations(taskTools).find((t) => t.name === 'ask_user');
     expect(d?.parameters).toMatchObject({ type: 'object' });
     expect(JSON.stringify(d?.parameters)).not.toContain('$schema');
+  });
+});
+
+describe('holdTime', () => {
+  it('holds the full time without a deadline', () => {
+    expect(holdTime(600_000, undefined, 0)).toBe(600_000);
+    expect(holdTime(undefined, 1e9, 0)).toBeUndefined();
+  });
+
+  it('cuts the hold to the time left before the deadline, minus the margin', () => {
+    expect(holdTime(600_000, 10 * 60_000 + HOLD_DEADLINE_MARGIN_MS, 5 * 60_000)).toBe(300_000);
+    expect(holdTime(600_000, 3_600_000, 0)).toBe(600_000);
+  });
+
+  it('does not hold when under a minute would be left', () => {
+    expect(holdTime(600_000, HOLD_DEADLINE_MARGIN_MS + 30_000, 0)).toBeUndefined();
   });
 });

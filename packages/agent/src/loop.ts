@@ -38,6 +38,11 @@ export interface LoopOptions {
    * of ending the run: a remote browser keeps its page and logins across the question.
    */
   inputHoldMs?: number;
+  /**
+   * When the worker is killed (epoch ms). A hold never runs past it: the run parks in time
+   * instead of dying mid-hold with the question unanswerable until its lease expires.
+   */
+  deadline?: number;
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -340,12 +345,13 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                   summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}${outcome.askUser.image ? ' (with screenshot)' : ''}`,
                   data: { name: fc.name },
                 });
-                if (opts.inputHoldMs) {
+                const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
+                if (holdMs) {
                   // Post the question now and wait here for the answer, lease kept by the
                   // heartbeat. No answer in time: park the run exactly as without a hold.
                   const answer = await holdForAnswer(
-                    { ...outcome.askUser, session, holdMs: opts.inputHoldMs },
-                    opts.inputHoldMs,
+                    { ...outcome.askUser, session, holdMs },
+                    holdMs,
                   );
                   // The tool responses are already in the session; the answer is the next turn.
                   responses.length = 0;
@@ -457,4 +463,19 @@ function truncate(s: string, n: number): string {
 function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
+}
+
+/** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */
+export const HOLD_DEADLINE_MARGIN_MS = 60_000;
+
+/** How long to hold for an answer: the wanted hold, cut to the time left before the deadline. */
+export function holdTime(
+  inputHoldMs: number | undefined,
+  deadline: number | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (!inputHoldMs) return undefined;
+  if (deadline === undefined) return inputHoldMs;
+  const left = deadline - HOLD_DEADLINE_MARGIN_MS - now;
+  return left >= 60_000 ? Math.min(inputHoldMs, left) : undefined;
 }

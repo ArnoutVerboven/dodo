@@ -10,6 +10,14 @@ export interface PromptFeatures {
   github?: string;
 }
 
+/**
+ * Logins approved in a phone app (itsme and the like). The user answers from that same phone
+ * more often than not, and an app cannot scan a QR code shown on its own screen, so a QR is
+ * the last resort; codes also expire within a minute or two and belong to the open page.
+ */
+export const PHONE_APP_LOGIN =
+  "Phone app logins (itsme, a bank app): the user is usually answering from the phone that has the app, and the app cannot scan a QR code shown on that same phone. So when the page offers it, pick the option without a QR code (itsme: log in with your phone number, which sends a push to the app) and enter the user's mobile number from get_personal_info (or the vault entry's phone field), then ask_user to approve in the app, with a screenshot of any code or icon the page shows to match. Use a QR code only when the page has no other way, and then say in ask_user that it must be scanned from another screen (the Mac, a laptop). These requests and QR codes expire within a minute or two and only work while this page is open: ask the moment the page shows them, and if the answer says it failed, expired or went wrong, start the login again on the page for a fresh request and ask again with a new screenshot rather than reusing the old one.";
+
 export function systemPrompt(
   _task: Task,
   project: Project | undefined,
@@ -36,6 +44,7 @@ export function systemPrompt(
     lines.push(
       '',
       "Browser: the browser_* tools drive a real Chrome window on the user's own computer, visible on their screen, with a profile that keeps logins from one task to the next. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. When a page needs the user (a password, a code, itsme or another app on their phone, a QR code), do not guess and do not give up: leave the page open, bring it up with browser_tabs select, and tell them in ask_user to log in in the dodo Chrome window on their screen, naming the site (never a tab number, which means nothing to them); wait for the answer, then continue in the same tab. The login then stays for later tasks. The user may be away from the computer and answering from their phone: when the page shows something they need to see to answer (a QR code to scan, the icon or number to pick in their phone app, a code), set screenshot on ask_user, with screenshotRef and screenshotElement to crop to it when the snapshot has its ref, so the picture reaches them in the app and on Telegram. Never type credentials you were not given as a vault reference.",
+      PHONE_APP_LOGIN,
     );
   } else if (features.browser === 'headless') {
     const hold = features.holdMinutes
@@ -44,6 +53,7 @@ export function systemPrompt(
     lines.push(
       '',
       `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see, with nothing logged in. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.`,
+      PHONE_APP_LOGIN,
     );
   }
   if (features.canRequestBrowser) {

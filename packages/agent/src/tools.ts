@@ -121,7 +121,7 @@ export const taskTools = [
   define({
     name: 'ask_user',
     description:
-      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. a QR code to scan, a code or the icon to pick in their phone app; they may be answering from their phone.',
+      'Ask the user a question and stop until they answer. Use only for real decisions, missing information or approvals; make your best assumption otherwise and say so. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. the code or the icon to pick in their phone app, or a QR code (which they must scan from another screen); they may be answering from their phone.',
     schema: z.object({
       kind: z.enum(['text', 'choice', 'approval']),
       prompt: z.string().min(1).max(4000),

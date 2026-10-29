@@ -190,6 +190,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       browserKind: headless ? 'headless' : 'window',
       // A headless page is lost with the run: hold it for the answer when the agent asks.
       inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
+      deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },
@@ -242,6 +243,10 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       : undefined,
     browserUrl: process.env.DODO_BROWSER_URL || undefined,
     headlessBrowser: process.env.DODO_BROWSER === 'headless',
+    // The entrypoint's hard timeout (index.ts) fires 20 s before DODO_TIMEOUT_S.
+    deadline: process.env.DODO_TIMEOUT_S
+      ? Date.now() + (Number(process.env.DODO_TIMEOUT_S) - 20) * 1000
+      : undefined,
     ...overrides,
   };
 }
