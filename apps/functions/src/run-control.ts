@@ -382,12 +382,17 @@ async function saveInputImage(
   return { storagePath, mimeType: image.mimeType, data };
 }
 
+/**
+ * Where the task goes when its run ends. Never `todo` or `in_progress` with the run released:
+ * that is what starts a run (onTaskChanged), so a stopped task would start again at once.
+ */
 const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
   finished: 'review',
   waiting_input: 'needs_input',
-  interrupted: 'todo',
+  // Stopped by the user or the kill switch: it waits for them (a comment, or back to To do).
+  interrupted: 'needs_input',
   budget_exhausted: 'needs_input',
-  halted: 'todo',
+  halted: 'needs_input',
   lease_lost: undefined,
   error: 'needs_input',
   max_steps: 'review',
@@ -440,6 +445,15 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   if (status) taskUpdate.status = status;
   if (req.reason === 'error' || req.reason === 'lease_lost') {
     taskUpdate.statusLine = { text: `Run stopped: ${req.error ?? req.reason}`, needsYou: true };
+  }
+  if (req.reason === 'interrupted' || req.reason === 'halted') {
+    taskUpdate.statusLine = {
+      text:
+        req.reason === 'halted'
+          ? 'Stopped: processing is halted'
+          : 'Stopped. Comment or move it to To do to continue.',
+      needsYou: false,
+    };
   }
   if (req.reason === 'needs_browser') {
     taskUpdate.statusLine = { text: 'Starting again with a browser…', needsYou: false };
