@@ -58,6 +58,10 @@ export interface WorkerEnv {
   allowedFolders?: string[];
   /** Playwright MCP endpoint for the browser tools (the daemon's server on your Chrome). */
   browserUrl?: string;
+  /** The browser worker image: start headless Chromium for runs that want a browser. */
+  headlessBrowser?: boolean;
+  /** When the worker is killed (epoch ms), from DODO_TIMEOUT_S; a hold for an answer ends before it. */
+  deadline?: number;
 }
 
 export interface Clients {
@@ -140,6 +144,8 @@ export class CallableControlPlane implements ControlPlane {
       answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
       trigger: 'new' | 'comment' | 'resume';
       model: string;
+      browser?: boolean;
+      browserSetting?: 'none' | 'auto' | 'chrome';
       policy: {
         profile: 'agent-decides' | 'untrusted';
         allow: string[];
@@ -157,7 +163,7 @@ export class CallableControlPlane implements ControlPlane {
     return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }));
   }
   async requestInput(req: Omit<RequestInputRequest, 'runId'>) {
-    await this.call('runRequestInput', { runId: this.runId, ...req });
+    return this.call<{ messageId?: string }>('runRequestInput', { runId: this.runId, ...req });
   }
   async finish(req: Omit<FinishRequest, 'runId'>) {
     await this.call('runFinish', { runId: this.runId, ...req });

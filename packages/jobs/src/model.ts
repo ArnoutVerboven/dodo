@@ -7,7 +7,7 @@ import { z } from 'zod';
  *
  *   jobs/{jobId}                     config (owner edits) + state (server only)
  *   jobs/{jobId}/items/{messageId}   once-per-message ledger
- *   jobs/{jobId}/threads/{threadId}  thread → task link, open replies
+ *   jobs/{jobId}/threads/{threadId}  source item → task link, kept in sync (sync.ts)
  *   jobRuns/{runId}                  what each run did
  *   connectors/{id}                  connection status (no secrets)
  */
@@ -115,9 +115,11 @@ export type JobItem = z.infer<typeof JobItem>;
 export const JobThread = z.object({
   id: z.string(),
   taskId: z.string(),
-  /** Still watched: closes when you reply in Gmail or the task is done. */
+  /** Still watched: closes when the task is done or cancelled, or the source item is gone. */
   open: z.boolean().default(true),
   lastMessageId: z.string().optional(),
+  /** The answer of yours that was last rechecked and left the task open: not rechecked again. */
+  checkedRef: z.string().optional(),
   subject: z.string().optional(),
   /** The reply approval card waiting for an answer, if any. */
   approval: z.object({ taskId: z.string(), messageId: z.string() }).optional(),
@@ -131,7 +133,8 @@ export const RunEntry = z.object({
   threadId: z.string(),
   subject: z.string(),
   from: z.string(),
-  decision: z.enum(['ignore', 'create', 'update', 'skip', 'error']),
+  /** done: you answered and nothing is left; remove: the source item was deleted. */
+  decision: z.enum(['ignore', 'create', 'update', 'done', 'remove', 'skip', 'error']),
   reason: z.string().optional(),
   title: z.string().optional(),
   taskId: z.string().optional(),
@@ -164,6 +167,7 @@ export const JobRun = z.object({
       created: z.number().int().default(0),
       updated: z.number().int().default(0),
       resolved: z.number().int().default(0),
+      removed: z.number().int().default(0),
       failed: z.number().int().default(0),
     })
     .default({
@@ -173,6 +177,7 @@ export const JobRun = z.object({
       created: 0,
       updated: 0,
       resolved: 0,
+      removed: 0,
       failed: 0,
     }),
   entries: z.array(RunEntry).default([]),

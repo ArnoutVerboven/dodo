@@ -221,6 +221,25 @@ jobs:
             ${{ env.REGISTRY }}/worker:latest
           cache-from: type=gha,scope=worker
           cache-to: type=gha,scope=worker,mode=max
-      - name: Point the worker Cloud Run Job at the new image
-        # The job's settings and its API key are managed by infra/terraform, which ignores the image.
-        run: gcloud run jobs update dodo-worker --image "$REGISTRY/worker:${GITHUB_SHA}" --region europe-west1 --quiet
+      - name: Build and push the browser worker image
+        # Same bundle plus Playwright MCP and headless Chromium; its own cache scope.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile.browser
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/worker-browser:${{ github.sha }}
+            ${{ env.REGISTRY }}/worker-browser:latest
+          cache-from: type=gha,scope=worker-browser
+          cache-to: type=gha,scope=worker-browser,mode=max
+      - name: Point the worker Cloud Run Jobs at the new images
+        # The jobs' settings and their API key are managed by infra/terraform, which ignores the image.
+        # The browser job is created by terraform-apply, which may still be running the first time.
+        run: |
+          gcloud run jobs update dodo-worker --image "$REGISTRY/worker:${GITHUB_SHA}" --region europe-west1 --quiet
+          if gcloud run jobs describe dodo-worker-browser --region europe-west1 --quiet >/dev/null 2>&1; then
+            gcloud run jobs update dodo-worker-browser --image "$REGISTRY/worker-browser:${GITHUB_SHA}" --region europe-west1 --quiet
+          else
+            echo "::warning::dodo-worker-browser does not exist yet (terraform-apply pending); re-run Deploy once it does"
+          fi

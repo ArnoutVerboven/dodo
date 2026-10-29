@@ -56,7 +56,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 ## Phase 5 — Remote browser, credentials, MFA
 
 - Tracked as #24 (remote browser) and #25 (vault and MFA).
-- Headless Playwright MCP in the container with encrypted, domain-scoped session store.
+- Headless Playwright MCP in the container with encrypted, domain-scoped session store. **Status (2026-10-29):** the browser worker job (`dodo-worker-browser`), `auto` routing for device and browser, `request_browser` step-up and the 10-minute hold after a question are built; the session store (logins kept between remote runs) is still open.
 - Agent vault in Secret Manager: per-task scoped secret references, taint after injection, redaction. **Built (2026-10-27):** Settings › Vault and Personal info, `vaultSave`/`vaultDelete`/`vaultResolve`, `list_vault`, `request_vault_access`, `get_personal_info`, loop-level redaction. Browser tools (#23/#24) consume it.
 - MFA as input requests, optional TOTP, `local-only` services; session handoff from the Mac.
 - **Exit:** a remote task logged in to a site with a vault credential and an MFA code you typed from your phone.

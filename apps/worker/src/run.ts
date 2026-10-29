@@ -12,7 +12,9 @@ import {
   type GitHubAccess,
   githubTools,
   inheritedEnv,
+  requestBrowserTool,
   runAgent,
+  takeScreenshot,
   taskTools,
 } from '@dodo/agent';
 import { type GitHubTokenResponse, Project, repoFor, Task } from '@dodo/core';
@@ -26,8 +28,11 @@ import {
   signInAsRun,
   type WorkerEnv,
 } from './adapters.js';
+import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
 
 const HEARTBEAT_MS = 15_000;
+/** How long a remote run with a browser holds its page open for an answer (MFA, a code). */
+export const REMOTE_BROWSER_HOLD_MS = 10 * 60_000;
 const execFileP = promisify(execFile);
 
 /**
@@ -107,21 +112,38 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const checkoutNote = repo
     ? await checkout(workdir, repo, github, (m) => console.log(m))
     : undefined;
-  const taskForRun = repo
-    ? {
-        ...task,
-        description: `${task.description}\n\n(Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.)`,
-      }
-    : task;
-
-  // The browser only when the task asked for it and the daemon handed us one.
+  // The browser only when the run wants one: the daemon's server on your Chrome, or headless
+  // Chromium started here in the browser worker image.
+  let headless: HeadlessBrowser | undefined;
+  let browserUrl = env.browserUrl;
+  if (started.browser && !browserUrl && env.headlessBrowser) {
+    headless = await startHeadlessBrowser({
+      outputDir: path.join(workdir, '.browser'),
+      log: (m) => console.log(m),
+    }).catch((err: Error) => {
+      console.log(`headless browser unavailable: ${err.message}`);
+      return undefined;
+    });
+    browserUrl = headless?.url;
+  }
   const browser =
-    env.browserUrl && (task.ai.browser ?? project?.defaults.browser) === 'chrome'
-      ? await connectBrowser(env.browserUrl).catch((err: Error) => {
+    started.browser && browserUrl
+      ? await connectBrowser(browserUrl).catch((err: Error) => {
           console.log(`browser unavailable: ${err.message}`);
           return undefined;
         })
       : undefined;
+  const notes = [
+    repo
+      ? `Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.`
+      : undefined,
+    started.browser && !browser
+      ? 'A browser was requested for this run but none is available here; work without one and say so if the task needs it.'
+      : undefined,
+  ].filter(Boolean);
+  const taskForRun = notes.length
+    ? { ...task, description: `${task.description}\n\n(${notes.join(' ')})` }
+    : task;
   const githubAccess: GitHubAccess | undefined =
     repo && !checkoutNote
       ? {
@@ -140,6 +162,8 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...execTools,
     ...(githubAccess ? githubTools(githubAccess) : []),
     ...(browser ? await browserTools(browser) : []),
+    // Browser "auto" without one yet: the agent can step up when the task needs it.
+    ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
   ];
 
   const result = await runAgent(
@@ -162,11 +186,17 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       secrets: createSecretResolver((entryId, field, host) =>
         control.resolveVault(entryId, field, host),
       ),
+      screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
+      browserKind: headless ? 'headless' : 'window',
+      // A headless page is lost with the run: hold it for the answer when the agent asks.
+      inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
+      deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
   await browser?.close();
+  await headless?.stop();
   console.log(`run ${env.runId} ended: ${result.reason} after ${result.steps} steps`);
   return result.reason;
 }
@@ -212,6 +242,11 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       ? process.env.DODO_FOLDERS.split(':').filter(Boolean)
       : undefined,
     browserUrl: process.env.DODO_BROWSER_URL || undefined,
+    headlessBrowser: process.env.DODO_BROWSER === 'headless',
+    // The entrypoint's hard timeout (index.ts) fires 20 s before DODO_TIMEOUT_S.
+    deadline: process.env.DODO_TIMEOUT_S
+      ? Date.now() + (Number(process.env.DODO_TIMEOUT_S) - 20) * 1000
+      : undefined,
     ...overrides,
   };
 }

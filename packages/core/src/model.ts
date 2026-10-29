@@ -38,6 +38,9 @@ export type DeviceChoice = z.infer<typeof DeviceChoice>;
 export const ModelChoice = z.union([z.literal('auto'), z.string().min(1)]);
 export type ModelChoice = z.infer<typeof ModelChoice>;
 
+export const BrowserChoice = z.enum(['none', 'auto', 'chrome']);
+export type BrowserChoice = z.infer<typeof BrowserChoice>;
+
 /** AI settings on a task or project. Unset fields fall back to project, then global defaults. */
 export const AiConfig = z.object({
   enabled: z.boolean().default(false),
@@ -45,8 +48,12 @@ export const AiConfig = z.object({
   device: DeviceChoice.optional(),
   repo: z.string().optional(),
   folder: z.string().optional(),
-  /** `chrome`: the run may use your own Chrome on the Mac it runs on (browser tools). */
-  browser: z.enum(['none', 'chrome']).optional(),
+  /**
+   * Browser tools for the run: `none`; `auto` (a small model decides from the task, and the
+   * agent can step up mid-task); `chrome` (always: your Chrome on a Mac, headless Chromium
+   * remotely).
+   */
+  browser: BrowserChoice.optional(),
   tools: z.array(z.string()).optional(),
   budget: MicroEur.optional(),
   /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
@@ -98,6 +105,8 @@ export const Task = z.object({
   activeRunId: z.string().optional(),
   externalRefs: z.record(z.string(), z.string()).default({}),
   source: TaskSource.optional(),
+  /** Permission rules answered "Always allow" for this task, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -122,6 +131,8 @@ export const Project = z.object({
   /** Hard cap for all tasks in the project together, per calendar month. */
   monthlyBudget: MicroEur.optional(),
   instructions: z.string().default(''),
+  /** Permission rules answered "Always allow" for this project, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -130,9 +141,17 @@ export type Project = z.infer<typeof Project>;
 export const InputKind = z.enum(['text', 'choice', 'approval']);
 export type InputKind = z.infer<typeof InputKind>;
 
+/** A picture attached to a question, e.g. a screenshot of a QR code; stored in Storage. */
+export const InputImage = z.object({
+  storagePath: z.string(),
+  mimeType: z.string(),
+});
+export type InputImage = z.infer<typeof InputImage>;
+
 export const InputRequest = z.object({
   kind: InputKind,
   prompt: z.string(),
+  image: InputImage.optional(),
   options: z.array(z.string()).optional(),
   /** For approvals: the rule that "Always allow" would add, e.g. `Bash(git push:*)`. */
   suggestedRule: z.string().optional(),
@@ -193,8 +212,17 @@ export const Run = z.object({
   projectId: z.string().optional(),
   device: z.string(),
   model: z.string(),
+  /** The run gets browser tools: your Chrome on a Mac, headless Chromium in the browser job. */
+  browser: z.boolean().optional(),
+  /** Why the router chose this device and browser, shown on the task. */
+  routing: z.string().optional(),
   state: RunState,
   trigger: z.enum(['new', 'comment', 'resume']),
+  /**
+   * The run asked a question and is holding its worker (and browser) for the answer: the
+   * heartbeat delivers it until `until`, after which the worker parks the run as usual.
+   */
+  awaiting: z.object({ messageId: z.string(), until: Timestamp }).optional(),
   /** Lease generation: every worker write carries it and is rejected when it changed. */
   generation: z.number().int().nonnegative().default(0),
   lease: z.object({ owner: z.string(), expiresAt: Timestamp }).optional(),
@@ -260,5 +288,7 @@ export const GlobalSettings = z.object({
     .optional(),
   /** One-time code shown in Settings; `dodo login <code>` consumes it. */
   devicePairing: z.object({ code: z.string(), createdAt: Timestamp }).optional(),
+  /** Permission rules answered "Always allow" everywhere, e.g. `Browser(navigate:x.com)`. */
+  allowRules: z.array(z.string()).optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

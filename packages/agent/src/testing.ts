@@ -53,10 +53,20 @@ export class FakeControlPlane implements ControlPlane {
   }
   async heartbeat(): Promise<HeartbeatResponse> {
     this.heartbeats++;
-    return { ok: true, remaining: 400_000, pendingMessages: [], ...this.flags };
+    const answer = this.inputRequests.length ? this.heldAnswers.shift() : undefined;
+    return {
+      ok: true,
+      remaining: 400_000,
+      pendingMessages: [],
+      ...this.flags,
+      ...(answer ? { answer } : {}),
+    };
   }
+  /** Answers handed to a holding worker, one per heartbeat after a hold began. */
+  heldAnswers: NonNullable<HeartbeatResponse['answer']>[] = [];
   async requestInput(req: Omit<RequestInputRequest, 'runId'>) {
     this.inputRequests.push(req);
+    return { messageId: `m${this.inputRequests.length}` };
   }
   async finish(req: Omit<FinishRequest, 'runId'>) {
     this.finishes.push(req);

@@ -44,6 +44,12 @@ variable "worker_image" {
   default     = "us-docker.pkg.dev/cloudrun/container/job:latest"
 }
 
+variable "worker_browser_image" {
+  description = "Image of the browser job, used only when Terraform creates it. The deploy workflow sets the real one."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/job:latest"
+}
+
 variable "adopt" {
   description = <<-EOT
     Import ids of resources that already exist but were created outside Terraform, found by

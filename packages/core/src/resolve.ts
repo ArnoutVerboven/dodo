@@ -28,6 +28,7 @@ export function resolveAiConfig(
     budget: pick('budget') ?? settings.defaultTaskBudget,
     repo: pick('repo')?.trim() || undefined,
     folder: pick('folder'),
+    browser: pick('browser'),
     tools: pick('tools'),
   };
 }

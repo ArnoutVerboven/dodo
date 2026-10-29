@@ -1,4 +1,10 @@
-import { type Content, type Part, type RunEndReason, repoFor } from '@dodo/core';
+import {
+  type Content,
+  type HeartbeatResponse,
+  type Part,
+  type RunEndReason,
+  repoFor,
+} from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
 import {
   type ControlPlane,
@@ -12,7 +18,7 @@ import {
 } from './control-plane.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
-import { findTool, type ToolDef, toDeclarations } from './tools.js';
+import { findTool, type ToolContext, type ToolDef, toDeclarations } from './tools.js';
 
 export interface LoopOptions {
   control: ControlPlane;
@@ -23,6 +29,20 @@ export interface LoopOptions {
   workdir?: string;
   /** Vault values for tools that type into sites; every value it hands out is redacted. */
   secrets?: SecretResolver;
+  /** Screenshots of the browser page for ask_user; absent when the run has no browser. */
+  screenshot?: ToolContext['screenshot'];
+  /** What the browser is, for the system prompt: a window on the user's Mac, or headless remote. */
+  browserKind?: 'window' | 'headless';
+  /**
+   * After ask_user, stay alive this long for the answer (delivered by the heartbeat) instead
+   * of ending the run: a remote browser keeps its page and logins across the question.
+   */
+  inputHoldMs?: number;
+  /**
+   * When the worker is killed (epoch ms). A hold never runs past it: the run parks in time
+   * instead of dying mid-hold with the question unanswerable until its lease expires.
+   */
+  deadline?: number;
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -46,8 +66,11 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const log = opts.log ?? (() => {});
   const session: Content[] = [...input.session];
   const declarations = toDeclarations(tools);
+  const hasBrowser = tools.some((t) => t.name.startsWith('browser_'));
   const system = systemPrompt(input.task, input.project, {
-    browser: tools.some((t) => t.name.startsWith('browser_')),
+    browser: hasBrowser ? (opts.browserKind ?? 'window') : undefined,
+    holdMinutes: hasBrowser && opts.inputHoldMs ? Math.round(opts.inputHoldMs / 60_000) : undefined,
+    canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
     github: tools.some((t) => t.name === 'open_pull_request')
       ? repoFor(input.task, input.project)
       : undefined,
@@ -70,13 +93,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     ]);
     session.push(user(taskContext(input.task, messages, artifacts)));
   } else if (input.trigger === 'resume' && input.answer) {
-    const a = input.answer;
-    // An approval answered "yes" (without "always allow", which is already a stored rule)
-    // permits that exact call once.
-    if (a.suggestedRule && !a.alwaysAllow && /^(y|yes|ok|approve|allow)/i.test(a.value.trim())) {
-      opts.policy?.allowOnce(a.suggestedRule);
-    }
-    session.push(user(`Answer to your question "${a.prompt}":\n${a.value}`));
+    takeAnswer(input.answer);
   } else if (input.trigger === 'comment') {
     const messages = await store.recentMessages(5);
     const latest = messages.filter((m) => m.author === 'user').at(-1);
@@ -85,13 +102,24 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     );
   }
 
+  /** The user's answer goes into the conversation; a "yes" to an approval permits that call once. */
+  function takeAnswer(a: NonNullable<RunInput['answer']>) {
+    if (a.suggestedRule && !a.alwaysAllow && /^(y|yes|ok|approve|allow)/i.test(a.value.trim())) {
+      opts.policy?.allowOnce(a.suggestedRule);
+    }
+    session.push(user(`Answer to your question "${a.prompt}":\n${a.value}`));
+  }
+
   // Heartbeat: lease renewal + infra metering + flags + steering. Also on a timer so a long
   // tool call cannot let the lease expire.
   let latestFlags: Awaited<ReturnType<ControlPlane['heartbeat']>> | undefined;
   let heartbeatError: Error | undefined;
+  /** An answer the heartbeat delivered during a hold; kept until the hold takes it. */
+  let heldAnswer: HeartbeatResponse['answer'];
   const beat = async () => {
     try {
       latestFlags = await control.heartbeat();
+      if (latestFlags.answer) heldAnswer = latestFlags.answer;
     } catch (err) {
       heartbeatError = err as Error;
     }
@@ -99,8 +127,35 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const timer = opts.heartbeatMs ? setInterval(beat, opts.heartbeatMs) : undefined;
   const seenMessages = new Set<string>();
 
+  /**
+   * ask_user with a hold: post the question, then poll the heartbeat until the answer comes,
+   * the hold runs out, or the run is told to stop (flags are read by the main loop after).
+   */
+  async function holdForAnswer(
+    req: Parameters<ControlPlane['requestInput']>[0],
+    holdMs: number,
+  ): Promise<NonNullable<RunInput['answer'] & { messageId: string }> | undefined> {
+    const posted = await control.requestInput(req);
+    const messageId = posted && 'messageId' in posted ? posted.messageId : undefined;
+    const until = Date.now() + holdMs;
+    const every = opts.heartbeatMs || 1000;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, Math.min(every, Math.max(0, until - Date.now()))));
+      await beat();
+      if (heartbeatError || (latestFlags && !latestFlags.ok)) return undefined;
+      const a = heldAnswer;
+      if (a && (!messageId || a.messageId === messageId)) {
+        heldAnswer = undefined;
+        return a;
+      }
+    }
+    return undefined;
+  }
+
   let steps = 0;
   let nudges = 0;
+  /** The hold ran out: the question is posted, the run must still be parked. */
+  let parkRun = false;
   let pendingInput: Parameters<ControlPlane['requestInput']>[0] | undefined;
   let end:
     | { reason: RunEndReason; outcome?: 'done' | 'review' | 'blocked'; error?: string }
@@ -243,6 +298,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 policy: opts.policy,
                 workdir: opts.workdir,
                 secrets: opts.secrets,
+                screenshot: opts.screenshot,
               };
               const claim = tool.policy?.(parsed.data, ctx);
               const decision = claim
@@ -283,14 +339,49 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
               result = redact(outcome.result);
               if ('askUser' in outcome) {
                 responses.push(functionResponse(fc, result));
+                session.push({ role: 'user', parts: [...responses] });
+                await trace.emit({
+                  type: 'tool_result',
+                  summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}${outcome.askUser.image ? ' (with screenshot)' : ''}`,
+                  data: { name: fc.name },
+                });
+                const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
+                if (holdMs) {
+                  // Post the question now and wait here for the answer, lease kept by the
+                  // heartbeat. No answer in time: park the run exactly as without a hold.
+                  const answer = await holdForAnswer(
+                    { ...outcome.askUser, session, holdMs },
+                    holdMs,
+                  );
+                  // The tool responses are already in the session; the answer is the next turn.
+                  responses.length = 0;
+                  if (answer) {
+                    takeAnswer(answer);
+                    await trace.emit({
+                      type: 'steer',
+                      summary: `Answer: ${truncate(answer.value, 80)}`,
+                      data: { messageId: answer.messageId },
+                    });
+                  } else if (!heartbeatError && latestFlags?.ok !== false) {
+                    parkRun = true;
+                    finishWith('waiting_input');
+                  }
+                  // A stop flag during the hold is handled at the top of the loop.
+                  break;
+                }
+                pendingInput = { ...outcome.askUser, session };
+                finishWith('waiting_input');
+                break;
+              }
+              if ('needsBrowser' in outcome) {
+                responses.push(functionResponse(fc, result));
                 session.push({ role: 'user', parts: responses });
                 await trace.emit({
                   type: 'tool_result',
-                  summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}`,
+                  summary: 'request_browser: restarting with a browser',
                   data: { name: fc.name },
                 });
-                pendingInput = { ...outcome.askUser, session };
-                finishWith('waiting_input');
+                finishWith('needs_browser');
                 break;
               }
               if ('finish' in outcome) {
@@ -318,7 +409,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         });
       }
       if (end) break;
-      session.push({ role: 'user', parts: responses });
+      if (responses.length) session.push({ role: 'user', parts: responses });
     }
   } catch (err) {
     log('run failed', { err: String(err) });
@@ -341,7 +432,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   // The trace event above must be written while the run is still live; state changes last.
   if (pendingInput) {
     await control.requestInput(pendingInput);
-  } else if (final.reason !== 'waiting_input') {
+  } else if (final.reason !== 'waiting_input' || parkRun) {
     try {
       await control.finish({
         reason: final.reason,
@@ -372,4 +463,19 @@ function truncate(s: string, n: number): string {
 function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
+}
+
+/** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */
+export const HOLD_DEADLINE_MARGIN_MS = 60_000;
+
+/** How long to hold for an answer: the wanted hold, cut to the time left before the deadline. */
+export function holdTime(
+  inputHoldMs: number | undefined,
+  deadline: number | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (!inputHoldMs) return undefined;
+  if (deadline === undefined) return inputHoldMs;
+  const left = deadline - HOLD_DEADLINE_MARGIN_MS - now;
+  return left >= 60_000 ? Math.min(inputHoldMs, left) : undefined;
 }

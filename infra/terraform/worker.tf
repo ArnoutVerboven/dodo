@@ -88,3 +88,58 @@ resource "google_cloud_run_v2_job" "worker" {
 
   depends_on = [google_project_service.this]
 }
+
+# The same worker with headless Chromium (apps/worker/Dockerfile.browser), twice the memory.
+# The dispatcher sends runs that want a browser here. Same key, same env, same no-role account.
+resource "google_cloud_run_v2_job" "worker_browser" {
+  name     = "dodo-worker-browser"
+  location = var.region
+
+  template {
+    task_count = 1
+
+    template {
+      service_account = google_service_account.worker.email
+      max_retries     = 0
+      timeout         = "3600s"
+
+      containers {
+        image = var.worker_browser_image
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "2Gi"
+          }
+        }
+
+        env {
+          name  = "FIREBASE_API_KEY"
+          value = google_apikeys_key.worker.key_string
+        }
+        env {
+          name  = "FIREBASE_PROJECT_ID"
+          value = regex("(?m)^VITE_FIREBASE_PROJECT_ID=(.+)$", local.web_env)[0]
+        }
+        env {
+          name  = "FIREBASE_APP_ID"
+          value = regex("(?m)^VITE_FIREBASE_APP_ID=(.+)$", local.web_env)[0]
+        }
+        env {
+          name  = "FUNCTIONS_REGION"
+          value = var.region
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].template[0].containers[0].image,
+      client,
+      client_version,
+    ]
+  }
+
+  depends_on = [google_project_service.this]
+}

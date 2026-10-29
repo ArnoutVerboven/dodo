@@ -1,6 +1,6 @@
 import type { GenerateResponse, Part } from '@dodo/core';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentError, decideThread, type Generate } from './agent.js';
+import { AgentError, decideThread, type Generate, recheckThread } from './agent.js';
 import type { MailThread } from './mail.js';
 
 const NOW = Date.UTC(2026, 9, 27, 10);
@@ -110,5 +110,44 @@ describe('decideThread', () => {
       .fn<Generate>()
       .mockResolvedValue(reply(call('search_tasks', { query: 'huis' })));
     await expect(decideThread(ctx(loop))).rejects.toThrow('No decision after 5 model calls');
+  });
+});
+
+describe('recheckThread', () => {
+  const task = {
+    id: 'task1',
+    title: 'Send lease to Jan',
+    status: 'todo' as const,
+    priority: 'none',
+    tags: [],
+  };
+  it('returns done or open with the next step, and retries a bad decide once', async () => {
+    const generate = vi
+      .fn<Generate>()
+      .mockResolvedValueOnce(reply(call('decide', { action: 'create', reason: 'x' })))
+      .mockResolvedValueOnce(
+        reply(
+          call('decide', {
+            action: 'open',
+            reason: 'You promised to send the lease tomorrow.',
+            nextStep: 'Send the signed lease to Jan',
+            dueDate: '2026-10-28',
+          }),
+        ),
+      );
+    const r = await recheckThread({ ...ctx(generate), task } as never);
+    expect(r.recheck).toMatchObject({ action: 'open', nextStep: 'Send the signed lease to Jan' });
+    expect(r.calls).toBe(2);
+    expect(r.cost).toBe(20);
+
+    const done = vi
+      .fn<Generate>()
+      .mockResolvedValue(
+        reply(call('decide', { action: 'done', reason: 'Answered', nextStep: 'ignored' })),
+      );
+    const d = await recheckThread({ ...ctx(done), task } as never);
+    expect(d.recheck).toEqual({ action: 'done', reason: 'Answered' });
+    const prompt = done.mock.calls[0]?.[0].contents[0]?.parts[0]?.text ?? '';
+    expect(prompt).toContain('This thread already has a task: id task1');
   });
 });
