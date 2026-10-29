@@ -55,6 +55,8 @@ export const AiConfig = z.object({
    */
   browser: BrowserChoice.optional(),
   tools: z.array(z.string()).optional(),
+  /** Toolsets (Tools view) that narrow what the agent gets; none: every enabled tool. */
+  toolsets: z.array(z.string()).optional(),
   budget: MicroEur.optional(),
   /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
   profile: z.enum(['agent-decides', 'untrusted']).optional(),

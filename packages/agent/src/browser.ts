@@ -1,5 +1,6 @@
 import { type ImageUpload, vaultRefs } from '@dodo/core';
 import { z } from 'zod';
+import { connectMcp } from './mcp.js';
 import { define, type PolicyClaim, type ToolContext, type ToolDef } from './tools.js';
 
 /**
@@ -233,37 +234,5 @@ export async function resolveVault(
 
 /** Connect to a Playwright MCP server over streamable HTTP; the worker calls this once per run. */
 export async function connectBrowser(url: string): Promise<BrowserClient> {
-  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-  const { StreamableHTTPClientTransport } = await import(
-    '@modelcontextprotocol/sdk/client/streamableHttp.js'
-  );
-  const client = new Client({ name: 'dodo-worker', version: '0.1.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
-  return {
-    async listTools() {
-      const { tools } = await client.listTools();
-      return tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema as Record<string, unknown>,
-      }));
-    },
-    async callTool(name, args) {
-      const res = (await client.callTool({ name, arguments: args })) as {
-        content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-        isError?: boolean;
-      };
-      const content = res.content ?? [];
-      const text = content
-        .map((c) => (c.type === 'text' ? (c.text ?? '') : `[${c.type}]`))
-        .join('\n');
-      const images = content
-        .filter((c) => c.type === 'image' && c.data && c.mimeType)
-        .map((c) => ({ data: c.data, mimeType: c.mimeType }) as ImageUpload);
-      return { text, isError: res.isError === true, ...(images.length ? { images } : {}) };
-    },
-    async close() {
-      await client.close().catch(() => {});
-    },
-  };
+  return connectMcp(url);
 }

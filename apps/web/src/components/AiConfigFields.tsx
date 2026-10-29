@@ -1,7 +1,8 @@
 import type { AiConfig } from '@dodo/core';
 import { Input, Label, Select } from '@/components/ui/input';
-import { useDevices, useGitHub } from '@/lib/data';
+import { useDevices, useGitHub, useToolsets } from '@/lib/data';
 import { MODEL_OPTIONS } from '@/lib/options';
+import { cn } from '@/lib/utils';
 
 /** Editor for AI settings. Empty fields inherit from the project or global defaults. */
 export function AiConfigFields({
@@ -16,6 +17,14 @@ export function AiConfigFields({
   const set = (patch: Partial<AiConfig>) => onChange({ ...value, ...patch });
   const { data: devices } = useDevices();
   const { data: github } = useGitHub();
+  const { data: toolsets } = useToolsets();
+  const picked = value.toolsets;
+  const toggleToolset = (id: string) => {
+    const next = new Set(picked ?? []);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    set({ toolsets: next.size ? [...next] : undefined });
+  };
   const repos = github?.repos ?? [];
   const macs = devices.filter((d) => d.state === 'approved');
   const knownDevice =
@@ -112,6 +121,36 @@ export function AiConfigFields({
           </span>
         )}
       </label>
+      {toolsets.length > 0 && (
+        <div className="sm:col-span-2">
+          <Label>Toolsets</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {toolsets.map((t) => {
+              const on = picked?.includes(t.id) ?? false;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  aria-pressed={on}
+                  title={t.description || undefined}
+                  onClick={() => toggleToolset(t.id)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-0.5 text-xs',
+                    on ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-accent',
+                  )}
+                >
+                  {t.name}
+                </button>
+              );
+            })}
+          </div>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {picked?.length
+              ? 'Only these tools, plus the task basics.'
+              : 'None picked: the default (every tool that is on, or the project’s toolsets).'}
+          </span>
+        </div>
+      )}
       <label className="sm:col-span-2">
         <Label>Folder (local device)</Label>
         <Input

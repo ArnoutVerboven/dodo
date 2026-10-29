@@ -5,6 +5,8 @@ import {
   eur,
   GitHubConnection,
   GlobalSettings,
+  McpServer,
+  type McpServerSaveRequest,
   type NewTask,
   PersonalInfo,
   Project,
@@ -14,12 +16,15 @@ import {
   Task,
   type TaskStatus,
   ThreadMessage,
+  ToolSettings,
+  Toolset,
   VaultEntry,
   type VaultSaveRequest,
 } from '@dodo/core';
 import {
   addDoc,
   arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   deleteField,
@@ -427,6 +432,68 @@ export async function saveVaultEntry(entry: VaultSaveRequest) {
 
 export async function deleteVaultEntry(id: string) {
   await httpsCallable(functions, 'vaultDelete')({ id });
+}
+
+/* ------------------------------- Tools ------------------------------ */
+
+export const useMcpServers = () =>
+  useLiveQuery(query(collection(db, paths.mcpServers()), orderBy('name')), McpServer, []);
+
+export const useToolsets = () =>
+  useLiveQuery(query(collection(db, paths.toolsets()), orderBy('name')), Toolset, []);
+
+const DEFAULT_TOOL_SETTINGS = ToolSettings.parse({});
+export function useToolSettings(): Live<ToolSettings> {
+  const live = useLiveDoc(paths.toolSettings(), ToolSettings);
+  return { ...live, data: live.data ?? DEFAULT_TOOL_SETTINGS };
+}
+
+/** Turn a built-in tool on or off for every run. */
+export async function setBuiltinEnabled(name: string, enabled: boolean) {
+  await setDoc(
+    doc(db, paths.toolSettings()),
+    { disabledBuiltins: enabled ? arrayRemove(name) : arrayUnion(name) },
+    { merge: true },
+  );
+}
+
+export async function setServerEnabled(id: string, enabled: boolean) {
+  await updateDoc(doc(db, paths.mcpServer(id)), { enabled, updatedAt: Date.now() });
+}
+
+export async function setServerToolEnabled(id: string, tool: string, enabled: boolean) {
+  await updateDoc(doc(db, paths.mcpServer(id)), {
+    disabledTools: enabled ? arrayRemove(tool) : arrayUnion(tool),
+    updatedAt: Date.now(),
+  });
+}
+
+/** A remote server; its Authorization header goes to the server only. */
+export async function saveRemoteServer(req: McpServerSaveRequest) {
+  await httpsCallable(functions, 'mcpServerSave')(clean(req));
+}
+
+export async function deleteRemoteServer(id: string) {
+  await httpsCallable(functions, 'mcpServerDelete')({ id });
+}
+
+export async function refreshServer(id: string) {
+  const r = await httpsCallable<
+    { id: string },
+    { state: 'fetched' | 'failed' | 'queued'; tools?: number; error?: string }
+  >(functions, 'mcpRefresh')({ id });
+  return r.data;
+}
+
+export async function saveToolset(t: Pick<Toolset, 'name' | 'description' | 'tools'> & { id?: string }) {
+  const now = Date.now();
+  const { id, ...rest } = t;
+  if (id) await updateDoc(doc(db, paths.toolset(id)), clean({ ...rest, updatedAt: now }));
+  else await addDoc(collection(db, paths.toolsets()), clean({ ...rest, createdAt: now, updatedAt: now }));
+}
+
+export async function deleteToolset(id: string) {
+  await deleteDoc(doc(db, paths.toolset(id)));
 }
 
 /* ------------------------------ GitHub ------------------------------ */

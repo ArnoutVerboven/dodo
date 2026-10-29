@@ -8,11 +8,13 @@ import {
   type RequestInputRequest,
   type Run,
   type RunEndReason,
+  type RunToolAccess,
   type TaskStatus,
 } from '@dodo/core';
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
+import { toolAccessForRun } from './mcp.js';
 import {
   HEARTBEAT_MS,
   LEASE_MS,
@@ -22,6 +24,7 @@ import {
   workerShape,
 } from './runtime.js';
 import { enqueueRun } from './triggers.js';
+import type { VaultSecretStore } from './vault.js';
 
 export type Notify = (n: {
   title: string;
@@ -44,6 +47,8 @@ export interface RunControlDeps {
   costGate: CostGate;
   /** Push a "needs you" / "finished" notice to the user's channels. Never throws. */
   notify?: Notify;
+  /** Where remote MCP servers' Authorization headers are kept (the vault's secret). */
+  mcpSecrets?: Pick<VaultSecretStore, 'read'>;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -68,6 +73,8 @@ export interface StartResponse {
     deny: string[];
     allowedHosts: string[];
   };
+  /** Tools view: which built-ins and MCP servers this run gets. Absent: every built-in. */
+  tools?: RunToolAccess;
 }
 
 /** The permission rules a run is judged by: global, then project, then task, in that order. */
@@ -114,6 +121,11 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const policy = mergePolicy(task, project, settings);
+  // A broken tool setting must not keep the run from starting: it then gets the built-ins.
+  const tools = await toolAccessForRun(deps.db, run, deps.mcpSecrets).catch((err) => {
+    deps.log?.('tool access failed', { runId: run.id, err: String(err) });
+    return undefined;
+  });
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,
@@ -136,6 +148,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     browser: run.browser === true,
     browserSetting: browserSettingOf(task, project),
     policy,
+    ...(tools ? { tools } : {}),
   };
 }
 

@@ -53,6 +53,44 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run);
     }
 
+    // Tools view: built-ins turned off globally. Runs get their tools through runStart.
+    match /settings/tools {
+      allow read, write: if isOwner();
+    }
+
+    // MCP servers. Remote ones are added through mcpServerSave (their header is in Secret
+    // Manager); the owner toggles servers and tools here. A Mac lists the local servers it
+    // runs (`dodo mcp add`) on documents it owns, and writes their tool lists; whether a
+    // server and its tools are on stays the owner's call.
+    match /mcpServers/{serverId} {
+      allow read, write: if isOwner();
+      allow read: if request.auth != null
+        && request.auth.token.device is string
+        && resource.data.deviceId == request.auth.token.device
+        && isApprovedDevice(request.auth.token.device);
+      allow create: if request.auth != null
+        && request.auth.token.device is string
+        && isApprovedDevice(request.auth.token.device)
+        && request.resource.data.deviceId == request.auth.token.device
+        && request.resource.data.runsOn == 'local'
+        && serverId == request.auth.token.device + '-' + request.resource.data.slug
+        && request.resource.data.keys().hasOnly(['name', 'slug', 'runsOn', 'transport', 'url', 'command', 'args', 'deviceId', 'enabled', 'disabledTools', 'catalog', 'error', 'createdAt', 'updatedAt']);
+      allow update: if request.auth != null
+        && request.auth.token.device is string
+        && isApprovedDevice(request.auth.token.device)
+        && resource.data.deviceId == request.auth.token.device
+        && onlyChanges(['name', 'transport', 'url', 'command', 'args', 'catalog', 'error', 'updatedAt']);
+      allow delete: if request.auth != null
+        && request.auth.token.device is string
+        && isApprovedDevice(request.auth.token.device)
+        && resource.data.deviceId == request.auth.token.device;
+    }
+
+    // Toolsets: presets of tools the owner attaches to tasks and projects.
+    match /toolsets/{toolsetId} {
+      allow read, write: if isOwner();
+    }
+
     // Vault entries hold names, sites and field names only; values are in Secret Manager and
     // reach a run one at a time through vaultResolve. Writes go through vaultSave/vaultDelete.
     match /vault/{entryId} {

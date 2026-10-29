@@ -29,7 +29,14 @@ import {
 } from './config.js';
 import { credentialStore } from './credentials.js';
 import { runDaemon, workerEntry } from './daemon.js';
-import { agentInstalled, installAgent, uninstallAgent } from './launchd.js';
+import { agentInstalled, installAgent, restartAgent, uninstallAgent } from './launchd.js';
+import {
+  connectLocal,
+  type LocalMcpConfig,
+  refreshServer,
+  reportError,
+  syncServers,
+} from './mcp.js';
 import { sandboxReport } from './sandbox.js';
 
 const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
@@ -44,6 +51,13 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo daemon uninstall
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
+  dodo mcp               the MCP servers this Mac runs for the agent (shown in the Tools view)
+  dodo mcp add <name> [--title "Outlook"] [--env KEY=VALUE]... -- <command> [args...]
+  dodo mcp add <name> --url http://localhost:3000/mcp [--header "Authorization: Bearer …"]
+                         add one (e.g. dodo mcp add outlook -- npx -y outlook-mcp); it starts
+                         once here, so a sign-in it asks for shows up in this terminal
+  dodo mcp test <name>   start it here and list its tools (sign in again, if it asks)
+  dodo mcp remove <name>
   dodo browser           how tasks get a browser: dodo's own Chrome window by default (log in
                          there once), or your everyday Chrome through the Playwright Extension
   dodo browser install   open the Playwright Extension in the Web Store (optional, one click)
@@ -182,6 +196,119 @@ async function folders(action: string | undefined, target: string | undefined) {
   if (config.folders.length === 0)
     console.log('No folders yet. The agent works in a scratch folder under ~/.dodo/work.');
   for (const f of config.folders) console.log(f);
+}
+
+/** Values of a flag given more than once (`--env A=1 --env B=2`). */
+function many(argv: string[], flag: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] as string;
+    if (a === `--${flag}` && argv[i + 1] !== undefined) out.push(argv[++i] as string);
+    else if (a.startsWith(`--${flag}=`)) out.push(a.slice(flag.length + 3));
+  }
+  return out;
+}
+
+const SLUG = /^[a-z][a-z0-9-]{0,23}$/;
+
+/** Local MCP servers: config on this Mac, documents for the Tools view, tools fetched here. */
+async function mcp(
+  action: string | undefined,
+  slug: string | undefined,
+  argv: string[],
+  command: string[],
+) {
+  const config = requireConfig();
+  const servers = config.mcp ?? [];
+  const flags = parse(argv).flags;
+  const save = async (next: LocalMcpConfig[]) => {
+    config.mcp = next;
+    writeConfig(config);
+    const clients = connect(config, credentialStore());
+    await currentUser(clients);
+    await syncServers(clients.db, config.deviceId, next);
+    return clients;
+  };
+  const tryOut = async (s: LocalMcpConfig, db: Parameters<typeof refreshServer>[0]) => {
+    console.log(`Starting ${s.slug}… (if it asks you to sign in, do that now)`);
+    try {
+      // Its own output goes to this terminal: a device code or sign-in link shows up here.
+      const client = await connectLocal(s, (line) => console.log(`  ${line}`));
+      const n = await refreshServer(db, config.deviceId, s, client);
+      await client.close();
+      console.log(`${s.slug}: ${n} tools. They are in the Tools view now.`);
+    } catch (err) {
+      const message = (err as Error).message;
+      await reportError(db, config.deviceId, s.slug, message);
+      console.log(`${s.slug} did not start: ${message}`);
+    }
+  };
+  const restart = () =>
+    console.log(
+      restartAgent()
+        ? 'Restarted the background daemon so runs get it.'
+        : 'Restart the daemon (pnpm dodo daemon) so runs get it.',
+    );
+
+  if (action === 'add') {
+    if (!slug || !SLUG.test(slug))
+      throw new Error(
+        'Usage: dodo mcp add <name> -- <command> [args...]  (name: lowercase, e.g. outlook)',
+      );
+    const url = str(flags.url);
+    if (!url && command.length === 0)
+      throw new Error('Give the command after --, e.g. dodo mcp add outlook -- npx -y outlook-mcp');
+    const env = Object.fromEntries(
+      many(argv, 'env').map((kv) => {
+        const i = kv.indexOf('=');
+        if (i < 1) throw new Error(`--env ${kv}: use KEY=VALUE`);
+        return [kv.slice(0, i), kv.slice(i + 1)];
+      }),
+    );
+    const headers = Object.fromEntries(
+      many(argv, 'header').map((h) => {
+        const i = h.indexOf(':');
+        if (i < 1) throw new Error(`--header ${h}: use "Name: value"`);
+        return [h.slice(0, i).trim(), h.slice(i + 1).trim()];
+      }),
+    );
+    const entry: LocalMcpConfig = JSON.parse(
+      JSON.stringify({
+        slug,
+        name: str(flags.title),
+        ...(url
+          ? { url, headers: Object.keys(headers).length ? headers : undefined }
+          : { command: command[0], args: command.slice(1) }),
+        env: Object.keys(env).length ? env : undefined,
+      }),
+    );
+    const clients = await save([...servers.filter((s) => s.slug !== slug), entry]);
+    await tryOut(entry, clients.db);
+    restart();
+    return;
+  }
+  if (action === 'remove') {
+    if (!slug || !servers.some((s) => s.slug === slug))
+      throw new Error(`No MCP server ${slug ?? ''}`);
+    await save(servers.filter((s) => s.slug !== slug));
+    console.log(`Removed ${slug}.`);
+    restart();
+    return;
+  }
+  if (action === 'test') {
+    const s = servers.find((x) => x.slug === slug);
+    if (!s) throw new Error(`No MCP server ${slug ?? ''}; dodo mcp lists them`);
+    const clients = connect(config, credentialStore());
+    await currentUser(clients);
+    await tryOut(s, clients.db);
+    return;
+  }
+  if (servers.length === 0)
+    console.log('No MCP servers on this Mac. Add one: dodo mcp add outlook -- npx -y <package>');
+  for (const s of servers)
+    console.log(
+      `${s.slug}${s.name ? ` (${s.name})` : ''}: ${s.url ?? [s.command, ...(s.args ?? [])].join(' ')}${s.env ? `  env: ${Object.keys(s.env).join(', ')}` : ''}`,
+    );
 }
 
 /** The agent's browser is your Chrome: the extension does the driving, the token skips its dialog. */
@@ -331,7 +458,11 @@ async function setup(
   return 0;
 }
 
-async function main(argv: string[]): Promise<number> {
+async function main(full: string[]): Promise<number> {
+  // Everything after `--` is a command line of its own (`dodo mcp add x -- npx -y pkg --flag`).
+  const dashes = full.indexOf('--');
+  const argv = dashes >= 0 ? full.slice(0, dashes) : full;
+  const rest = dashes >= 0 ? full.slice(dashes + 1) : [];
   const { args, flags } = parse(argv);
   const [cmd, sub, third] = args;
   switch (cmd) {
@@ -364,6 +495,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'browser':
       await browser(sub, third);
+      return 0;
+    case 'mcp':
+      await mcp(sub, third, argv, rest);
       return 0;
     case 'doctor':
       await doctor();

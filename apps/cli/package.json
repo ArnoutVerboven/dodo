@@ -12,7 +12,8 @@
   "scripts": {
     "build": "node scripts/bundle.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "catalog": "node scripts/catalog.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81",

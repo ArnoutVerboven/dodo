@@ -6,4 +6,5 @@ export * from './model.js';
 export * from './paths.js';
 export * from './resolve.js';
 export * from './run.js';
+export * from './tools.js';
 export * from './vault.js';
