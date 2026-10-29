@@ -19,9 +19,9 @@ import {
   runUid,
   scopesForRun,
   stripUndefined,
-  WORKER_GIB,
-  WORKER_VCPU,
+  workerShape,
 } from './runtime.js';
+import { enqueueRun } from './triggers.js';
 
 export type Notify = (n: {
   title: string;
@@ -55,6 +55,10 @@ export interface StartResponse {
   answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
   trigger: Run['trigger'];
   model: string;
+  /** The run gets browser tools (its executor provides them: your Chrome, or headless Chromium). */
+  browser: boolean;
+  /** The task's browser setting: `auto` lets the agent step up with request_browser. */
+  browserSetting: 'none' | 'auto' | 'chrome';
   /** Merged permission rules: task, project and global. */
   policy: {
     profile: 'agent-decides' | 'untrusted';
@@ -126,8 +130,20 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     answer: raw.answer as StartResponse['answer'],
     trigger: run.trigger,
     model: run.model,
+    browser: run.browser === true,
+    browserSetting: browserSettingOf(task, project),
     policy,
   };
+}
+
+function browserSettingOf(
+  task: Record<string, unknown>,
+  project: Record<string, unknown> | undefined,
+): StartResponse['browserSetting'] {
+  const ai = (task.ai ?? {}) as Record<string, unknown>;
+  const pdefaults = (project?.defaults ?? {}) as Record<string, unknown>;
+  const v = ai.browser ?? pdefaults.browser;
+  return v === 'auto' || v === 'chrome' ? v : 'none';
 }
 
 /**
@@ -142,7 +158,8 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
 
   // Settle the previous infra slice at its full reserved amount and reserve the next one.
   if (run.device === 'gcp') {
-    const slice = computeCost(HEARTBEAT_MS / 1000, WORKER_VCPU, WORKER_GIB);
+    const shape = workerShape(run);
+    const slice = computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib);
     const prev = (await ref.get()).get('infraReservation') as string | undefined;
     if (prev) await deps.costGate.settle(prev, slice);
     try {
@@ -193,15 +210,61 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
       createdAt: d.get('createdAt') as number,
     }));
 
-  return { ok: true, remaining: await deps.costGate.available(scopes), pendingMessages };
+  // A run holding for an answer gets it here, and the task goes back to working.
+  const answer = fresh.awaiting ? await heldAnswer(deps, run, fresh.awaiting.messageId) : undefined;
+  if (answer) {
+    await ref.update({ awaiting: FieldValue.delete(), updatedAt: now });
+    await deps.db.doc(paths.task(run.taskId)).update({
+      status: 'in_progress',
+      statusLine: { text: 'Working…', needsYou: false },
+      updatedAt: now,
+    });
+  }
+
+  return {
+    ok: true,
+    remaining: await deps.costGate.available(scopes),
+    pendingMessages,
+    ...(answer ? { answer } : {}),
+  };
 }
 
-/** ask_user: store the session, post the question, park the task. The run ends here. */
+async function heldAnswer(
+  deps: RunControlDeps,
+  run: Run,
+  messageId: string,
+): Promise<HeartbeatResponse['answer']> {
+  const msg = (await deps.db.doc(`${paths.messages(run.taskId)}/${messageId}`).get()).data() as
+    | {
+        input?: {
+          prompt: string;
+          suggestedRule?: string;
+          answer?: { value: string; alwaysAllow?: unknown };
+        };
+      }
+    | undefined;
+  const a = msg?.input?.answer;
+  if (!a) return undefined;
+  return stripUndefined({
+    messageId,
+    prompt: msg?.input?.prompt ?? '',
+    value: a.value,
+    suggestedRule: msg?.input?.suggestedRule,
+    alwaysAllow: !!a.alwaysAllow,
+  });
+}
+
+/**
+ * ask_user: store the session and post the question. Without a hold the run ends here and
+ * the answer starts a new one. With a hold the worker stays (a remote browser keeps its page
+ * and logins): the task is parked for the user but keeps the run, the heartbeat delivers the
+ * answer, and the worker parks the run itself (`finish(waiting_input)`) when the hold runs out.
+ */
 export async function requestInput(
   deps: RunControlDeps,
   run: Run,
   req: Omit<RequestInputRequest, 'runId'>,
-) {
+): Promise<{ messageId: string }> {
   const now = (deps.now ?? Date.now)();
   const sessionPath = await saveSession(deps, run.id, req.session);
   const messageRef = deps.db.collection(paths.messages(run.taskId)).doc();
@@ -226,23 +289,37 @@ export async function requestInput(
       createdAt: now,
     }),
   );
-  batch.update(deps.db.doc(paths.run(run.id)), {
-    state: 'waiting_input',
-    sessionPath,
-    endReason: 'waiting_input',
-    endedAt: now,
-    updatedAt: now,
-    lease: FieldValue.delete(),
-    infraReservation: FieldValue.delete(),
-  });
-  batch.update(deps.db.doc(paths.task(run.taskId)), {
-    status: 'needs_input',
-    activeRunId: FieldValue.delete(),
-    statusLine: { text: `Waiting for you: ${req.prompt.slice(0, 100)}`, needsYou: true },
-    updatedAt: now,
-  });
-  await batch.commit();
-  await endRun(deps, run);
+  if (req.holdMs) {
+    batch.update(deps.db.doc(paths.run(run.id)), {
+      sessionPath,
+      awaiting: { messageId: messageRef.id, until: now + req.holdMs },
+      updatedAt: now,
+    });
+    batch.update(deps.db.doc(paths.task(run.taskId)), {
+      status: 'needs_input',
+      statusLine: { text: `Waiting for you: ${req.prompt.slice(0, 100)}`, needsYou: true },
+      updatedAt: now,
+    });
+    await batch.commit();
+  } else {
+    batch.update(deps.db.doc(paths.run(run.id)), {
+      state: 'waiting_input',
+      sessionPath,
+      endReason: 'waiting_input',
+      endedAt: now,
+      updatedAt: now,
+      lease: FieldValue.delete(),
+      infraReservation: FieldValue.delete(),
+    });
+    batch.update(deps.db.doc(paths.task(run.taskId)), {
+      status: 'needs_input',
+      activeRunId: FieldValue.delete(),
+      statusLine: { text: `Waiting for you: ${req.prompt.slice(0, 100)}`, needsYou: true },
+      updatedAt: now,
+    });
+    await batch.commit();
+    await endRun(deps, run);
+  }
   const title = (await deps.db.doc(paths.task(run.taskId)).get()).get('title') as string;
   await deps.notify?.({
     title: `Needs you: ${title}`,
@@ -256,6 +333,7 @@ export async function requestInput(
     }),
     image: image && { data: image.data, mimeType: image.mimeType },
   });
+  return { messageId: messageRef.id };
 }
 
 const IMAGE_EXT: Record<string, string> = {
@@ -301,9 +379,15 @@ const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
   lease_lost: undefined,
   error: 'needs_input',
   max_steps: 'review',
+  needs_browser: 'in_progress',
 };
 
-/** Any end other than ask_user: archive, settle, release the task, revoke the identity. */
+/**
+ * Any end other than ask_user: archive, settle, release the task, revoke the identity. Two
+ * ends continue by themselves: `waiting_input` from a worker whose hold ran out (the answer
+ * starts a new run, as if there had been no hold), and `needs_browser` (a new run with a
+ * browser picks the session up at once).
+ */
 export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishRequest, 'runId'>) {
   const now = (deps.now ?? Date.now)();
   // A run reaped without a session (worker died) keeps whatever session it started from.
@@ -312,13 +396,15 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     : run.sessionPath;
   const tracePath = await archiveTrace(deps, run.id);
   const state: Run['state'] =
-    req.reason === 'finished' || req.reason === 'max_steps'
+    req.reason === 'finished' || req.reason === 'max_steps' || req.reason === 'needs_browser'
       ? 'succeeded'
-      : req.reason === 'interrupted' || req.reason === 'halted'
-        ? 'interrupted'
-        : req.reason === 'budget_exhausted'
-          ? 'budget_exhausted'
-          : 'failed';
+      : req.reason === 'waiting_input'
+        ? 'waiting_input'
+        : req.reason === 'interrupted' || req.reason === 'halted'
+          ? 'interrupted'
+          : req.reason === 'budget_exhausted'
+            ? 'budget_exhausted'
+            : 'failed';
 
   const batch = deps.db.batch();
   batch.update(
@@ -333,6 +419,7 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
       updatedAt: now,
       lease: FieldValue.delete(),
       infraReservation: FieldValue.delete(),
+      awaiting: FieldValue.delete(),
     }),
   );
   const taskRef = deps.db.doc(paths.task(run.taskId));
@@ -341,6 +428,9 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   if (status) taskUpdate.status = status;
   if (req.reason === 'error' || req.reason === 'lease_lost') {
     taskUpdate.statusLine = { text: `Run stopped: ${req.error ?? req.reason}`, needsYou: true };
+  }
+  if (req.reason === 'needs_browser') {
+    taskUpdate.statusLine = { text: 'Starting again with a browser…', needsYou: false };
   }
   batch.update(taskRef, taskUpdate);
 
@@ -385,6 +475,32 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   }
   await batch.commit();
   await endRun(deps, run);
+
+  if (req.reason === 'waiting_input') {
+    // The question was posted (and announced) when the hold began. If the answer came in the
+    // moment the hold ended, nobody else will start the resume: do it here.
+    const held = run.awaiting?.messageId;
+    const answered = held ? await heldAnswer(deps, run, held) : undefined;
+    if (answered) {
+      await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
+        trigger: 'resume',
+        sessionPath,
+        browser: run.browser,
+        answer: answered,
+      });
+    }
+    return;
+  }
+  if (req.reason === 'needs_browser') {
+    const id = await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
+      trigger: 'resume',
+      sessionPath,
+      browser: true,
+    });
+    deps.log?.('run restarted with a browser', { taskId: run.taskId, runId: id });
+    return;
+  }
+
   const title = (await taskRef.get()).get('title') as string;
   const headline =
     req.reason === 'finished'
@@ -423,8 +539,10 @@ async function endRun(deps: RunControlDeps, run: Run) {
   const prev = (await deps.db.doc(paths.run(run.id)).get()).get('infraReservation') as
     | string
     | undefined;
-  if (prev)
-    await deps.costGate.settle(prev, computeCost(HEARTBEAT_MS / 1000, WORKER_VCPU, WORKER_GIB));
+  if (prev) {
+    const shape = workerShape(run);
+    await deps.costGate.settle(prev, computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib));
+  }
   try {
     await deps.auth.deleteUser(runUid(run.id));
   } catch (err) {

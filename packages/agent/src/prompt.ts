@@ -1,9 +1,19 @@
 import type { Project, Task } from '@dodo/core';
 
+export interface PromptFeatures {
+  /** The run has browser tools: a Chrome window on the user's Mac, or headless Chromium remotely. */
+  browser?: 'window' | 'headless';
+  /** Headless: how long the page stays open while a question waits for the user. */
+  holdMinutes?: number;
+  /** No browser now, but request_browser can get one. */
+  canRequestBrowser?: boolean;
+  github?: string;
+}
+
 export function systemPrompt(
   _task: Task,
   project: Project | undefined,
-  features: { browser?: boolean; github?: string } = {},
+  features: PromptFeatures = {},
 ): string {
   const lines = [
     "You are dodo, a personal asynchronous task agent working on one task from the user's board.",
@@ -22,10 +32,24 @@ export function systemPrompt(
     'Logins and other secret values are in the vault (list_vault). You never see the values: refer to them as {{vault:<id>.<field>}} in browser_type text or browser_fill_form values, after request_vault_access for this task. Never ask the user to send a password in the thread. If no tool can log in to a site, say so plainly and suggest what the user can do.',
     'Always finish by updating the Summary, then the Status, then calling finish.',
   ];
-  if (features.browser) {
+  if (features.browser === 'window') {
     lines.push(
       '',
       "Browser: the browser_* tools drive a real Chrome window on the user's own computer, visible on their screen, with a profile that keeps logins from one task to the next. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. When a page needs the user (a password, a code, itsme or another app on their phone, a QR code), do not guess and do not give up: leave the page open, bring it up with browser_tabs select, and tell them in ask_user to log in in the dodo Chrome window on their screen, naming the site (never a tab number, which means nothing to them); wait for the answer, then continue in the same tab. The login then stays for later tasks. The user may be away from the computer and answering from their phone: when the page shows something they need to see to answer (a QR code to scan, the icon or number to pick in their phone app, a code), set screenshot on ask_user, with screenshotRef and screenshotElement to crop to it when the snapshot has its ref, so the picture reaches them in the app and on Telegram. Never type credentials you were not given as a vault reference.",
+    );
+  } else if (features.browser === 'headless') {
+    const hold = features.holdMinutes
+      ? `While ask_user waits for the answer the page stays open for up to ${features.holdMinutes} minutes, so ask as soon as the page asks, say exactly what you need (the code, which icon, whether it is confirmed), and continue in the same page when the answer comes; after that the browser and its logins are gone and the next run starts fresh, so finish a login in one go where you can.`
+      : 'The run ends when you ask the user something, and the browser and its logins are gone with it, so finish a login in one go where you can.';
+    lines.push(
+      '',
+      `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see, with nothing logged in. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.`,
+    );
+  }
+  if (features.canRequestBrowser) {
+    lines.push(
+      '',
+      'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation.',
     );
   }
   if (features.github) {

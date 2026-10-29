@@ -53,7 +53,7 @@ export function AiConfigFields({
           onChange={(e) => set({ device: e.target.value || undefined })}
         >
           <option value="">Default</option>
-          <option value="auto">Auto (small model decides)</option>
+          <option value="auto">Auto (your Mac when online, else remote)</option>
           <option value="gcp">Remote (GCP sandbox)</option>
           {macs.map((d) => (
             <option key={d.id} value={`mac:${d.id}`}>
@@ -73,7 +73,8 @@ export function AiConfigFields({
         >
           <option value="">Default (none)</option>
           <option value="none">None</option>
-          <option value="chrome">Your Chrome (on a Mac with the browser set up)</option>
+          <option value="auto">Auto (only when the task needs one)</option>
+          <option value="chrome">Yes (your Chrome on a Mac, headless Chromium remotely)</option>
         </Select>
       </label>
       <label>
