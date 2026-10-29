@@ -834,6 +834,9 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
+/** Approval buttons are taller on a phone, so they are easy to tap. */
+const TOUCH_SIZE = 'h-10 sm:h-8';
+
 const SCOPE_LABEL = {
   task: 'for this task',
   project: 'for this project',
@@ -927,40 +930,65 @@ function InputRequestView({
       {req.kind === 'approval' && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => answer('approve')}>
+            <Button size="sm" className={TOUCH_SIZE} onClick={() => answer('approve')}>
               Allow once
             </Button>
             {req.suggestedRule !== undefined && (
-              <span className="relative inline-flex">
-                <Button size="sm" variant="outline" tabIndex={-1} aria-hidden>
-                  Allow always <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-                <select
-                  aria-label="Allow always"
-                  title={`Always allow ${req.suggestedRule}`}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  value=""
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === 'edit') setShowRule(true);
-                    else if (v)
-                      void answer('approve', {
-                        rule: req.suggestedRule ?? '',
-                        scope: v as typeof scope,
-                      });
-                  }}
+              // A split button: the main part allows at the default scope, only the chevron
+              // opens the scope menu. One select over the whole button made a tap on a phone
+              // open the menu instead of allowing.
+              <span className="inline-flex">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={cn(TOUCH_SIZE, 'rounded-r-none')}
+                  title={`Always allow ${req.suggestedRule} ${SCOPE_LABEL[scope]}`}
+                  onClick={() => answer('approve', { rule: req.suggestedRule ?? '', scope })}
                 >
-                  <option value="" disabled hidden>
-                    Allow always
-                  </option>
-                  <option value="task">For this task</option>
-                  {!isVault && hasProject && <option value="project">For this project</option>}
-                  {!isVault && <option value="global">Everywhere</option>}
-                  <option value="edit">Edit the rule first…</option>
-                </select>
+                  Allow always
+                </Button>
+                <span className="relative -ml-px inline-flex">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={cn(TOUCH_SIZE, 'w-10 justify-center rounded-l-none px-0 sm:w-8')}
+                    tabIndex={-1}
+                    aria-hidden
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                  <select
+                    aria-label="Allow always: choose where"
+                    title="Choose where to always allow"
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                    value=""
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === 'edit') setShowRule(true);
+                      else if (v)
+                        void answer('approve', {
+                          rule: req.suggestedRule ?? '',
+                          scope: v as typeof scope,
+                        });
+                    }}
+                  >
+                    <option value="" disabled hidden>
+                      Allow always
+                    </option>
+                    <option value="task">For this task</option>
+                    {!isVault && hasProject && <option value="project">For this project</option>}
+                    {!isVault && <option value="global">Everywhere</option>}
+                    <option value="edit">Edit the rule first…</option>
+                  </select>
+                </span>
               </span>
             )}
-            <Button size="sm" variant="outline" onClick={() => answer('deny')}>
+            <Button
+              size="sm"
+              variant="outline"
+              className={TOUCH_SIZE}
+              onClick={() => answer('deny')}
+            >
               Deny
             </Button>
           </div>
