@@ -3,6 +3,7 @@ import { vaultRef, vaultRule } from '@dodo/core';
 import type { ActionCategory, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
 import type { TaskStore } from './control-plane.js';
+import { qrLink } from './qr.js';
 import type { SecretResolver } from './secrets.js';
 
 /**
@@ -121,7 +122,7 @@ export const taskTools = [
   define({
     name: 'ask_user',
     description:
-      'Ask the user and stop until they answer. Use it when a short answer saves a lot of work or rework (inputs only they know, a choice that changes the outcome) or for an approval; otherwise make your best assumption, say so, and keep going. Ask everything you will need for the rest of the task in this one call, as a short numbered list with your best guess for each, then finish the task yourself once they answer. Lead with what you need from them. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. the code or the icon to pick in their phone app, or a QR code (which they must scan from another screen); they may be answering from their phone.',
+      'Ask the user and stop until they answer. Use it when a short answer saves a lot of work or rework (inputs only they know, a choice that changes the outcome) or for an approval; otherwise make your best assumption, say so, and keep going. Ask everything you will need for the rest of the task in this one call, as a short numbered list with your best guess for each, then finish the task yourself once they answer. Lead with what you need from them. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. the code or the icon to pick in their phone app, or a QR code (a QR code that is a link is added to the question as text, to tap on the phone); they may be answering from their phone.',
     schema: z.object({
       kind: z.enum(['text', 'choice', 'approval']),
       prompt: z.string().min(1).max(4000),
@@ -155,6 +156,14 @@ export const taskTools = [
         // A crop that failed (stale ref) still beats no picture: fall back to the whole page.
         if (!image && target) image = await ctx.screenshot?.().catch(() => undefined);
         if (!image) note += ' No screenshot could be taken, so the question was sent without it.';
+      }
+      // A QR code that is a link goes with the question as text too: on the phone that has
+      // the app, the user taps it instead of scanning a picture on the same screen.
+      const link = image && qrLink(image);
+      if (link) {
+        question.prompt += `\n\nOn the phone that has the app, open this link instead of scanning: ${link}`;
+        note +=
+          ' The QR code is a link; it was added to the question so the user can tap it on their phone.';
       }
       return {
         result: { ok: true, note, ...(image ? { screenshot: 'attached' } : {}) },
