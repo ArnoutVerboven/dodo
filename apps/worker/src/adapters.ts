@@ -144,6 +144,7 @@ export class CallableControlPlane implements ControlPlane {
       answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
       trigger: 'new' | 'comment' | 'resume';
       model: string;
+      contextWindow?: number;
       browser?: boolean;
       browserSetting?: 'none' | 'auto' | 'chrome';
       policy: {

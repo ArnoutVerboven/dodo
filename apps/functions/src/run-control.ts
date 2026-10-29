@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type CostGate, computeCost } from '@dodo/budget';
+import { type CostGate, computeCost, contextWindow } from '@dodo/budget';
 import {
   type Content,
   type FinishRequest,
@@ -55,6 +55,8 @@ export interface StartResponse {
   answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
   trigger: Run['trigger'];
   model: string;
+  /** The model's context window, for compacting the conversation before it overflows. */
+  contextWindow: number;
   /** The run gets browser tools (its executor provides them: your Chrome, or headless Chromium). */
   browser: boolean;
   /** The task's browser setting: `auto` lets the agent step up with request_browser. */
@@ -130,6 +132,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     answer: raw.answer as StartResponse['answer'],
     trigger: run.trigger,
     model: run.model,
+    contextWindow: contextWindow(run.model),
     browser: run.browser === true,
     browserSetting: browserSettingOf(task, project),
     policy,
@@ -175,23 +178,31 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
       await ref.update({ infraReservation: r.id, spent: FieldValue.increment(prev ? slice : 0) });
     } catch {
       await ref.update({ infraReservation: FieldValue.delete() });
-      return { ok: false, reason: 'budget_exhausted', remaining: 0, pendingMessages: [] };
+      return {
+        ok: false,
+        reason: 'budget_exhausted',
+        remaining: 0,
+        pendingMessages: [],
+        compact: false,
+      };
     }
   }
 
   const fresh = (await ref.get()).data() as Run;
   if (settings.halted === true)
-    return { ok: false, reason: 'halted', remaining: 0, pendingMessages: [] };
+    return { ok: false, reason: 'halted', remaining: 0, pendingMessages: [], compact: false };
   if (fresh.interrupt)
-    return { ok: false, reason: 'interrupted', remaining: 0, pendingMessages: [] };
+    return { ok: false, reason: 'interrupted', remaining: 0, pendingMessages: [], compact: false };
   if (fresh.generation !== run.generation)
-    return { ok: false, reason: 'lease_lost', remaining: 0, pendingMessages: [] };
+    return { ok: false, reason: 'lease_lost', remaining: 0, pendingMessages: [], compact: false };
 
   await ref.update({
     state: 'running',
     lease: { owner: runUid(run.id), expiresAt: now + LEASE_MS },
     startedAt: fresh.startedAt ?? now,
     updatedAt: now,
+    // A compaction request is handed over once.
+    ...(fresh.compact ? { compact: false } : {}),
   });
 
   const since = fresh.startedAt ?? run.createdAt;
@@ -225,6 +236,7 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
     ok: true,
     remaining: await deps.costGate.available(scopes),
     pendingMessages,
+    compact: fresh.compact === true,
     ...(answer ? { answer } : {}),
   };
 }

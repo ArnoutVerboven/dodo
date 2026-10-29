@@ -18,20 +18,67 @@ export interface ModelPrice {
   outputPerM: number;
   /** Max output tokens the model accepts; used to size reservations. */
   maxOutputTokens: number;
+  /** Max input tokens per request: the most conversation the model can see at once. */
+  contextWindow: number;
 }
 
 export const MODEL_PRICES: Record<string, ModelPrice> = {
   // Global endpoint, standard tier, checked 2026-10-26. Regional endpoints cost about 10% more.
   // The 3.6–3.8 Flash prices are promotional until 2026-12-31; they double on 2027-01-01.
-  'gemini-3.8-flash': { inputPerM: 0.75, outputPerM: 3.75, maxOutputTokens: 65_536 },
-  'gemini-3.5-flash': { inputPerM: 1.5, outputPerM: 9, maxOutputTokens: 65_536 },
-  'gemini-3.5-flash-lite': { inputPerM: 0.3, outputPerM: 2.5, maxOutputTokens: 65_536 },
-  'gemini-3.1-flash-lite': { inputPerM: 0.25, outputPerM: 1.5, maxOutputTokens: 65_536 },
-  'gemini-3.1-pro-preview': { inputPerM: 4, outputPerM: 18, maxOutputTokens: 65_536 },
-  'gemini-2.5-flash-lite': { inputPerM: 0.1, outputPerM: 0.4, maxOutputTokens: 65_536 },
-  'gemini-2.5-flash': { inputPerM: 0.3, outputPerM: 2.5, maxOutputTokens: 65_536 },
-  'gemini-2.5-pro': { inputPerM: 2.5, outputPerM: 15, maxOutputTokens: 65_536 },
+  'gemini-3.8-flash': {
+    inputPerM: 0.75,
+    outputPerM: 3.75,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-3.5-flash': {
+    inputPerM: 1.5,
+    outputPerM: 9,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-3.5-flash-lite': {
+    inputPerM: 0.3,
+    outputPerM: 2.5,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-3.1-flash-lite': {
+    inputPerM: 0.25,
+    outputPerM: 1.5,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-3.1-pro-preview': {
+    inputPerM: 4,
+    outputPerM: 18,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-2.5-flash-lite': {
+    inputPerM: 0.1,
+    outputPerM: 0.4,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-2.5-flash': {
+    inputPerM: 0.3,
+    outputPerM: 2.5,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
+  'gemini-2.5-pro': {
+    inputPerM: 2.5,
+    outputPerM: 15,
+    maxOutputTokens: 65_536,
+    contextWindow: 1_048_576,
+  },
 };
+
+/** The model's context window; 1M tokens for a model not in the table (every Gemini today). */
+export function contextWindow(model: string): number {
+  return MODEL_PRICES[model]?.contextWindow ?? 1_048_576;
+}
 
 /** Cloud Run (jobs, tier 1 region) per-second prices in USD. */
 export const CLOUD_RUN_PRICE = { vcpuSecond: 0.000018, gibSecond: 0.000002 };
