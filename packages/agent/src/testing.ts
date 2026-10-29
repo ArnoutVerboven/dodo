@@ -25,6 +25,8 @@ export class FakeControlPlane implements ControlPlane {
   requests: GenerateRequest[] = [];
   heartbeats = 0;
   flags: Partial<HeartbeatResponse> = {};
+  /** Input tokens every scripted reply reports. */
+  inputTokens = 100;
   inputRequests: Array<Omit<RequestInputRequest, 'runId'>> = [];
   finishes: Array<Omit<FinishRequest, 'runId'>> = [];
 
@@ -46,7 +48,12 @@ export class FakeControlPlane implements ControlPlane {
           };
     return {
       content,
-      usage: { inputTokens: 100, outputTokens: 20, thinkingTokens: 0, cachedInputTokens: 0 },
+      usage: {
+        inputTokens: this.inputTokens,
+        outputTokens: 20,
+        thinkingTokens: 0,
+        cachedInputTokens: 0,
+      },
       cost: 1000,
       remaining: 400_000,
     };
@@ -58,6 +65,7 @@ export class FakeControlPlane implements ControlPlane {
       ok: true,
       remaining: 400_000,
       pendingMessages: [],
+      compact: false,
       ...this.flags,
       ...(answer ? { answer } : {}),
     };

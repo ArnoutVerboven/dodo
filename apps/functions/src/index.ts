@@ -29,6 +29,7 @@ import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { claimOwnership as claim } from './claim-ownership.js';
+import { compactTask } from './compact.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
@@ -448,6 +449,29 @@ export const onRunCreated = onDocumentCreated(
       event.params.runId,
     );
     logger.info('dispatch', { runId: event.params.runId, result });
+  },
+);
+
+/** Task view › Compact: summarise the conversation now, or at a working run's next step. */
+export const taskCompact = onCall(
+  { serviceAccount: GATEWAY_SA, memory: '512MiB', timeoutSeconds: 300, maxInstances: 2 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { taskId } = (request.data ?? {}) as { taskId?: string };
+    if (typeof taskId !== 'string' || !taskId) throw new HttpsError('invalid-argument', 'taskId');
+    const db = getFirestore();
+    return compactTask(
+      {
+        gateway: {
+          db,
+          costGate: costGateFor(db),
+          provider: provider(),
+          hourlyCap: DEFAULT_HOURLY_CAP,
+        },
+        storage: getStorage(),
+      },
+      taskId,
+    );
   },
 );
 

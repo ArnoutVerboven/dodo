@@ -51,6 +51,8 @@ export const GenerateRequest = z.object({
   maxOutputTokens: z.number().int().positive().optional(),
   thinkingBudget: z.number().int().nonnegative().optional(),
   temperature: z.number().min(0).max(2).optional(),
+  /** `compact`: the call summarises the conversation, so it says nothing of its size. */
+  purpose: z.enum(['step', 'compact']).optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 
@@ -82,6 +84,8 @@ export const HeartbeatResponse = z.object({
   pendingMessages: z
     .array(z.object({ id: z.string(), body: z.string(), createdAt: Timestamp }))
     .default([]),
+  /** The owner asked to compact the conversation before the next model call. */
+  compact: z.boolean().default(false),
   /** The answer to the question the run is holding for (see `RequestInputRequest.holdMs`). */
   answer: z
     .object({
@@ -161,6 +165,7 @@ export const RunEventType = z.enum([
   'tool_call',
   'tool_result',
   'steer',
+  'compacted',
   'error',
   'run_finished',
 ]);

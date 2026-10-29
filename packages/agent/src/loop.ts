@@ -1,9 +1,14 @@
 import {
+  COMPACT_SYSTEM,
   type Content,
+  compactedSession,
+  compactionRequest,
+  compactThreshold,
   type HeartbeatResponse,
   type Part,
   type RunEndReason,
   repoFor,
+  summaryText,
 } from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
 import {
@@ -38,6 +43,11 @@ export interface LoopOptions {
    * of ending the run: a remote browser keeps its page and logins across the question.
    */
   inputHoldMs?: number;
+  /**
+   * When the worker is killed (epoch ms). A hold never runs past it: the run parks in time
+   * instead of dying mid-hold with the question unanswerable until its lease expires.
+   */
+  deadline?: number;
   /** Hard stop on the number of model calls per run. */
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
@@ -109,11 +119,14 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   // tool call cannot let the lease expire.
   let latestFlags: Awaited<ReturnType<ControlPlane['heartbeat']>> | undefined;
   let heartbeatError: Error | undefined;
+  // The server hands a compaction request over once, possibly to a timer beat: keep it.
+  let compactAsked = false;
   /** An answer the heartbeat delivered during a hold; kept until the hold takes it. */
   let heldAnswer: HeartbeatResponse['answer'];
   const beat = async () => {
     try {
       latestFlags = await control.heartbeat();
+      if (latestFlags.compact) compactAsked = true;
       if (latestFlags.answer) heldAnswer = latestFlags.answer;
     } catch (err) {
       heartbeatError = err as Error;
@@ -122,6 +135,10 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const timer = opts.heartbeatMs ? setInterval(beat, opts.heartbeatMs) : undefined;
   const seenMessages = new Set<string>();
 
+  // Tokens the conversation held at the last model call: the task's figure for a restored one.
+  const window = input.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+  let contextTokens = input.session.length ? (input.task.context?.tokens ?? 0) : 0;
+  let autoCompact = true;
   /**
    * ask_user with a hold: post the question, then poll the heartbeat until the answer comes,
    * the hold runs out, or the run is told to stop (flags are read by the main loop after).
@@ -200,6 +217,52 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         break;
       }
 
+      // Compaction: on request, or before the conversation grows past the threshold.
+      const asked = compactAsked;
+      if (
+        (asked || (autoCompact && contextTokens >= compactThreshold(window))) &&
+        session.length > 1
+      ) {
+        compactAsked = false;
+        const before = contextTokens;
+        const replaced = session.length;
+        let summary = '';
+        try {
+          const reply = await control.generate({
+            model: input.model,
+            systemInstruction: COMPACT_SYSTEM,
+            contents: compactionRequest(session),
+            purpose: 'compact',
+          });
+          summary = summaryText(redact(reply.content));
+        } catch (err) {
+          if (err instanceof GatewayBudgetError) {
+            finishWith('budget_exhausted', { error: err.message });
+            break;
+          }
+          if (err instanceof GatewayHaltedError) {
+            finishWith('halted');
+            break;
+          }
+          if (err instanceof LeaseLostError) {
+            finishWith('lease_lost');
+            break;
+          }
+          log('compaction failed', { err: String(err) });
+        }
+        // An empty or failed summary keeps the conversation as it is; the next step goes on.
+        if (summary) session.splice(0, session.length, ...compactedSession(summary));
+        else autoCompact = false; // no retry on every step
+        contextTokens = 0;
+        await trace.emit({
+          type: 'compacted',
+          summary: summary
+            ? `Compacted the conversation (${asked ? 'asked' : 'automatic'}): ${replaced} turns, ${Math.round(before / 1000)}k tokens → a summary`
+            : 'Compaction failed; continuing with the full conversation',
+          data: { asked, before, turns: replaced, summary: truncate(summary, 2000) },
+        });
+      }
+
       steps++;
       await trace.emit({
         type: 'model_call',
@@ -235,6 +298,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       }
       response = { ...response, content: redact(response.content) };
       session.push(response.content);
+      contextTokens = response.usage.inputTokens + response.usage.outputTokens;
       const calls = response.content.parts.filter((p) => p.functionCall);
       const text = response.content.parts
         .filter((p) => p.text && !p.thought)
@@ -340,12 +404,13 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                   summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}${outcome.askUser.image ? ' (with screenshot)' : ''}`,
                   data: { name: fc.name },
                 });
-                if (opts.inputHoldMs) {
+                const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
+                if (holdMs) {
                   // Post the question now and wait here for the answer, lease kept by the
                   // heartbeat. No answer in time: park the run exactly as without a hold.
                   const answer = await holdForAnswer(
-                    { ...outcome.askUser, session, holdMs: opts.inputHoldMs },
-                    opts.inputHoldMs,
+                    { ...outcome.askUser, session, holdMs },
+                    holdMs,
                   );
                   // The tool responses are already in the session; the answer is the next turn.
                   responses.length = 0;
@@ -441,6 +506,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   return { reason: final.reason, steps, session };
 }
 
+/** Every current Gemini model takes 1M input tokens. */
+const DEFAULT_CONTEXT_WINDOW = 1_048_576;
+
 const user = (text: string): Content => ({ role: 'user', parts: [{ text }] });
 
 function functionResponse(
@@ -457,4 +525,19 @@ function truncate(s: string, n: number): string {
 function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
+}
+
+/** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */
+export const HOLD_DEADLINE_MARGIN_MS = 60_000;
+
+/** How long to hold for an answer: the wanted hold, cut to the time left before the deadline. */
+export function holdTime(
+  inputHoldMs: number | undefined,
+  deadline: number | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (!inputHoldMs) return undefined;
+  if (deadline === undefined) return inputHoldMs;
+  const left = deadline - HOLD_DEADLINE_MARGIN_MS - now;
+  return left >= 60_000 ? Math.min(inputHoldMs, left) : undefined;
 }

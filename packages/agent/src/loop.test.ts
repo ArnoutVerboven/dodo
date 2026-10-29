@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
-import { runAgent } from './loop.js';
+import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
 
@@ -108,6 +108,19 @@ describe('runAgent', () => {
     // The question is already posted; the park goes through finish, with the session.
     expect(control.finishes[0]?.reason).toBe('waiting_input');
     expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe('ask_user');
+  });
+
+  it('does not hold past the worker deadline: it parks the run the old way', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'ask_user', args: { kind: 'text', prompt: 'Enter the SMS code' } }] },
+    ]);
+    const result = await run(
+      {},
+      { inputHoldMs: 5000, heartbeatMs: 10, deadline: Date.now() + HOLD_DEADLINE_MARGIN_MS },
+    );
+    expect(result.reason).toBe('waiting_input');
+    // No hold: the question goes with the park, not as a held request.
+    expect(control.inputRequests[0]?.holdMs).toBeUndefined();
   });
 
   it('stops the hold when the heartbeat says interrupted', async () => {
@@ -284,5 +297,92 @@ describe('toDeclarations', () => {
     const d = toDeclarations(taskTools).find((t) => t.name === 'ask_user');
     expect(d?.parameters).toMatchObject({ type: 'object' });
     expect(JSON.stringify(d?.parameters)).not.toContain('$schema');
+  });
+
+  it('compacts the conversation once it passes the threshold and carries on from the summary', async () => {
+    const { control, trace, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: 'Summary: read the document, next write the summary.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.inputTokens = 250_000;
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    const summaryCall = control.requests[1];
+    expect(summaryCall?.purpose).toBe('compact');
+    expect(summaryCall?.tools).toBeUndefined();
+    expect(summaryCall?.contents).toHaveLength(1);
+    expect(summaryCall?.contents[0]?.parts[0]?.text).toContain('[agent → set_status]');
+    // The next step sees only the summary, not the old turns.
+    const next = control.requests[2];
+    expect(next?.contents[0]?.parts[0]?.text).toContain('This conversation was compacted');
+    expect(next?.contents[0]?.parts[0]?.text).toContain('next write the summary');
+    expect(next?.contents).toHaveLength(1);
+    expect(trace.types()).toContain('compacted');
+  });
+
+  it('compacts on request from the heartbeat, below the threshold', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: 'Summary of the work.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    const heartbeat = control.heartbeat.bind(control);
+    control.heartbeat = async () => {
+      const r = await heartbeat();
+      return { ...r, compact: control.heartbeats === 2 };
+    };
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    expect(control.requests[1]?.purpose).toBe('compact');
+    expect(control.requests).toHaveLength(3);
+  });
+
+  it('keeps the conversation when the summary is empty and does not retry every step', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'Reading' } }] },
+      { text: '' },
+      { calls: [{ name: 'set_status', args: { text: 'Still going' } }] },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    control.inputTokens = 250_000;
+    const result = await run();
+    expect(result.reason).toBe('finished');
+    expect(control.requests.filter((r) => r.purpose === 'compact')).toHaveLength(1);
+    expect(control.requests[2]?.contents.length).toBeGreaterThan(1);
+  });
+
+  it('compacts a restored conversation that is already over the threshold', async () => {
+    const { control, store, run } = setup([
+      { text: 'Summary.' },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    store.messages.push({ author: 'user', body: 'Go on', createdAt: 1 });
+    await run({
+      trigger: 'comment',
+      task: { ...store.task, context: { tokens: 300_000 } },
+      session: [
+        { role: 'user', parts: [{ text: 'Task' }] },
+        { role: 'model', parts: [{ text: 'Working on it' }] },
+      ],
+    });
+    expect(control.requests[0]?.purpose).toBe('compact');
+    expect(control.requests[0]?.contents[0]?.parts[0]?.text).toContain('Go on');
+  });
+});
+
+describe('holdTime', () => {
+  it('holds the full time without a deadline', () => {
+    expect(holdTime(600_000, undefined, 0)).toBe(600_000);
+    expect(holdTime(undefined, 1e9, 0)).toBeUndefined();
+  });
+
+  it('cuts the hold to the time left before the deadline, minus the margin', () => {
+    expect(holdTime(600_000, 10 * 60_000 + HOLD_DEADLINE_MARGIN_MS, 5 * 60_000)).toBe(300_000);
+    expect(holdTime(600_000, 3_600_000, 0)).toBe(600_000);
+  });
+
+  it('does not hold when under a minute would be left', () => {
+    expect(holdTime(600_000, HOLD_DEADLINE_MARGIN_MS + 30_000, 0)).toBeUndefined();
   });
 });

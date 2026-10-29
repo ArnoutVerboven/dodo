@@ -63,6 +63,8 @@ export interface WorkerEnv {
   headlessBrowser?: boolean;
   /** Mac: the daemon's endpoints for this Mac's local MCP servers, by server id. */
   mcpUrls?: Record<string, string>;
+  /** When the worker is killed (epoch ms), from DODO_TIMEOUT_S; a hold for an answer ends before it. */
+  deadline?: number;
 }
 
 export interface Clients {
@@ -145,6 +147,7 @@ export class CallableControlPlane implements ControlPlane {
       answer?: { prompt: string; value: string; suggestedRule?: string; alwaysAllow?: boolean };
       trigger: 'new' | 'comment' | 'resume';
       model: string;
+      contextWindow?: number;
       browser?: boolean;
       browserSetting?: 'none' | 'auto' | 'chrome';
       policy: {

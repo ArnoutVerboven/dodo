@@ -126,6 +126,7 @@ export async function enqueueRun(
       trigger: opts.trigger,
       generation: 0,
       interrupt: false,
+      compact: false,
       attempts: 0,
       sessionPath: opts.sessionPath,
       spent: 0,
