@@ -1,4 +1,4 @@
-import { answerRefs, vaultRefs } from '@dodo/core';
+import { answerRef, answerRefs, sameSite, vaultRefs } from '@dodo/core';
 
 /**
  * Vault values inside a run (ARCHITECTURE §9.2). The model only ever writes references like
@@ -16,6 +16,11 @@ export interface SecretResolver {
   resolve(text: string, host: string): Promise<string>;
   /** Replaces every value resolved so far in this run with its reference. */
   redact(text: string): string;
+  /**
+   * Keeps a value the run itself fetched (an emailed sign-in code) under `{{answer:<id>}}`,
+   * typed only on `site` (any of its subdomains) and redacted from now on. Returns the reference.
+   */
+  hold(id: string, value: string, site: string): string;
 }
 
 export { vaultRefs as findVaultRefs } from '@dodo/core';
@@ -30,6 +35,8 @@ export function createSecretResolver(
 ): SecretResolver {
   /** value → reference, longest values first when redacting. */
   const seen = new Map<string, string>();
+  /** Values this run fetched itself, by answer id, with the site they belong to. */
+  const held = new Map<string, { value: string; site: string }>();
   return {
     async resolve(text, host) {
       let out = text;
@@ -39,12 +46,27 @@ export function createSecretResolver(
         out = out.split(r.ref).join(value);
       }
       for (const r of answerRefs(text)) {
+        const own = held.get(r.messageId);
+        if (own) {
+          if (!sameSite(host, own.site))
+            throw new Error(
+              `That code is for ${own.site} and can only be typed there, not on ${host}.`,
+            );
+          out = out.split(r.ref).join(own.value);
+          continue;
+        }
         if (!fetchAnswer) throw new Error('Secret answers are not available in this run.');
         const value = await fetchAnswer(r.messageId);
         if (value.length >= MIN_REDACT) seen.set(value, r.ref);
         out = out.split(r.ref).join(value);
       }
       return out;
+    },
+    hold(id, value, site) {
+      const ref = answerRef(id);
+      held.set(id, { value, site });
+      if (value.length >= MIN_REDACT) seen.set(value, ref);
+      return ref;
     },
     redact(text) {
       if (!seen.size || !text) return text;

@@ -200,6 +200,15 @@ function google(shared: JobsShared) {
   return { gmail: new GmailClient(session), calendar: new CalendarClient(session) };
 }
 
+/** Gmail for a run's emailed sign-in codes; undefined when Google is not configured. */
+export function gmailFor(shared: JobsShared): GmailClient | undefined {
+  const client = shared.oauth();
+  if (!client) return undefined;
+  return new GmailClient(
+    new GoogleSession(shared.fetch ?? fetch, client, () => shared.tokens.get()),
+  );
+}
+
 export async function runJob(
   shared: JobsShared,
   jobId: string,

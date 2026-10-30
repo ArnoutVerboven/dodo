@@ -432,6 +432,37 @@ export const catalog: unknown[] = [
     }
   },
   {
+    "name": "get_email_code",
+    "group": "browser",
+    "description": "Get a one-time sign-in or verification code that the site you are on has just emailed to the user, straight from their mailbox, instead of asking them. Call it as soon as the page says it sent a code by email. It waits for the mail (up to wait_seconds), and with ref it types the code into that field itself; without ref it returns a reference to type with browser_type. You never see the code. A code already used in this run is skipped, so after 'resend code' call it again for the new one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "The code field, as a human-readable description (as for browser_type).",
+          "type": "string",
+          "maxLength": 300
+        },
+        "ref": {
+          "description": "The code field (the first box when the code goes into one box per digit) from the page snapshot; the code is typed into it.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "sender": {
+          "description": "Only when the mail comes from another domain than the page (login.live.com mails from microsoft.com): that domain. Asks the user first.",
+          "type": "string",
+          "maxLength": 253
+        },
+        "wait_seconds": {
+          "default": 90,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 180
+        }
+      }
+    }
+  },
+  {
     "name": "browser_navigate",
     "group": "browser",
     "description": "Navigate to a URL",

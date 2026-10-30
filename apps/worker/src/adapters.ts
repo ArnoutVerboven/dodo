@@ -9,6 +9,8 @@ import {
 } from '@dodo/agent';
 import {
   Artifact,
+  type EmailCodeRequest,
+  EmailCodeResponse,
   type FinishRequest,
   type GenerateRequest,
   GenerateResponse,
@@ -208,6 +210,18 @@ export class CallableControlPlane implements ControlPlane {
       return (r.data as { value: string }).value;
     } catch (err) {
       throw new Error((err as Error).message || 'Secret answer not available');
+    }
+  }
+  /** The newest sign-in code a site emailed the user, for the browser tool to type. */
+  async emailCode(req: Omit<EmailCodeRequest, 'runId'>): Promise<EmailCodeResponse> {
+    try {
+      const r = await httpsCallable(this.fns, 'runEmailCode', { timeout: 60_000 })({
+        runId: this.runId,
+        ...req,
+      });
+      return EmailCodeResponse.parse(r.data);
+    } catch (err) {
+      return { found: false, error: (err as Error).message || 'Email codes not available' };
     }
   }
   /** The task's remote-browser logins: `get` before the browser starts, `put` when the run ends. */

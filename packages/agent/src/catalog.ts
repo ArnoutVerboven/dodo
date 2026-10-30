@@ -1,5 +1,5 @@
 import type { BuiltinGroup, BuiltinTool } from '@dodo/core';
-import { BROWSER_TOOLS } from './browser.js';
+import { BROWSER_TOOLS, emailCodeTool } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
 import { webSearchTool } from './search-tools.js';
@@ -49,7 +49,19 @@ export function builtinCatalog(): BuiltinTool[] {
       'web',
     ],
     [github, 'github'],
-    [[requestBrowserTool as ToolDef, requestDeviceTool as ToolDef], 'browser'],
+    [
+      [
+        requestBrowserTool as ToolDef,
+        requestDeviceTool as ToolDef,
+        emailCodeTool({
+          fetch: async () => ({ found: false }),
+          host: () => '',
+          since: () => undefined,
+          type: async () => ({}),
+        }),
+      ],
+      'browser',
+    ],
   ];
   return entries.flatMap(([tools, group]) =>
     toDeclarations(tools).map((d) => ({

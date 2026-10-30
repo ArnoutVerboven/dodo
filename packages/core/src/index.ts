@@ -1,5 +1,6 @@
 export * from './compaction.js';
 export * from './device.js';
+export * from './email-code.js';
 export * from './github.js';
 export * from './ingest.js';
 export * from './local-model.js';

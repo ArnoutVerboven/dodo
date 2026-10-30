@@ -224,6 +224,19 @@ export class GmailClient {
     return res.threads ?? [];
   }
 
+  async listMessages(q: string, max: number): Promise<Array<{ id: string; threadId: string }>> {
+    const res = await this.s.request<{ messages?: Array<{ id: string; threadId: string }> }>(
+      `${GMAIL}/messages?${new URLSearchParams({ q, maxResults: String(max) })}`,
+    );
+    return res.messages ?? [];
+  }
+
+  getMessage(id: string, format: 'metadata' | 'full'): Promise<GmailMessage> {
+    return this.s.request<GmailMessage>(
+      `${GMAIL}/messages/${encodeURIComponent(id)}?${new URLSearchParams({ format })}`,
+    );
+  }
+
   /** `metadata` reads headers and labels only; `full` includes bodies. */
   getThread(id: string, format: 'metadata' | 'full'): Promise<GmailThread> {
     const q = new URLSearchParams({ format });

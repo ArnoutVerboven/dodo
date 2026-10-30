@@ -9,6 +9,7 @@ import {
   agentHeadlessHold,
   agentProject,
   agentRepository,
+  EMAIL_CODE_LOGIN,
   PHONE_APP_LOGIN,
   type Project,
   type Task,
@@ -35,7 +36,7 @@ export function systemPrompt(
 ): string {
   const lines = [AGENT_SYSTEM];
   if (features.browser === 'window') {
-    lines.push('', AGENT_BROWSER_WINDOW, PHONE_APP_LOGIN);
+    lines.push('', AGENT_BROWSER_WINDOW, EMAIL_CODE_LOGIN, PHONE_APP_LOGIN);
   } else if (features.browser === 'headless') {
     const hold = features.holdMinutes
       ? agentHeadlessHold(features.holdMinutes)
@@ -43,7 +44,7 @@ export function systemPrompt(
     const deviceOnly = features.canRequestDevice
       ? AGENT_HEADLESS_REQUEST_DEVICE
       : AGENT_HEADLESS_DEVICE_BLOCKED;
-    lines.push('', agentBrowserHeadless(hold, deviceOnly), PHONE_APP_LOGIN);
+    lines.push('', agentBrowserHeadless(hold, deviceOnly), EMAIL_CODE_LOGIN, PHONE_APP_LOGIN);
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github) lines.push('', agentRepository(features.github));

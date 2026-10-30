@@ -1,4 +1,5 @@
 export * from './agent.js';
+export * from './email-code.js';
 export * from './events.js';
 export * from './gmail-job.js';
 export * from './google.js';

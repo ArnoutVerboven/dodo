@@ -203,7 +203,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...execTools,
     webSearchTool((query) => control.search(query)),
     ...(githubAccess ? githubTools(githubAccess) : []),
-    ...(browser ? await browserTools(browser) : []),
+    ...(browser ? await browserTools(browser, { emailCode: (req) => control.emailCode(req) }) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
     ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
     // A remote browser run: some logins only work from the user's own Mac.
