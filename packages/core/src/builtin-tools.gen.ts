@@ -900,6 +900,25 @@ export const catalog: unknown[] = [
     }
   },
   {
+    "name": "use_google_session",
+    "group": "browser",
+    "description": "Switch this browser to the user's own Google account, when a site offers 'Continue with Google' / 'Sign in with Google' or a Google sign-in page appears. Loads their saved Google session, so the Google step goes through without a password; then click the Google button again (or reload the page). When no session is saved yet, sign in once on accounts.google.com with the Google entry from the vault and ask the user to confirm on their phone; that sign-in is saved for later tasks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Which site wants the Google sign-in."
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    }
+  },
+  {
     "name": "browser_navigate",
     "group": "browser",
     "description": "Navigate to a URL",
