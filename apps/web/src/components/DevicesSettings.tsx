@@ -3,9 +3,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { removeDevice, saveDevice, saveSettings, useDevices, useSettings } from '@/lib/data';
-
-const newCode = () =>
-  Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
+import { pairingCode as newCode } from '@/lib/utils';
 
 const PAIRING_TTL_MS = 15 * 60_000;
 

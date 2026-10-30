@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { chown, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, chown, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
@@ -107,6 +108,18 @@ export async function readAsAgent(file: string, maxBytes?: number): Promise<Buff
     return readFile(file);
   }
   return runAs(u, 'cat', ['--', file], undefined, maxBytes);
+}
+
+/** Whether the agent's own user may read this file (a file the worker alone may read: no). */
+export async function readableAsAgent(file: string): Promise<boolean> {
+  const u = agentUser();
+  try {
+    if (!u) await access(file, constants.R_OK);
+    else await runAs(u, 'test', ['-r', '--', file]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Writes a file in the task folder with the agent's own rights (creates parent folders). */

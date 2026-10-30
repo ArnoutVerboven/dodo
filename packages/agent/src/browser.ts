@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   type EmailCodeRequest,
   type EmailCodeResponse,
@@ -8,6 +9,7 @@ import {
   siteOf,
 } from '@dodo/core';
 import { z } from 'zod';
+import { readableAsAgent } from './agent-user.js';
 import { connectMcp } from './mcp.js';
 import { define, type PolicyClaim, type ToolContext, type ToolDef } from './tools.js';
 
@@ -64,6 +66,30 @@ export async function takeScreenshot(
       ['image/png', 'image/jpeg', 'image/webp'].includes(i.mimeType) &&
       (i.data.length * 3) / 4 <= MAX_IMAGE_BYTES,
   );
+}
+
+/**
+ * The files a page may be handed: ones in the task folder that the agent's own user can read.
+ * The browser reads the file with the worker's rights, so without this a path such as
+ * /proc/1/environ or another task's folder would reach the site.
+ */
+export async function uploadPaths(
+  args: Record<string, unknown>,
+  workdir: string | undefined,
+): Promise<{ paths: string[] } | { error: string }> {
+  if (!Array.isArray(args.paths) || args.paths.length === 0) return { paths: [] };
+  if (!workdir) return { error: 'There is no task folder to upload from.' };
+  const root = path.resolve(workdir);
+  const paths: string[] = [];
+  for (const p of args.paths) {
+    if (typeof p !== 'string') return { error: 'paths must be strings' };
+    const file = path.resolve(root, p);
+    if (file !== root && !file.startsWith(`${root}${path.sep}`))
+      return { error: `${p} is outside the task folder; only files in it can be uploaded.` };
+    if (!(await readableAsAgent(file))) return { error: `${p} cannot be read.` };
+    paths.push(file);
+  }
+  return { paths };
 }
 
 /** The MCP tools the agent gets, in the order the model sees them. */
@@ -213,6 +239,11 @@ export async function browserTools(
           }
           let callArgs = args;
           let injected = false;
+          if (name === 'browser_file_upload') {
+            const checked = await uploadPaths(args, ctx.workdir);
+            if ('error' in checked) return { result: { error: checked.error } };
+            callArgs = { ...args, ...(checked.paths.length ? { paths: checked.paths } : {}) };
+          }
           if (
             (name === 'browser_type' || name === 'browser_fill_form') &&
             carriesSecret(name, args)

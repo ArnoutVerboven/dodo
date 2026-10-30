@@ -163,6 +163,7 @@ export const catalog: unknown[] = [
         },
         "url": {
           "type": "string",
+          "maxLength": 2000,
           "format": "uri"
         },
         "text": {

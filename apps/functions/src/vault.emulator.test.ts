@@ -157,8 +157,18 @@ describe.skipIf(!enabled)('vault (emulator)', () => {
       { ...card, suggestedRule: `Vault(${entryId}) `, prompt: 'x' },
     ])
       await expect(checkedVaultCard(db, bad)).rejects.toThrow('request_vault_access');
-    const other = { ...card, suggestedRule: 'Bash(git push:*)', prompt: 'Push?' };
+    // Any other approval names the rule a yes would store, when the run left it out.
+    const other = {
+      ...card,
+      suggestedRule: 'Bash(git push:*)',
+      prompt: 'Allow `Bash(git push:*)`? Push?',
+    };
     await expect(checkedVaultCard(db, other)).resolves.toBe(other);
+    await expect(
+      checkedVaultCard(db, { ...card, suggestedRule: 'Bash(curl:*)', prompt: 'Save the invoice?' }),
+    ).resolves.toMatchObject({ prompt: 'Allow `Bash(curl:*)`? Save the invoice?' });
+    const question = { ...card, kind: 'choice' as const, suggestedRule: 'x', prompt: 'Which?' };
+    await expect(checkedVaultCard(db, question)).resolves.toBe(question);
   });
 
   it('grants the Google session per task, from a checked approval card only', async () => {

@@ -1,6 +1,6 @@
 import type { FunctionDeclaration, ImageUpload } from '@dodo/core';
-import { vaultApprovalPrompt, vaultRef, vaultRule } from '@dodo/core';
-import type { ActionCategory, PolicyEngine } from '@dodo/policy';
+import { HttpUrl, vaultApprovalPrompt, vaultRef, vaultRule } from '@dodo/core';
+import type { ActionCategory, Decision, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
 import type { TaskStore } from './control-plane.js';
 import type { SecretResolver } from './secrets.js';
@@ -14,6 +14,8 @@ export interface ToolContext {
   store: TaskStore;
   /** Decides allow / ask / deny for tools that declare a policy. Absent: only task tools run. */
   policy?: PolicyEngine;
+  /** What the policy engine said about this very call (set by the loop before execute). */
+  decision?: Decision;
   /** The run's task folder; exec tools are confined to it. */
   workdir?: string;
   /** Vault values for tools that type into a site; absent when the run has no such tool. */
@@ -252,7 +254,7 @@ export const taskTools = [
     schema: z.object({
       kind: z.enum(['link', 'text']),
       name: z.string().min(1).max(200),
-      url: z.string().url().optional(),
+      url: HttpUrl.optional(),
       text: z.string().max(200000).optional(),
     }),
     async execute(args, { store }) {

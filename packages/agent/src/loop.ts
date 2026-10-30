@@ -428,7 +428,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 finishWith('waiting_input');
                 break;
               }
-              const outcome = await tool.execute(parsed.data, ctx);
+              const outcome = await tool.execute(parsed.data, { ...ctx, decision });
               result = redact(outcome.result);
               cost = outcome.cost;
               if ('askUser' in outcome) {
