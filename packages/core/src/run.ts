@@ -110,6 +110,8 @@ export const RunEndReason = z.enum([
   'max_steps',
   /** The agent asked for a browser mid-task: the run restarts with one, same session. */
   'needs_browser',
+  /** The agent asked for the user's Mac mid-task: the run restarts there, same session. */
+  'needs_device',
 ]);
 export type RunEndReason = z.infer<typeof RunEndReason>;
 

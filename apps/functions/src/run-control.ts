@@ -414,7 +414,14 @@ const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
   error: 'needs_input',
   max_steps: 'review',
   needs_browser: 'in_progress',
+  needs_device: 'in_progress',
 };
+
+/** The Macs a run can move to. */
+async function pairedMacs(deps: RunControlDeps): Promise<string[]> {
+  const snap = await deps.db.collection(paths.devices()).where('state', '==', 'approved').get();
+  return snap.docs.map((d) => d.id);
+}
 
 /**
  * Any end other than ask_user: archive, settle, release the task, revoke the identity. Two
@@ -430,7 +437,10 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     : run.sessionPath;
   const tracePath = await archiveTrace(deps, run.id);
   const state: Run['state'] =
-    req.reason === 'finished' || req.reason === 'max_steps' || req.reason === 'needs_browser'
+    req.reason === 'finished' ||
+    req.reason === 'max_steps' ||
+    req.reason === 'needs_browser' ||
+    req.reason === 'needs_device'
       ? 'succeeded'
       : req.reason === 'waiting_input'
         ? 'waiting_input'
@@ -474,6 +484,22 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   }
   if (req.reason === 'needs_browser') {
     taskUpdate.statusLine = { text: 'Starting again with a browser…', needsYou: false };
+  }
+  // Moving to the Mac needs one paired; otherwise the task waits for the user.
+  const macs = req.reason === 'needs_device' ? await pairedMacs(deps) : [];
+  if (req.reason === 'needs_device') {
+    if (macs.length) {
+      taskUpdate.statusLine = { text: 'Moving to your Mac…', needsYou: false };
+    } else {
+      taskUpdate.status = 'needs_input';
+      taskUpdate.statusLine = { text: 'Needs your Mac: pair one under Settings', needsYou: true };
+      batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
+        author: 'system',
+        body: 'This step needs the browser on your Mac (an itsme or device-bound login), but no Mac is paired. Pair one under Settings › Devices, then comment to continue.',
+        runId: run.id,
+        createdAt: now,
+      });
+    }
   }
   batch.update(taskRef, taskUpdate);
 
@@ -543,6 +569,17 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     deps.log?.('run restarted with a browser', { taskId: run.taskId, runId: id });
     return;
   }
+  if (req.reason === 'needs_device') {
+    if (!macs.length) return;
+    const id = await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
+      trigger: 'resume',
+      sessionPath,
+      browser: true,
+      device: 'mac',
+    });
+    deps.log?.('run moved to the Mac', { taskId: run.taskId, runId: id });
+    return;
+  }
 
   const title = (await taskRef.get()).get('title') as string;
   const headline =
@@ -552,7 +589,9 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         ? `Budget used up: ${title}`
         : req.reason === 'interrupted' || req.reason === 'halted'
           ? `Stopped: ${title}`
-          : `Run failed: ${title}`;
+          : req.reason === 'needs_device'
+            ? `Needs your Mac: ${title}`
+            : `Run failed: ${title}`;
   const summary =
     ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
   const kind: NotificationKind =
@@ -566,7 +605,9 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         ? 'budget'
         : req.reason === 'interrupted' || req.reason === 'halted'
           ? 'stopped'
-          : 'failed';
+          : req.reason === 'needs_device'
+            ? 'blocked'
+            : 'failed';
   await deps.notify?.({ kind, title: headline, body: req.error ?? summary, taskId: run.taskId });
 }
 

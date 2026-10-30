@@ -2,7 +2,13 @@ import type { BuiltinGroup, BuiltinTool } from '@dodo/core';
 import { BROWSER_TOOLS } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
-import { requestBrowserTool, type ToolDef, taskTools, toDeclarations } from './tools.js';
+import {
+  requestBrowserTool,
+  requestDeviceTool,
+  type ToolDef,
+  taskTools,
+  toDeclarations,
+} from './tools.js';
 
 const GROUP_OF: Record<string, BuiltinGroup> = {
   update_summary: 'core',
@@ -30,7 +36,7 @@ export function builtinCatalog(): BuiltinTool[] {
     [taskTools, 'task'],
     [execTools, 'exec'],
     [github, 'github'],
-    [[requestBrowserTool as ToolDef], 'browser'],
+    [[requestBrowserTool as ToolDef, requestDeviceTool as ToolDef], 'browser'],
   ];
   return entries.flatMap(([tools, group]) =>
     toDeclarations(tools).map((d) => ({

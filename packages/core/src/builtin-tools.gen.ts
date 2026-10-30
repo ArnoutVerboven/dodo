@@ -390,6 +390,25 @@ export const catalog: unknown[] = [
     }
   },
   {
+    "name": "request_device",
+    "group": "browser",
+    "description": "Move this task to the user's Mac when a site needs the user's own browser: an itsme login (the itsme app rejects QR codes and requests from this cloud browser), a passkey, or a login bound to their device. The run restarts on the Mac with its Chrome window and your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline. Not for sites that merely need a password or a code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "What needs the Mac, in one line."
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    }
+  },
+  {
     "name": "browser_navigate",
     "group": "browser",
     "description": "Navigate to a URL",

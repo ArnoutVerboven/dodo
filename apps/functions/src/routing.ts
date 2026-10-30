@@ -45,6 +45,19 @@ export function routeDevice(
   return { device: 'gcp', reason: folder ? 'remote (no Mac paired)' : 'remote (no Mac online)' };
 }
 
+/**
+ * The Mac a run moves to when the agent asks for one (request_device): the approved Mac seen
+ * most recently, online or not; the run waits for it. Undefined when none is paired.
+ */
+export function routeToMac(devices: Device[]): DeviceRoute | undefined {
+  const mac = devices
+    .filter((d) => d.state === 'approved')
+    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  return mac
+    ? { device: deviceChoice(mac.id), reason: `moved to ${mac.name} by the agent` }
+    : undefined;
+}
+
 function nameOf(devices: Device[], choice: string): string {
   return devices.find((d) => deviceChoice(d.id) === choice)?.name ?? choice;
 }
