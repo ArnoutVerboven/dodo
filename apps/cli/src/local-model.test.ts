@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { checkLocalModel, isLoopback, normaliseBaseUrl } from './local-model.js';
+import {
+  checkLocalModel,
+  isLoopback,
+  ModelServer,
+  normaliseBaseUrl,
+  startSharedEndpoint,
+} from './local-model.js';
 
 describe('local model settings', () => {
   it('normalises the server URL to its /v1 base', () => {
@@ -37,5 +43,111 @@ describe('local model settings', () => {
     const r = await checkLocalModel({ url: 'http://localhost:8080' }, fetchFn);
     expect(r.ok).toBe(false);
     expect(r.problem).toMatch(/nothing answers/);
+  });
+});
+
+describe('ModelServer (on demand)', () => {
+  function setup(opts: { upAlready?: boolean } = {}) {
+    let up = !!opts.upAlready;
+    let alive = false;
+    const spawned: string[][] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const fetchFn = (async () => {
+      if (!up) throw new Error('ECONNREFUSED');
+      return new Response('{"data":[]}');
+    }) as unknown as typeof fetch;
+    const server = new ModelServer(
+      { url: 'http://localhost:8080/v1', command: ['mlx_lm.server'], idleMinutes: 10 },
+      {
+        fetchFn,
+        log: () => {},
+        sleep: async () => {
+          if (alive) up = true; // the model finished loading
+        },
+        spawn: (command) => {
+          spawned.push(command);
+          alive = true;
+          return {
+            running: () => alive,
+            stop: () => {
+              alive = false;
+              up = false;
+            },
+          };
+        },
+        setTimer: (fn, ms) => {
+          const t = { fn, ms };
+          timers.push(t);
+          return t;
+        },
+        clearTimer: (t) => {
+          const i = timers.indexOf(t as (typeof timers)[number]);
+          if (i >= 0) timers.splice(i, 1);
+        },
+      },
+    );
+    return { server, spawned, timers, isAlive: () => alive };
+  }
+
+  it('starts the server on the first request and stops it after the idle time', async () => {
+    const { server, spawned, timers, isAlive } = setup();
+    expect(await server.acquire()).toBe(true);
+    expect(spawned).toEqual([['mlx_lm.server']]);
+    expect(timers).toHaveLength(0); // busy: no idle clock
+    server.done();
+    expect(timers).toEqual([expect.objectContaining({ ms: 600_000 })]);
+    // Another request before the time is up keeps it.
+    expect(await server.acquire()).toBe(true);
+    expect(timers).toHaveLength(0);
+    expect(spawned).toHaveLength(1);
+    server.done();
+    timers[0]?.fn();
+    expect(isAlive()).toBe(false);
+  });
+
+  it('uses a server it did not start and never stops it', async () => {
+    const { server, spawned, timers } = setup({ upAlready: true });
+    expect(await server.acquire()).toBe(true);
+    server.done();
+    expect(spawned).toHaveLength(0);
+    expect(timers).toHaveLength(0);
+  });
+});
+
+describe('shared endpoint', () => {
+  it('forwards OpenAI requests to the server', async () => {
+    const { createServer } = await import('node:http');
+    const upstream = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => {
+        body += c;
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ path: req.url, got: body ? JSON.parse(body) : null }));
+      });
+    });
+    await new Promise<void>((r) => upstream.listen(0, 'localhost', () => r()));
+    const port = (upstream.address() as { port: number }).port;
+    const config = { url: `http://localhost:${port}/v1`, port: 0 };
+    const server = new ModelServer(config, {
+      log: () => {},
+      spawn: () => {
+        throw new Error('not started: one is up');
+      },
+    });
+    const shared = await startSharedEndpoint(config, server, () => {});
+    try {
+      const r = await fetch(`${shared.url}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [] }),
+      });
+      expect(await r.json()).toEqual({ path: '/v1/chat/completions', got: { messages: [] } });
+      expect((await fetch(shared.url.replace('/v1', '/other'))).status).toBe(404);
+    } finally {
+      await shared.close();
+      upstream.close();
+    }
   });
 });
