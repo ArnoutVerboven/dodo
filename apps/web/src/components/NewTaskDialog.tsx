@@ -1,15 +1,13 @@
 import type { AiConfig, TaskPriority } from '@dodo/core';
-import { Mic } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AiConfigFields } from '@/components/AiConfigFields';
+import { PushToTalkButton } from '@/components/PushToTalk';
 import { PRIORITIES } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Label, Select, Textarea } from '@/components/ui/input';
 import { createTask, useProjects } from '@/lib/data';
-import { usePushToTalk } from '@/lib/speech';
-import { cn } from '@/lib/utils';
 
 export function parseTags(raw: string): string[] {
   return [
@@ -20,6 +18,12 @@ export function parseTags(raw: string): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+/** Dictated text joins what is already there, after a space or on its own line. */
+export function appendText(current: string, text: string): string {
+  if (!current.trim()) return text;
+  return /\s$/.test(current) ? `${current}${text}` : `${current} ${text}`;
 }
 
 export function NewTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -42,7 +46,6 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
   const [ai, setAi] = useState<Partial<AiConfig>>({ enabled: true });
   const [showAi, setShowAi] = useState(false);
   const [saving, setSaving] = useState(false);
-  const ptt = usePushToTalk((text) => setDescription((d) => (d ? `${d} ${text}` : text)));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,33 +74,23 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
         <Label>Title (optional, generated if empty)</Label>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short title" />
       </label>
-      <label className="block">
-        <span className="mb-1 flex items-center justify-between">
-          <Label className="mb-0">Description</Label>
-          {ptt.supported && (
-            <button
-              type="button"
-              onPointerDown={ptt.start}
-              onPointerUp={ptt.stop}
-              onPointerLeave={ptt.stop}
-              className={cn(
-                'flex items-center gap-1 rounded-md border px-2 py-1 text-xs select-none',
-                ptt.listening && 'border-danger text-danger',
-              )}
-            >
-              <Mic className="h-3.5 w-3.5" />{' '}
-              {ptt.listening ? 'Listening… release to stop' : 'Hold to talk'}
-            </button>
-          )}
-        </span>
+      <div>
+        {/* Not a <label>: it would hand clicks on "Description" to the mic button. */}
+        <div className="mb-1 flex items-center justify-between">
+          <label htmlFor="new-task-description">
+            <Label className="mb-0">Description</Label>
+          </label>
+          <PushToTalkButton onText={(text) => setDescription((d) => appendText(d, text))} />
+        </div>
         <Textarea
+          id="new-task-description"
           autoFocus
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="What needs to be done?"
+          placeholder="What needs to be done? Or hold the mic and say it."
           rows={5}
         />
-      </label>
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label>
           <Label>Project</Label>

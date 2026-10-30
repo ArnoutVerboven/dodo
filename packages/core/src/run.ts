@@ -96,6 +96,25 @@ export const SearchResponse = z.object({
 });
 export type SearchResponse = z.infer<typeof SearchResponse>;
 
+/**
+ * Push-to-talk from the web app: a short voice note, transcribed by Gemini. Base64 audio as
+ * MediaRecorder writes it (webm/opus on Chrome and Firefox, mp4/aac on Safari), at most about
+ * three minutes of it.
+ */
+export const TranscribeRequest = z.object({
+  audio: z.string().min(1).max(6_000_000),
+  mimeType: z.string().regex(/^audio\/[a-z0-9.+-]+$/i),
+  /** The browser's language (`nl-BE`), a hint for which language to expect. */
+  language: z.string().max(35).optional(),
+});
+export type TranscribeRequest = z.infer<typeof TranscribeRequest>;
+
+export const TranscribeResponse = z.object({
+  text: z.string(),
+  cost: MicroEur,
+});
+export type TranscribeResponse = z.infer<typeof TranscribeResponse>;
+
 export const HeartbeatRequest = z.object({ runId: z.string() });
 export const HeartbeatResponse = z.object({
   ok: z.boolean(),

@@ -37,6 +37,20 @@ export const TOOL_PRICES: Record<string, ToolPrice> = {
     maxUnitsPerCall: 5,
     model: { name: 'gemini-3.5-flash-lite', maxOutputTokens: 2048, maxInputTokens: 2048 },
   },
+  /**
+   * Push-to-talk in the web app: a voice note sent to Gemini Flash-Lite as audio input. Audio
+   * is 32 tokens a second (1,920 a minute) and priced above text, at most $1 per 1M tokens
+   * across the Flash-Lite models; we bill every input token at that rate, so one unit is
+   * 1,920 input tokens ($0.00192, about one minute of audio). Output tokens are the transcript.
+   * Not charged to a task: it counts against the monthly and lifetime budgets only.
+   * https://cloud.google.com/vertex-ai/generative-ai/pricing, checked 2026-10-30.
+   */
+  transcribe: {
+    unit: 'minute of audio',
+    perUnitUsd: 0.00192,
+    maxUnitsPerCall: 4,
+    model: { name: 'gemini-3.1-flash-lite', maxOutputTokens: 4096, maxInputTokens: 0 },
+  },
 };
 
 export class UnknownToolPriceError extends Error {

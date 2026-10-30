@@ -16,6 +16,7 @@ import {
   RequestInputRequest,
   SearchRequest,
   SecretAnswerRequest,
+  TranscribeRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
 } from '@dodo/core';
@@ -74,6 +75,7 @@ import {
   FakeProvider,
   type ModelProvider,
   type SearchProvider,
+  type TranscribeProvider,
   VertexProvider,
 } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
@@ -96,6 +98,7 @@ import {
 } from './secret-answers.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
+import { transcribeWithBudget } from './transcribe.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
 import {
   deleteVaultEntry,
@@ -153,8 +156,8 @@ const projectId = () => {
   return id;
 };
 
-let providerInstance: (ModelProvider & SearchProvider) | undefined;
-const provider = (): ModelProvider & SearchProvider => {
+let providerInstance: (ModelProvider & SearchProvider & TranscribeProvider) | undefined;
+const provider = (): ModelProvider & SearchProvider & TranscribeProvider => {
   providerInstance ??=
     MODEL_BACKEND.value() === 'fake' || isEmulator
       ? new FakeProvider()
@@ -613,6 +616,26 @@ export const taskCompact = onCall(
       },
       taskId,
     );
+  },
+);
+
+/** Push-to-talk in the web app: a voice note to text, charged to the month, not a task. */
+export const transcribe = onCall(
+  { serviceAccount: GATEWAY_SA, memory: '512MiB', timeoutSeconds: 120, maxInstances: 2 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const req = parseOr<TranscribeRequest>(TranscribeRequest, request.data);
+    const db = getFirestore();
+    try {
+      return await transcribeWithBudget(
+        { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
+        req,
+      );
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      logger.error('transcribe failed', { mimeType: req.mimeType, err: String(err) });
+      throw new HttpsError('unknown', `Transcription failed: ${String(err).slice(0, 300)}`);
+    }
   },
 );
 
