@@ -302,3 +302,122 @@ export async function startSharedEndpoint(
       }),
   };
 }
+
+/** Where Hugging Face keeps downloaded models (`HF_HUB_CACHE`, `HF_HOME`, or the default). */
+export function hubCache(): string {
+  const env = process.env;
+  if (env.HF_HUB_CACHE) return env.HF_HUB_CACHE;
+  const home = env.HF_HOME ?? `${env.HOME ?? ''}/.cache/huggingface`;
+  return `${home}/hub`;
+}
+
+const CHAT_FAMILY = /(qwen|llama|mistral|gemma|phi|gpt-oss|granite|deepseek|smollm)/i;
+const NOT_CHAT = /(whisper|parakeet|embed|rerank|vision|-vl-|tts|diariz)/i;
+
+/**
+ * MLX chat models already downloaded (`models--mlx-community--…` with a snapshot), best first:
+ * instruct models before base ones, Qwen (good at tool calls) before the rest.
+ */
+export async function findMlxModels(hub = hubCache()): Promise<string[]> {
+  const { readdirSync, existsSync } = await import('node:fs');
+  let entries: string[];
+  try {
+    entries = readdirSync(hub);
+  } catch {
+    return [];
+  }
+  const repos = entries
+    .filter((e) => e.startsWith('models--'))
+    .map((e) => ({ dir: e, repo: e.slice('models--'.length).replace('--', '/') }))
+    .filter(({ repo }) => /mlx/i.test(repo) && CHAT_FAMILY.test(repo) && !NOT_CHAT.test(repo))
+    .filter(({ dir }) => {
+      try {
+        return readdirSync(`${hub}/${dir}/snapshots`).some((s) =>
+          existsSync(`${hub}/${dir}/snapshots/${s}/config.json`),
+        );
+      } catch {
+        return false;
+      }
+    })
+    .map(({ repo }) => repo);
+  const score = (r: string) => (/instruct|chat|-it\b/i.test(r) ? 2 : 0) + (/qwen/i.test(r) ? 1 : 0);
+  return repos.sort((a, b) => score(b) - score(a) || a.localeCompare(b));
+}
+
+/** `mlx_lm.server` as an absolute path, from your shell's PATH or uv's / pip's tool folders. */
+export async function findMlxServer(): Promise<string | undefined> {
+  const { execFileSync } = await import('node:child_process');
+  const { existsSync } = await import('node:fs');
+  try {
+    const found = execFileSync('/bin/sh', ['-lc', 'command -v mlx_lm.server'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (found) return found;
+  } catch {
+    // not on PATH
+  }
+  const home = process.env.HOME ?? '';
+  return [`${home}/.local/bin/mlx_lm.server`, '/opt/homebrew/bin/mlx_lm.server'].find((p) =>
+    existsSync(p),
+  );
+}
+
+/** Install mlx-lm as a tool of its own (uv if you have it, else pip for your user). */
+export async function installMlxLm(log: (m: string) => void): Promise<string | undefined> {
+  const { execFileSync } = await import('node:child_process');
+  const tries: Array<[string, string]> = [
+    ['uv', 'uv tool install --upgrade mlx-lm'],
+    ['pipx', 'pipx install mlx-lm'],
+    ['pip3', 'pip3 install --user --upgrade mlx-lm'],
+  ];
+  for (const [tool, cmd] of tries) {
+    try {
+      execFileSync('/bin/sh', ['-lc', `command -v ${tool}`], { stdio: 'ignore' });
+    } catch {
+      continue;
+    }
+    log(`Installing mlx-lm: ${cmd}`);
+    try {
+      execFileSync('/bin/sh', ['-lc', cmd], { stdio: 'inherit' });
+      return findMlxServer();
+    } catch {
+      log(`  ${cmd} failed`);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The local model in one go, for `dodo setup` and a bare `dodo model set`: the best MLX chat
+ * model already in the Hugging Face cache, served on demand by mlx_lm.server (installed when
+ * missing). Undefined, with the reason logged, when this Mac has none or cannot run MLX.
+ */
+export async function detectLocalModel(
+  log: (m: string) => void,
+  install = true,
+): Promise<LocalModelConfig | undefined> {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    log('Local model: skipped (MLX needs an Apple-silicon Mac).');
+    return undefined;
+  }
+  const [model] = await findMlxModels();
+  if (!model) {
+    log(
+      `Local model: none found in ${hubCache()} (optional; see docs/LOCAL_MODEL.md to download one).`,
+    );
+    return undefined;
+  }
+  let server = await findMlxServer();
+  if (!server && install) server = await installMlxLm(log);
+  if (!server) {
+    log(`Local model: found ${model}, but mlx_lm.server is not installed (pip3 install mlx-lm).`);
+    return undefined;
+  }
+  log(`Local model: ${model}, started on demand by ${server}.`);
+  return {
+    url: DEFAULT_LOCAL_MODEL_URL,
+    model,
+    command: [server, '--model', model, '--port', new URL(DEFAULT_LOCAL_MODEL_URL).port],
+  };
+}

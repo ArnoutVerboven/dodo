@@ -35,6 +35,7 @@ import {
   DEFAULT_IDLE_MINUTES,
   DEFAULT_LOCAL_MODEL_URL,
   DEFAULT_SHARED_PORT,
+  detectLocalModel,
   isLoopback,
   normaliseBaseUrl,
 } from './local-model.js';
@@ -49,9 +50,10 @@ import { sandboxReport } from './sandbox.js';
 
 const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
 
-  dodo setup <code> [folder...] [--name "My Mac"] [--foreground]
-                         everything below in one go: pair, add the folders, check, and keep
-                         the daemon running in the background (launchd on macOS)
+  dodo setup <code> [folder...] [--name "My Mac"] [--foreground] [--no-model]
+                         everything below in one go: pair, add the folders, set up the local
+                         model (an MLX model already in your Hugging Face cache), check, and
+                         keep the daemon running in the background (launchd on macOS)
   dodo login <code> [--name "My Mac"] [--project <id>] [--emulator]
                          pair this Mac with the code from Settings › Your Macs
   dodo daemon [--once]   wait for runs addressed to this Mac and execute them
@@ -73,6 +75,8 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
                          the extension's token, so Chrome never asks to allow the agent
   dodo browser use window|extension
   dodo model             the local model tasks can use (Model: Local model, your Mac)
+  dodo model set         the best MLX model in your Hugging Face cache, on demand (installs
+                         mlx-lm when missing)
   dodo model set --mlx <repo>
                          an MLX model from the Hugging Face cache, started on demand: the
                          daemon runs mlx_lm.server on the first request and stops it when idle
@@ -396,6 +400,19 @@ async function model(
       throw new Error(
         `The local model must run on this Mac (localhost), not ${new URL(base).host}: the worker's sandbox reaches only this machine.`,
       );
+    // A bare `dodo model set`: the model already in the cache, on demand.
+    if (!url && !flags.mlx && !rest.length) {
+      const found = await detectLocalModel((m) => console.log(m));
+      if (!found) return;
+      config.localModel = found;
+      writeConfig(config);
+      describeModel(found);
+      if (agentInstalled()) {
+        restartAgent();
+        console.log('Restarted the background daemon so it picks this up.');
+      }
+      return;
+    }
     const mlx = str(flags.mlx);
     const port = new URL(base).port || '8080';
     const command = mlx
@@ -583,6 +600,15 @@ async function setup(
     await login(code, flags);
   }
   for (const f of folderArgs) await folders('add', f);
+  // The local model, when this Mac has one downloaded: nothing to configure by hand.
+  const paired = requireConfig();
+  if (!paired.localModel && flags['no-model'] !== true) {
+    const found = await detectLocalModel((m) => console.log(m));
+    if (found) {
+      paired.localModel = found;
+      writeConfig(paired);
+    }
+  }
   console.log('');
   const healthy = await doctor();
   console.log('');

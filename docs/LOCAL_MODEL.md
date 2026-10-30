@@ -15,20 +15,15 @@ A task (or project) with **Model: Local model (your Mac, free)** runs on your Ma
 
 The Hugging Face cache (`~/.cache/huggingface/hub`) holds `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit`. That is an **MLX** checkpoint (Apple-silicon weights, 4-bit, about 17 GB), not a GGUF file, so Ollama and llama.cpp can't load it as it is. `mlx_lm.server` can, straight from the cache, without downloading it again. It is a mixture-of-experts model with 3B active parameters, so it is quick on an M-series Mac, and the Instruct-2507 version calls tools well.
 
-1. Install mlx-lm (once):
+One command, in the dodo checkout:
 
-   ```sh
-   pip3 install -U mlx-lm        # or: uv tool install mlx-lm / pipx install mlx-lm
-   ```
+```sh
+git pull && pnpm mac setup
+```
 
-2. Tell dodo to run it on demand, then check that it calls tools:
+`setup` finds the model in the cache, installs mlx-lm when it is missing (with `uv`, `pipx` or `pip3`), sets the model up to start on demand, and restarts the daemon. Pairing and folders stay as they are. Then, in the web app, set **Model** to **Local model (your Mac, free)** on a task, or as a project default under Projects. `pnpm dodo model test` loads it once and checks that it calls tools.
 
-   ```sh
-   pnpm dodo model set --mlx mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit
-   pnpm dodo model test
-   ```
-
-3. In the web app, set **Model** to **Local model (your Mac, free)** on a task, or as a project default under Projects.
+To pick another model later: `pnpm dodo model set --mlx <repo>`. `pnpm dodo setup --no-model` skips the model.
 
 ### On demand: memory only while it is used
 
