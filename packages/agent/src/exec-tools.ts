@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import type { Decision } from '@dodo/policy';
 import { z } from 'zod';
 import { asAgent, prepareDir, readAsAgent, writeAsAgent } from './agent-user.js';
 import { define, type ToolDef } from './tools.js';
@@ -199,8 +200,10 @@ const clip = (s: string) =>
     : s;
 
 /**
- * Hosts http_fetch never reaches, whatever the allowlist says: the worker's own machine and
- * network, and the cloud metadata server that hands out the service account's tokens.
+ * Hosts http_fetch reaches only when you approved that very host: the worker's own machine
+ * and network, and the cloud metadata server that hands out the service account's tokens.
+ * An allowed-hosts entry or a wildcard rule (`Http(*)`) never opens them; the exact rule
+ * `Http(domain:127.0.0.1)`, from a card that names it, does (a local dev server on a Mac).
  * Judged on the name or address literal; a public name that resolves to a private address
  * (DNS rebinding) is not caught here.
  */
@@ -231,6 +234,14 @@ export function privateHost(hostname: string): boolean {
   }
   // A bare number or hex literal is an IPv4 address in disguise (`2130706433`, `0x7f000001`).
   return /^(0x[0-9a-f]+|\d+)$/i.test(h);
+}
+
+/** Whether a decision allows this host by name: the exact rule, or a once-approval of it. */
+function namedHost(decision: Decision | undefined, host: string): boolean {
+  return (
+    decision?.kind === 'allow' &&
+    (decision.by === `Http(domain:${host})` || decision.by === 'approved once')
+  );
 }
 
 export function inside(workdir: string, p: string): string {
@@ -292,12 +303,18 @@ export const execTools = [
     }),
     async execute({ url }, ctx) {
       let current = url;
+      let hopDecision = ctx.decision;
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         const target = new URL(current);
         if (target.protocol !== 'https:' && target.protocol !== 'http:')
           return { result: { error: `Only http(s) URLs can be fetched, not ${target.protocol}` } };
-        if (privateHost(target.hostname))
-          return { result: { error: `${target.hostname} is a private or local host; refused.` } };
+        if (privateHost(target.hostname) && !namedHost(hopDecision, target.hostname)) {
+          return {
+            result: {
+              error: `${target.hostname} is a private or local host; only an approval naming it exactly allows it.`,
+            },
+          };
+        }
         const res = await fetch(current, {
           redirect: 'manual',
           signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
@@ -323,6 +340,7 @@ export const execTools = [
                 },
               };
             }
+            hopDecision = d;
           }
           current = next;
           continue;

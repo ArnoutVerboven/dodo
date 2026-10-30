@@ -1,4 +1,6 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PolicyEngine } from '@dodo/policy';
@@ -93,6 +95,26 @@ describe('http_fetch', () => {
     expect(String(local.result.error)).toMatch(/private or local/);
     const file = await fetchTool.execute({ url: 'file:///etc/passwd' }, ctx);
     expect(String(file.result.error)).toMatch(/Only http/);
+    // A wildcard or allowed-hosts decision does not open such a host; the exact rule does.
+    const server = createServer((_req, res) => res.end('local page')).listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    try {
+      for (const by of ['Http(*)', 'allowed host 127.0.0.1', 'Http(domain:127.*)'])
+        expect(
+          String(
+            (await fetchTool.execute({ url }, { ...ctx, decision: { kind: 'allow', by } })).result
+              .error,
+          ),
+        ).toMatch(/private or local/);
+      const named = await fetchTool.execute(
+        { url },
+        { ...ctx, decision: { kind: 'allow', by: 'Http(domain:127.0.0.1)' } },
+      );
+      expect(named.result).toMatchObject({ status: 200, text: 'local page' });
+    } finally {
+      server.close();
+    }
   });
 });
 
@@ -199,5 +221,30 @@ describe('policy in the loop', () => {
     });
     expect(r.reason).toBe('finished');
     expect(control.inputRequests).toHaveLength(0);
+  });
+
+  it('lets a once-approved exact host open a local address (the e2e approval flow)', async () => {
+    const server = createServer((_req, res) => res.end('local page')).listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    try {
+      const policy = new PolicyEngine({ profile: 'agent-decides', allow: [], deny: [] });
+      const { control, run } = setup(
+        [
+          { calls: [{ name: 'http_fetch', args: { url } }] },
+          { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+        ],
+        policy,
+      );
+      const r = await run({
+        trigger: 'resume',
+        session: [{ role: 'user', parts: [{ text: 'ctx' }] }],
+        answer: { prompt: 'Allow?', value: 'yes', suggestedRule: 'Http(domain:127.0.0.1)' },
+      });
+      expect(r.reason).toBe('finished');
+      expect(JSON.stringify(control.requests[1]?.contents.at(-1))).toContain('local page');
+    } finally {
+      server.close();
+    }
   });
 });
