@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkLocalModel,
+  findMlxModels,
   isLoopback,
   ModelServer,
   normaliseBaseUrl,
@@ -149,5 +150,28 @@ describe('shared endpoint', () => {
       await shared.close();
       upstream.close();
     }
+  });
+});
+
+describe('findMlxModels', () => {
+  it('finds the downloaded MLX chat models, instruct and Qwen first', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+    const os = await import('node:os');
+    const hub = mkdtempSync(`${os.tmpdir()}/hub-`);
+    const add = (dir: string, complete = true) => {
+      mkdirSync(`${hub}/${dir}/snapshots/abc`, { recursive: true });
+      if (complete) writeFileSync(`${hub}/${dir}/snapshots/abc/config.json`, '{}');
+    };
+    add('models--mlx-community--parakeet-tdt-0.6b-v2');
+    add('models--pyannote--speaker-diarization-community-1');
+    add('models--mlx-community--Llama-3.2-3B-4bit');
+    add('models--mlx-community--Qwen3-30B-A3B-Instruct-2507-4bit');
+    add('models--mlx-community--Qwen3-8B-4bit', false); // download never finished
+    mkdirSync(`${hub}/.locks`);
+    expect(await findMlxModels(hub)).toEqual([
+      'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit',
+      'mlx-community/Llama-3.2-3B-4bit',
+    ]);
+    expect(await findMlxModels(`${hub}/missing`)).toEqual([]);
   });
 });
