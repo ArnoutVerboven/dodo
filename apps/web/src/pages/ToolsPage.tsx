@@ -606,7 +606,7 @@ pnpm dodo mcp add notes --url http://localhost:3000/mcp`}
 
 /* ------------------------------ built-in ------------------------------ */
 
-const GROUP_ORDER: BuiltinGroup[] = ['core', 'task', 'vault', 'exec', 'github', 'browser'];
+const GROUP_ORDER: BuiltinGroup[] = ['core', 'task', 'vault', 'exec', 'web', 'github', 'browser'];
 
 function BuiltinTab({ onInspect }: { onInspect: (t: Inspected) => void }) {
   const { data: toolSettings } = useToolSettings();
@@ -687,6 +687,7 @@ const RULE_OF: Record<string, string> = {
   read_file: 'Read(<path>)',
   write_file: 'Write(<path>)',
   http_fetch: 'Http(domain:<host>)',
+  web_search: 'WebSearch(<query>)',
   push_branch: 'GitHub(push:<repo>)',
   open_pull_request: 'GitHub(pr:<repo>)',
   request_vault_access: 'Vault(<entry>)',

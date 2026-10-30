@@ -19,12 +19,12 @@ import { Timestamp } from './model.js';
 /** The tools every run keeps: without them the agent cannot report or stop. */
 export const CORE_TOOLS = ['update_summary', 'set_status', 'post_message', 'ask_user', 'finish'];
 
-export const BuiltinGroup = z.enum(['core', 'task', 'vault', 'exec', 'github', 'browser']);
+export const BuiltinGroup = z.enum(['core', 'task', 'vault', 'exec', 'web', 'github', 'browser']);
 export type BuiltinGroup = z.infer<typeof BuiltinGroup>;
 
 /**
  * What a group needs before a run gets it, beyond being turned on. Toolsets choose among the
- * `task`, `vault` and `exec` groups; `github` and `browser` follow the task's Repo and Browser
+ * `task`, `vault`, `exec` and `web` groups; `github` and `browser` follow the task's Repo and Browser
  * settings, so a toolset does not take them away.
  */
 export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolsets: boolean }> = {
@@ -42,6 +42,11 @@ export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolset
   exec: {
     label: 'Shell, files and HTTP',
     note: 'Mac: inside the sandbox, in the task folder. Remote: in the run’s container.',
+    toolsets: true,
+  },
+  web: {
+    label: 'Web search',
+    note: 'Google Search through Gemini, answered with sources. Each search is charged to the task’s budget (about €0.014 a query).',
     toolsets: true,
   },
   github: {

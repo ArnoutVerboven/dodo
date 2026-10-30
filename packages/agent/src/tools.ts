@@ -29,8 +29,11 @@ export interface PolicyClaim {
   category: ActionCategory;
 }
 
-/** What a tool returns to the model, plus control-flow signals for the loop. */
-export type ToolOutcome =
+/**
+ * What a tool returns to the model, plus control-flow signals for the loop. `cost` is what a
+ * paid tool charged the task (already settled by the control plane), for the trace.
+ */
+export type ToolOutcome = (
   | { result: Record<string, unknown> }
   | {
       result: Record<string, unknown>;
@@ -47,7 +50,8 @@ export type ToolOutcome =
   | { result: Record<string, unknown>; finish: { outcome: 'done' | 'review' | 'blocked' } }
   /** Ends the run so it restarts with a browser, same session (request_browser). */
   | { result: Record<string, unknown>; needsBrowser: true }
-  | { result: Record<string, unknown>; needsDevice: true };
+  | { result: Record<string, unknown>; needsDevice: true }
+) & { cost?: number };
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
