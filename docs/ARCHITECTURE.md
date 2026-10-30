@@ -447,6 +447,7 @@ dodo status                     # online, current run, last errors
 - Events that notify: input requested, run failed, budget threshold hit, task finished (configurable).
 - **Web push via Firebase Cloud Messaging** to the installed PWA (desktop and iPhone home screen). Free, no extra accounts.
 - Optional: a **Telegram bot** (free), which can carry Approve / Deny buttons right in the notification.
+- Text you send the Telegram bot gets reactions instead of a reply: 👀 once it is in the task's thread, 👍 once the agent is through with it (the run that read it ended or asked the next question). The messages still waiting for their 👍 are kept per task in `telegramPending/{taskId}`, server-only. A comment on a task no agent will pick up gets 👍 at once; a secret code gets neither, since the bot deletes it.
 - Quiet hours and batching (one notification per task per 10 minutes) to keep noise down.
 
 ---

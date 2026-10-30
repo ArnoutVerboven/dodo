@@ -1,5 +1,11 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { describe, expect, it, vi } from 'vitest';
-import { handleTelegramUpdate, notifyTelegram, type TelegramDeps } from './telegram.js';
+import {
+  ackTelegram,
+  handleTelegramUpdate,
+  notifyTelegram,
+  type TelegramDeps,
+} from './telegram.js';
 
 /** Minimal Firestore double: settings doc and one message doc. */
 function fakeDb(settings: Record<string, unknown>, message?: Record<string, unknown>) {
@@ -24,10 +30,14 @@ function fakeDb(settings: Record<string, unknown>, message?: Record<string, unkn
         const cur = docs.get(path) ?? {};
         for (const [k, v] of Object.entries(data)) {
           const [a, b] = k.split('.');
+          const del = v instanceof FieldValue && v.isEqual(FieldValue.delete());
           if (b) {
             cur[a as string] ??= {};
-            (cur[a as string] as Record<string, unknown>)[b] = v;
-          } else cur[k] = v;
+            const inner = cur[a as string] as Record<string, unknown>;
+            if (del) delete inner[b];
+            else inner[b] = v;
+          } else if (del) delete cur[k];
+          else cur[k] = v;
         }
         docs.set(path, cur);
       },
@@ -302,12 +312,16 @@ describe('handleTelegramUpdate', () => {
       });
     const setup = () => {
       const f = fakeDb({ telegram: { chatId: 7 } });
-      f.docs.set('tasks/t1', { title: 'Write <report>' });
-      f.docs.set('tasks/t2', { title: 'Other' });
+      f.docs.set('tasks/t1', { title: 'Write <report>', status: 'review', ai: { enabled: true } });
+      f.docs.set('tasks/t2', { title: 'Other', status: 'review', ai: { enabled: true } });
       return { ...f, d: deps(f.db) };
     };
     const lastText = (d: ReturnType<typeof deps>) =>
       (d.send.mock.calls.at(-1) as [string, { text: string }])[1].text;
+    const reactions = (d: ReturnType<typeof deps>) =>
+      (d.send.mock.calls as Array<[string, Record<string, unknown>]>)
+        .filter(([m]) => m === 'setMessageReaction')
+        .map(([, b]) => [b.message_id, (b.reaction as Array<{ emoji: string }>)[0]?.emoji]);
 
     it('posts a reply to a notification as a comment on its task', async () => {
       const { d, g, docs } = setup();
@@ -320,7 +334,45 @@ describe('handleTelegramUpdate', () => {
         via: 'telegram',
       });
       expect(docs.has('tasks/t2/messages/tg_7_5')).toBe(false);
-      expect(lastText(d)).toBe('Added to <b>Write &lt;report&gt;</b>.');
+      // No reply message: an 👀 on the user's own message says the agent has it.
+      expect(d.send.mock.calls.filter(([m]) => m === 'sendMessage')).toHaveLength(2);
+      expect(reactions(d)).toEqual([[5, '👀']]);
+    });
+
+    it('trades 👀 for 👍 once the agent is through with the message', async () => {
+      const { d, docs } = setup();
+      await notify(d, 't1');
+      await handleTelegramUpdate(d, msg('first', 5, 100));
+      await handleTelegramUpdate(d, msg('second', 6, 100));
+      await ackTelegram(d, 't2'); // another task's run ending touches nothing here
+      expect(reactions(d)).toEqual([
+        [5, '👀'],
+        [6, '👀'],
+      ]);
+      await ackTelegram(d, 't1');
+      expect(reactions(d).slice(2)).toEqual([
+        [5, '👍'],
+        [6, '👍'],
+      ]);
+      expect(docs.get('telegramPending/t1')?.messages).toEqual({});
+      // Acknowledged once: the next run's end does not react again.
+      await ackTelegram(d, 't1');
+      expect(reactions(d)).toHaveLength(4);
+    });
+
+    it('gives 👍 at once when no agent will process the text', async () => {
+      const { d, docs } = setup();
+      docs.set('tasks/t1', { title: 'Manual', status: 'todo' });
+      docs.set('tasks/t2', { title: 'Closed', status: 'done', ai: { enabled: true } });
+      await notify(d, 't1');
+      await handleTelegramUpdate(d, msg('note', 5, 100));
+      await notify(d, 't2');
+      await handleTelegramUpdate(d, msg('note', 6, 101));
+      expect(reactions(d)).toEqual([
+        [5, '👍'],
+        [6, '👍'],
+      ]);
+      expect(docs.has('telegramPending/t1')).toBe(false);
     });
 
     it('sends a bare message to the task of the last bot message', async () => {
@@ -329,7 +381,7 @@ describe('handleTelegramUpdate', () => {
       await notify(d, 't2');
       await handleTelegramUpdate(d, msg('and this', 6));
       expect(g('tasks/t2/messages/tg_7_6').body).toBe('and this');
-      // The confirmation is about t2 too, so the next bare message follows it.
+      // The bot's latest message is still about t2, so the next bare message follows it.
       await handleTelegramUpdate(d, msg('one more', 7));
       expect(g('tasks/t2/messages/tg_7_7').body).toBe('one more');
     });
@@ -342,7 +394,7 @@ describe('handleTelegramUpdate', () => {
       const input = g('tasks/t1/messages/m1').input as { answer: { value: string; via: string } };
       expect(input.answer).toMatchObject({ value: 'notes.md', via: 'telegram' });
       expect(docs.has('tasks/t1/messages/tg_7_8')).toBe(false);
-      expect(lastText(d)).toContain('Answered on');
+      expect(reactions(d)).toEqual([[8, '👀']]);
       // Once answered, the next message is a plain comment.
       await handleTelegramUpdate(d, msg('thanks', 9));
       expect(g('tasks/t1/messages/tg_7_9').body).toBe('thanks');
@@ -423,6 +475,10 @@ describe('handleTelegramUpdate', () => {
         expect(body.text ?? '').not.toContain('482913');
       }
       expect(lastText(d)).toContain('Code sent to the browser');
+      // The message is gone, so there is nothing to react on, now or when the run ends.
+      expect(reactions(d)).toEqual([]);
+      await ackTelegram(d, 't1');
+      expect(reactions(d)).toEqual([]);
     });
 
     it('ignores strangers', async () => {
