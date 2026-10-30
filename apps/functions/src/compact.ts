@@ -4,6 +4,7 @@ import {
   compactedSession,
   compactionRequest,
   formatTokens,
+  isLocalModel,
   paths,
   type Run,
   summaryText,
@@ -27,6 +28,12 @@ export type CompactResult =
   | { state: 'compacted'; before?: number; after: number };
 
 const LIVE: Run['state'][] = ['queued', 'dispatching', 'claimed', 'running'];
+
+/**
+ * The local model is not reachable from here: a conversation it had is summarised by the
+ * cheapest Gemini model instead (cents), and the next run on the Mac continues from that.
+ */
+const LOCAL_COMPACTION_MODEL = 'gemini-3.1-flash-lite';
 
 /**
  * "Compact" in the task view. A run working on the task compacts at its next step (the
@@ -61,6 +68,7 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
   if (!last || !sessionPath) return { state: 'nothing' };
   const session = await loadSession(deps, sessionPath).catch(() => []);
   if (session.length < 2) return { state: 'nothing' };
+  const model = isLocalModel(last.model) ? LOCAL_COMPACTION_MODEL : last.model;
 
   // The run starts out with the old session: if the summary fails, or a comment starts a run
   // meanwhile, the conversation simply continues from where it was.
@@ -70,7 +78,7 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
     taskId,
     projectId: task.projectId,
     device: 'gcp',
-    model: last.model,
+    model,
     state: 'running',
     trigger: 'compact',
     generation: 0,
@@ -94,10 +102,10 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
         taskId,
         projectId: task.projectId,
         runId: runRef.id,
-        description: `compaction (${last.model})`,
+        description: `compaction (${model})`,
       },
       {
-        model: last.model,
+        model,
         systemInstruction: COMPACT_SYSTEM,
         contents: compactionRequest(session),
         purpose: 'compact',
@@ -112,7 +120,7 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
       .file(path)
       .save(JSON.stringify(compacted), { contentType: 'application/json' });
     const after = await deps.gateway.provider.countTokens({
-      model: last.model,
+      model,
       contents: compacted,
     });
     const before = task.context?.tokens;

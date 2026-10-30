@@ -2,6 +2,7 @@ export * from './compaction.js';
 export * from './device.js';
 export * from './github.js';
 export * from './ingest.js';
+export * from './local-model.js';
 export * from './model.js';
 export * from './paths.js';
 export * from './prompts.js';

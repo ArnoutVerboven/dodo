@@ -110,7 +110,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   const mcp = new LocalMcpHost(clients.db, config.deviceId, config.mcp ?? [], log);
   await mcp.start().catch((err: Error) => log(`mcp: ${err.message}`));
   log(
-    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, ${mcp.count} MCP server${mcp.count === 1 ? '' : 's'}, waiting for runs`,
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, ${mcp.count} MCP server${mcp.count === 1 ? '' : 's'}, local model ${config.localModel ? `${config.localModel.model ?? 'default'} at ${config.localModel.url}` : 'none'}, waiting for runs`,
   );
 
   return new Promise<StopReason>((resolve) => {
@@ -343,10 +343,14 @@ async function execute(
   if (browserUrl) env.DODO_BROWSER_URL = browserUrl;
   const local = Object.keys(mcpUrls).length > 0;
   if (local) env.DODO_MCP_URLS = JSON.stringify(mcpUrls);
+  if (config.localModel) {
+    env.DODO_LOCAL_MODEL_URL = config.localModel.url;
+    if (config.localModel.model) env.DODO_LOCAL_MODEL = config.localModel.model;
+  }
   const argv = sandboxed
     ? await sandboxedArgv([process.execPath, entry], workRoot(), runId, {
         proxyLoopback: !!config.emulatorHost,
-        localBinding: !!browserUrl || local,
+        localBinding: !!browserUrl || local || !!config.localModel,
       })
     : [process.execPath, entry];
   return new Promise((resolve) => {
