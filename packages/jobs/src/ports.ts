@@ -41,6 +41,7 @@ export interface TaskSink {
 
 export interface Notifier {
   notify(n: {
+    kind: 'job_task' | 'job_approval';
     title: string;
     body: string;
     taskId: string;

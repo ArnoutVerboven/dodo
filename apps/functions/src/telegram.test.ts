@@ -73,6 +73,18 @@ describe('notifyTelegram', () => {
     expect(d.send).not.toHaveBeenCalled();
   });
 
+  it('skips kinds muted in Settings and sends the rest', async () => {
+    const { db } = fakeDb({ telegram: { chatId: 42, muted: ['done', 'job_task'] } });
+    const d = deps(db);
+    const base = { title: 't', body: 'b', taskId: 't1', appUrl: 'https://x' };
+    expect(await notifyTelegram(d, { ...base, kind: 'done' })).toBe(false);
+    expect(await notifyTelegram(d, { ...base, kind: 'job_task' })).toBe(false);
+    expect(d.send).not.toHaveBeenCalled();
+    expect(await notifyTelegram(d, { ...base, kind: 'blocked' })).toBe(true);
+    expect(await notifyTelegram(d, base)).toBe(true);
+    expect(d.send).toHaveBeenCalledTimes(2);
+  });
+
   it('sends approval cards with Yes / No buttons', async () => {
     const { db } = fakeDb({ telegram: { chatId: 42 } });
     const d = deps(db);

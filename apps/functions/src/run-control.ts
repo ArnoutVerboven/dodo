@@ -4,6 +4,7 @@ import {
   type Content,
   type FinishRequest,
   type HeartbeatResponse,
+  type NotificationKind,
   paths,
   type RequestInputRequest,
   type Run,
@@ -27,6 +28,8 @@ import { enqueueRun } from './triggers.js';
 import type { VaultSecretStore } from './vault.js';
 
 export type Notify = (n: {
+  /** Which Settings checkbox decides whether Telegram sends it. */
+  kind: NotificationKind;
   title: string;
   body: string;
   taskId: string;
@@ -347,6 +350,7 @@ export async function requestInput(
   }
   const title = (await deps.db.doc(paths.task(run.taskId)).get()).get('title') as string;
   await deps.notify?.({
+    kind: req.kind === 'approval' ? 'approval' : 'question',
     title: `Needs you: ${title}`,
     body: req.prompt,
     taskId: run.taskId,
@@ -551,7 +555,19 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
           : `Run failed: ${title}`;
   const summary =
     ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
-  await deps.notify?.({ title: headline, body: req.error ?? summary, taskId: run.taskId });
+  const kind: NotificationKind =
+    req.reason === 'finished'
+      ? req.outcome === 'done'
+        ? 'done'
+        : req.outcome === 'blocked'
+          ? 'blocked'
+          : 'review'
+      : req.reason === 'budget_exhausted'
+        ? 'budget'
+        : req.reason === 'interrupted' || req.reason === 'halted'
+          ? 'stopped'
+          : 'failed';
+  await deps.notify?.({ kind, title: headline, body: req.error ?? summary, taskId: run.taskId });
 }
 
 /**

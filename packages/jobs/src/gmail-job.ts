@@ -479,6 +479,7 @@ async function handleThread(
     } else if (config.notify) {
       await deps.notify
         ?.notify({
+          kind: 'job_task',
           title: created ? 'New task from email' : 'Email follow-up',
           body: d.title ?? thread.subject,
           taskId,
@@ -574,6 +575,7 @@ async function proposeEvent(
   if (a.notify && ctx.config.notify) {
     await deps.notify
       ?.notify({
+        kind: 'job_approval',
         title: 'Add to your calendar?',
         body: `${a.event.title}, ${formatLocal(start, ctx.timeZone)}`,
         taskId: a.taskId,
@@ -630,6 +632,7 @@ async function draftAndAsk(
   if (ctx.config.notify) {
     await deps.notify
       ?.notify({
+        kind: 'job_approval',
         title: `Reply to ${nameOf(to)}?`,
         body: `${a.title}\n\n${a.reply.slice(0, 1500)}`,
         taskId: a.taskId,

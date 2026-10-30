@@ -284,6 +284,38 @@ export const Device = z.object({
 });
 export type Device = z.infer<typeof Device>;
 
+/**
+ * What a notification is about, so each channel can be told which ones to send.
+ * Every kind is on unless listed in a channel's `muted`: a kind added later starts on.
+ */
+export const NotificationKind = z.enum([
+  'question',
+  'approval',
+  'done',
+  'review',
+  'blocked',
+  'budget',
+  'stopped',
+  'failed',
+  'job_task',
+  'job_approval',
+]);
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
+/** Labels for Settings, in the order they are shown. */
+export const NOTIFICATION_KINDS: ReadonlyArray<{ kind: NotificationKind; label: string }> = [
+  { kind: 'question', label: 'Agent asks a question' },
+  { kind: 'approval', label: 'Agent needs approval' },
+  { kind: 'done', label: 'Task done' },
+  { kind: 'review', label: 'Task ready for review' },
+  { kind: 'blocked', label: 'Task blocked' },
+  { kind: 'budget', label: 'Budget used up (top-up needed)' },
+  { kind: 'stopped', label: 'Run stopped' },
+  { kind: 'failed', label: 'Run failed' },
+  { kind: 'job_task', label: 'Task created by a job (email)' },
+  { kind: 'job_approval', label: 'Job asks to approve (reply draft, calendar event)' },
+];
+
 export const GlobalSettings = z.object({
   connector: z.enum(['custom', 'notion', 'linear', 'github']).default('custom'),
   defaults: AiConfig.omit({ enabled: true }).default({}),
@@ -302,6 +334,8 @@ export const GlobalSettings = z.object({
       chatId: z.number().optional(),
       pairingCode: z.string().optional(),
       pairedAt: Timestamp.optional(),
+      /** Kinds not sent to Telegram. Empty or absent: everything is sent. */
+      muted: z.array(NotificationKind).optional(),
     })
     .optional(),
   /** One-time code shown in Settings; `dodo login <code>` consumes it. */
