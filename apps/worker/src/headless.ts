@@ -24,6 +24,8 @@ export interface HeadlessBrowser {
   client: BrowserClient;
   /** The context's logins now, for the next run of this task. */
   storageState(): Promise<StorageStateJson>;
+  /** Adds stored cookies (the shared Google session) to the live context. */
+  addState(json: StorageStateJson): Promise<boolean>;
   /** The page the agent is on, for the next run's hint; none on a blank page. */
   lastUrl(): string | undefined;
   stop(): Promise<void>;
@@ -103,6 +105,14 @@ export async function startHeadlessBrowser(opts: {
     client,
     async storageState() {
       return JSON.stringify(await context.storageState());
+    },
+    async addState(json) {
+      const state = parseStorageState(json) as
+        | { cookies: Parameters<typeof context.addCookies>[0] }
+        | undefined;
+      if (!state?.cookies.length) return false;
+      await context.addCookies(state.cookies);
+      return true;
     },
     lastUrl() {
       const urls = context

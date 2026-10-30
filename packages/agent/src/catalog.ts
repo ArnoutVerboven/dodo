@@ -7,6 +7,7 @@ import {
 import { BROWSER_TOOLS, emailCodeTool } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
+import { googleSessionTool } from './google-session.js';
 import { googleTools } from './google-tools.js';
 import { notionTools } from './notion-tools.js';
 import { webSearchTool } from './search-tools.js';
@@ -74,6 +75,7 @@ export function builtinCatalog(): BuiltinTool[] {
           since: () => undefined,
           type: async () => ({}),
         }),
+        googleSessionTool({ load: async () => false }),
       ],
       'browser',
     ],

@@ -12,6 +12,7 @@ import {
   execTools,
   type GitHubAccess,
   githubTools,
+  googleSessionTool,
   googleTools,
   inheritedEnv,
   LocalModelControlPlane,
@@ -30,6 +31,7 @@ import {
   CORE_TOOLS,
   type GitHubTokenResponse,
   GOOGLE_SCOPE,
+  googleOnlyState,
   isLocalModel,
   Project,
   type RunToolAccess,
@@ -204,6 +206,8 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
           openPullRequest: (req) => control.githubOpenPr(req),
         }
       : undefined;
+  /** Set once the agent loads the shared Google session: its cookies are saved back at the end. */
+  let googleUsed = false;
   const builtins = [
     ...taskTools,
     ...execTools,
@@ -216,6 +220,18 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
     // A remote browser run: some logins only work from the user's own Mac.
     ...(headless ? [requestDeviceTool] : []),
+    // A remote browser run starts without the user's Google session; it loads it on demand.
+    ...(headless
+      ? [
+          googleSessionTool({
+            load: async () => {
+              googleUsed = true;
+              const { state } = await control.browserState('google-get');
+              return !!state && (await (headless as HeadlessBrowser).addState(state));
+            },
+          }),
+        ]
+      : []),
   ];
   const tools = [...filterBuiltins(builtins, started.tools), ...mcp.tools];
   if (started.tools?.toolsets.length)
@@ -262,6 +278,16 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       .storageState()
       .then((state) => control.browserState('put', { state, lastUrl }))
       .catch((err: Error) => console.log(`browser logins not kept: ${err.message}`));
+    if (googleUsed) {
+      // Only Google's cookies go to the shared session (the control plane filters again).
+      await headless
+        .storageState()
+        .then((state) => {
+          const google = googleOnlyState(state);
+          return google ? control.browserState('google-put', { state: google }) : undefined;
+        })
+        .catch((err: Error) => console.log(`google session not kept: ${err.message}`));
+    }
   }
   await browser?.close();
   await headless?.stop();

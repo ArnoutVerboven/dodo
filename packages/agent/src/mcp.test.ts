@@ -95,7 +95,9 @@ describe('builtin catalog', () => {
     const generated = BUILTIN_TOOLS.filter(
       (t) =>
         t.group !== 'browser' ||
-        ['request_browser', 'request_device', 'get_email_code'].includes(t.name),
+        ['request_browser', 'request_device', 'get_email_code', 'use_google_session'].includes(
+          t.name,
+        ),
     );
     expect(generated).toEqual(builtinCatalog());
   });

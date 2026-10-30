@@ -254,7 +254,7 @@ export class CallableControlPlane implements ControlPlane {
   }
   /** The task's remote-browser logins: `get` before the browser starts, `put` when the run ends. */
   async browserState(
-    action: 'get' | 'put',
+    action: 'get' | 'put' | 'google-get' | 'google-put',
     put?: { state: string; lastUrl?: string },
   ): Promise<{ state?: string; lastUrl?: string }> {
     const r = await httpsCallable(this.fns, 'runBrowserState', { timeout: 60_000 })({
