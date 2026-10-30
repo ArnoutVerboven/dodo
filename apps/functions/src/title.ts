@@ -1,5 +1,5 @@
 import { scopesForTask } from '@dodo/budget';
-import { paths } from '@dodo/core';
+import { paths, TITLE_SYSTEM } from '@dodo/core';
 import { type GatewayDeps, generateWithBudget } from './gateway.js';
 
 const TITLE_MODEL = 'gemini-3.1-flash-lite';
@@ -22,8 +22,7 @@ export async function generateTitle(
     },
     {
       model: TITLE_MODEL,
-      systemInstruction:
-        'Write a task title of at most 8 words for the description. Reply with the title only, no quotes, no trailing period.',
+      systemInstruction: TITLE_SYSTEM,
       contents: [{ role: 'user', parts: [{ text: String(task.description).slice(0, 4000) }] }],
       maxOutputTokens: 256,
       thinkingBudget: 0,

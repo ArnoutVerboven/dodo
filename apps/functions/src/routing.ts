@@ -1,5 +1,12 @@
 import { scopesForTask } from '@dodo/budget';
-import { type Device, type DeviceChoice, deviceChoice, isDeviceOnline } from '@dodo/core';
+import {
+  BROWSER_ROUTER_SYSTEM,
+  browserRouterTurn,
+  type Device,
+  type DeviceChoice,
+  deviceChoice,
+  isDeviceOnline,
+} from '@dodo/core';
 import { type GatewayDeps, generateWithBudget } from './gateway.js';
 
 /**
@@ -71,17 +78,11 @@ export async function needsBrowser(
     },
     {
       model: ROUTER_MODEL,
-      systemInstruction: [
-        'You decide whether an autonomous agent needs a web browser for a task.',
-        'The agent always has: shell, files, git, HTTP fetch of pages and APIs (static HTML, JSON, feeds), and GitHub pull requests.',
-        'A browser is needed only when the task involves a website the agent must interact with or that an HTTP fetch cannot read: logging in, forms, buttons, bookings, orders, checkouts, dashboards behind a login, single-page JavaScript apps, taking screenshots, anything the user wants done "on" a site.',
-        'Not needed for: coding, repositories, writing, analysis, reading public articles or documentation, calling APIs, email drafts, file work.',
-        'Answer with one word: yes or no.',
-      ].join(' '),
+      systemInstruction: BROWSER_ROUTER_SYSTEM,
       contents: [
         {
           role: 'user',
-          parts: [{ text: `Task: ${task.title}\n\n${task.description.slice(0, 4000)}` }],
+          parts: [{ text: browserRouterTurn(task.title, task.description.slice(0, 4000)) }],
         },
       ],
       maxOutputTokens: 8,

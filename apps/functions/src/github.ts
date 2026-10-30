@@ -231,7 +231,8 @@ export async function completeGitHubConnect(
   deps: GitHubDeps,
   q: { code?: string; state?: string; installation_id?: string; setup_action?: string },
 ): Promise<string> {
-  const back = (result: string) => `${deps.appUrl}/settings?github=${encodeURIComponent(result)}`;
+  const back = (result: string) =>
+    `${deps.appUrl}/settings?section=integrations&github=${encodeURIComponent(result)}`;
   try {
     if (q.installation_id) return back(await completeInstall(deps, q));
     if (!q.code) return back('error');
