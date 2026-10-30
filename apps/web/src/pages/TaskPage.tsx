@@ -128,11 +128,15 @@ function TaskView({ task }: { task: Task }) {
             <Description task={task} />
             <PropertyBar task={task} />
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <StatusCard task={task} />
-            <SummaryCard task={task} />
+          {/* Phone: Status, Summary, Thread stacked. Wider: Status and Summary on the left 2/5,
+              the thread on the right 3/5, each side scrolling on its own. */}
+          <div className="grid items-start gap-4 md:grid-cols-5">
+            <div className="min-w-0 space-y-4 md:col-span-2">
+              <StatusCard task={task} />
+              <SummaryCard task={task} />
+            </div>
+            <Thread taskId={task.id} className="md:col-span-3" />
           </div>
-          <Thread taskId={task.id} />
         </div>
         <aside className="space-y-4">
           <AiCard task={task} />
@@ -429,7 +433,7 @@ function SummaryCard({ task }: { task: Task }) {
   return (
     <Card>
       <CardHeader title="Summary" />
-      <CardBody className="prose-sm max-h-80 overflow-y-auto text-sm">
+      <CardBody className="prose-sm max-h-80 overflow-y-auto text-sm md:max-h-[calc(100dvh-16rem)]">
         {task.summary ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.summary}</ReactMarkdown>
         ) : (
@@ -548,21 +552,37 @@ type TimelineItem =
  * Messages and agent runs as one timeline. Clicking an agent message opens the steps behind
  * it; a run that ended without a message gets its own row, and a running one sits at the end.
  */
-function Thread({ taskId }: { taskId: string }) {
+function Thread({ taskId, className }: { taskId: string; className?: string }) {
   const { data: messages, loading } = useMessages(taskId);
   const { data: runs } = useRuns(taskId);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
-  const end = useRef<HTMLDivElement>(null);
-  const seen = useRef<number | null>(null);
-  // Follow new messages as they arrive, but don't jump down to the thread when the page opens.
+  const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  // The thread opens on the newest message and stays there as messages arrive or grow,
+  // until you scroll up to read history; scrolling back to the bottom pins it again.
+  const pinned = useRef(true);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
   useEffect(() => {
-    if (loading) return;
-    if (seen.current !== null && messages.length > seen.current) {
-      end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const el = scroller.current;
+    const inner = content.current;
+    if (!el || !inner) return;
+    const stick = () => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    };
+    stick();
+    const observer = new ResizeObserver(stick);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!loading && pinned.current && scroller.current) {
+      scroller.current.scrollTop = scroller.current.scrollHeight;
     }
-    seen.current = messages.length;
-  }, [loading, messages.length]);
+  }, [loading]);
 
   const runById = new Map(runs.map((r) => [r.id, r]));
   const byRun = new Map<string, ThreadMessage[]>();
@@ -591,42 +611,53 @@ function Thread({ taskId }: { taskId: string }) {
     }
   };
   return (
-    <Card>
+    <Card
+      className={cn(
+        'flex min-w-0 flex-col md:sticky md:top-16 md:max-h-[calc(100dvh-5rem)]',
+        className,
+      )}
+    >
       <CardHeader title="Thread" />
-      <CardBody className="space-y-1">
-        {items.length === 0 && !liveRun && (
-          <p className="text-sm text-muted-foreground">No messages yet.</p>
-        )}
-        {items.map((item) => {
-          if (item.kind === 'run') return <RunRow key={item.run.id} run={item.run} />;
-          const m = item.message;
-          const run = m.runId ? runById.get(m.runId) : undefined;
-          // The steps behind a message are those since the run's previous message.
-          const siblings = (m.runId && byRun.get(m.runId)) || [];
-          const i = siblings.indexOf(m);
-          const from = i > 0 ? siblings[i - 1]?.createdAt : undefined;
-          const to = i === siblings.length - 1 ? undefined : m.createdAt;
-          return (
-            <MessageView
-              key={m.id}
-              taskId={taskId}
-              message={m}
-              run={run}
-              traceFrom={from}
-              traceTo={to}
-              inputOpen={inputs.open.has(m.id)}
-              inputLatest={inputs.latest === m.id}
-            />
-          );
-        })}
-        {liveRun && <RunRow run={liveRun} />}
-        <div ref={end} />
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overscroll-contain md:overflow-y-auto"
+      >
+        <div ref={content} className="space-y-1 px-4 pt-2 pb-1">
+          {items.length === 0 && !liveRun && (
+            <p className="text-sm text-muted-foreground">No messages yet.</p>
+          )}
+          {items.map((item) => {
+            if (item.kind === 'run') return <RunRow key={item.run.id} run={item.run} />;
+            const m = item.message;
+            const run = m.runId ? runById.get(m.runId) : undefined;
+            // The steps behind a message are those since the run's previous message.
+            const siblings = (m.runId && byRun.get(m.runId)) || [];
+            const i = siblings.indexOf(m);
+            const from = i > 0 ? siblings[i - 1]?.createdAt : undefined;
+            const to = i === siblings.length - 1 ? undefined : m.createdAt;
+            return (
+              <MessageView
+                key={m.id}
+                taskId={taskId}
+                message={m}
+                run={run}
+                traceFrom={from}
+                traceTo={to}
+                inputOpen={inputs.open.has(m.id)}
+                inputLatest={inputs.latest === m.id}
+              />
+            );
+          })}
+          {liveRun && <RunRow run={liveRun} />}
+        </div>
+      </div>
+      <CardBody className="pt-2">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void send();
           }}
-          className="pt-3"
         >
           <div className="flex items-end gap-2 rounded-lg border bg-card p-1.5 focus-within:ring-2 focus-within:ring-primary/30">
             <Textarea
