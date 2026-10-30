@@ -423,6 +423,32 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
     observer.observe(inner);
     return () => observer.disconnect();
   }, []);
+  // On a laptop the thread ends at the bottom of the window as the page opens, so the reply box
+  // is always in view; it takes the room left under the title, properties and header.
+  const card = useRef<HTMLDivElement>(null);
+  const [maxHeight, setMaxHeight] = useState<number>();
+  useEffect(() => {
+    const el = card.current;
+    if (!el) return;
+    const wide = window.matchMedia('(min-width: 768px)');
+    const measure = () => {
+      if (!wide.matches) return setMaxHeight(undefined);
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setMaxHeight(Math.max(window.innerHeight - top - 24, 384));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    wide.addEventListener('change', measure);
+    // The title and description above can grow or fold, which moves the thread.
+    const above = el.parentElement?.previousElementSibling;
+    const observer = new ResizeObserver(measure);
+    if (above) observer.observe(above);
+    return () => {
+      window.removeEventListener('resize', measure);
+      wide.removeEventListener('change', measure);
+      observer.disconnect();
+    };
+  }, []);
   useEffect(() => {
     if (!loading && pinned.current && scroller.current) {
       scroller.current.scrollTop = scroller.current.scrollHeight;
@@ -456,12 +482,7 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
     }
   };
   return (
-    <Card
-      className={cn(
-        'flex min-w-0 flex-col md:sticky md:top-16 md:max-h-[calc(100dvh-5rem)]',
-        className,
-      )}
-    >
+    <Card ref={card} style={{ maxHeight }} className={cn('flex min-w-0 flex-col', className)}>
       <CardHeader title="Thread" />
       <div
         ref={scroller}
