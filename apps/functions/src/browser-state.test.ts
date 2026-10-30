@@ -50,9 +50,12 @@ describe('browser state', () => {
   it('saves encrypted, loads back, and is gone for an unknown task', async () => {
     const { storage, files } = fakeStorage();
     const deps = { storage, key: async () => key };
-    await saveBrowserState(deps, 't1', state);
+    await saveBrowserState(deps, 't1', { state, lastUrl: 'https://example.com/account' });
     expect(files.get(browserStatePath('t1'))?.includes('abc')).toBe(false);
-    expect(await loadBrowserState(deps, 't1')).toBe(state);
+    expect(await loadBrowserState(deps, 't1')).toEqual({
+      state,
+      lastUrl: 'https://example.com/account',
+    });
     expect(await loadBrowserState(deps, 't2')).toBeUndefined();
   });
 
@@ -67,20 +70,20 @@ describe('browser state', () => {
   it('keeps nothing for an empty state', async () => {
     const { storage, files } = fakeStorage();
     const deps = { storage, key: async () => key };
-    await saveBrowserState(deps, 't1', state);
-    await saveBrowserState(deps, 't1', JSON.stringify({ cookies: [], origins: [] }));
+    await saveBrowserState(deps, 't1', { state });
+    await saveBrowserState(deps, 't1', { state: JSON.stringify({ cookies: [], origins: [] }) });
     expect(files.has(browserStatePath('t1'))).toBe(false);
   });
 
   it('deletes the state when the task closes or disappears, not on other changes', async () => {
     const { storage, files } = fakeStorage();
     const deps = { storage, key: async () => key };
-    await saveBrowserState(deps, 't1', state);
+    await saveBrowserState(deps, 't1', { state });
     await onTaskClosed(deps, 't1', { status: 'todo' }, { status: 'in_progress' });
     expect(files.has(browserStatePath('t1'))).toBe(true);
     await onTaskClosed(deps, 't1', { status: 'review' }, { status: 'done' });
     expect(files.has(browserStatePath('t1'))).toBe(false);
-    await saveBrowserState(deps, 't1', state);
+    await saveBrowserState(deps, 't1', { state });
     await onTaskClosed(deps, 't1', { status: 'done' }, { status: 'done' });
     expect(files.has(browserStatePath('t1'))).toBe(true);
     await onTaskClosed(deps, 't1', { status: 'todo' }, undefined);

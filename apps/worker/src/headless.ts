@@ -24,6 +24,8 @@ export interface HeadlessBrowser {
   client: BrowserClient;
   /** The context's logins now, for the next run of this task. */
   storageState(): Promise<StorageStateJson>;
+  /** The page the agent is on, for the next run's hint; none on a blank page. */
+  lastUrl(): string | undefined;
   stop(): Promise<void>;
 }
 
@@ -95,6 +97,13 @@ export async function startHeadlessBrowser(opts: {
     client,
     async storageState() {
       return JSON.stringify(await context.storageState());
+    },
+    lastUrl() {
+      const urls = context
+        .pages()
+        .map((p) => p.url())
+        .filter((u) => /^https?:/.test(u));
+      return urls.at(-1);
     },
     async stop() {
       if (stopped) return;

@@ -167,6 +167,8 @@ export const BrowserStateRequest = z.object({
   action: z.enum(['get', 'put']),
   /** `put`: the storage state as JSON. */
   state: z.string().max(2_000_000).optional(),
+  /** `put`: the page the agent was on when the run ended, as a hint for the next run. */
+  lastUrl: z.string().max(2000).optional(),
 });
 export type BrowserStateRequest = z.infer<typeof BrowserStateRequest>;
 
@@ -174,6 +176,7 @@ export const BrowserStateResponse = z.object({
   ok: z.boolean(),
   /** `get`: the stored state as JSON, when the task has one. */
   state: z.string().optional(),
+  lastUrl: z.string().optional(),
 });
 export type BrowserStateResponse = z.infer<typeof BrowserStateResponse>;
 

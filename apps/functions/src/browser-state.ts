@@ -45,11 +45,18 @@ export function decrypt(key: Buffer, blob: Buffer): string {
   return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
 }
 
-/** The task's stored state as JSON, or nothing. A blob that cannot be read is dropped. */
+export interface StoredBrowserState {
+  /** Playwright `storageState` as JSON. */
+  state: string;
+  /** Where the agent was when the run ended. */
+  lastUrl?: string;
+}
+
+/** The task's stored state, or nothing. A blob that cannot be read is dropped. */
 export async function loadBrowserState(
   deps: BrowserStateDeps,
   taskId: string,
-): Promise<string | undefined> {
+): Promise<StoredBrowserState | undefined> {
   const file = deps.storage.bucket().file(browserStatePath(taskId));
   let blob: Buffer;
   try {
@@ -59,7 +66,9 @@ export async function loadBrowserState(
     throw err;
   }
   try {
-    return decrypt(await deps.key(), blob);
+    const stored = JSON.parse(decrypt(await deps.key(), blob)) as StoredBrowserState;
+    if (typeof stored.state !== 'string') throw new Error('not a stored browser state');
+    return stored;
   } catch (err) {
     deps.log?.('browser state unreadable; dropped', { taskId, err: String(err) });
     await file.delete({ ignoreNotFound: true }).catch(() => undefined);
@@ -70,21 +79,22 @@ export async function loadBrowserState(
 export async function saveBrowserState(
   deps: BrowserStateDeps,
   taskId: string,
-  state: string,
+  stored: StoredBrowserState,
 ): Promise<void> {
-  if (Buffer.byteLength(state, 'utf8') > MAX_STATE_BYTES) {
+  if (Buffer.byteLength(stored.state, 'utf8') > MAX_STATE_BYTES) {
     throw new Error(`browser state over ${MAX_STATE_BYTES} bytes`);
   }
   // Nothing worth keeping: a state with no cookies and no local storage is an empty login.
-  const parsed = JSON.parse(state) as { cookies?: unknown[]; origins?: unknown[] };
+  const parsed = JSON.parse(stored.state) as { cookies?: unknown[]; origins?: unknown[] };
   if (!parsed.cookies?.length && !parsed.origins?.length) {
     await deleteBrowserState(deps, taskId);
     return;
   }
+  const body = JSON.stringify({ state: stored.state, lastUrl: stored.lastUrl });
   await deps.storage
     .bucket()
     .file(browserStatePath(taskId))
-    .save(encrypt(await deps.key(), state), {
+    .save(encrypt(await deps.key(), body), {
       contentType: 'application/octet-stream',
       resumable: false,
     });

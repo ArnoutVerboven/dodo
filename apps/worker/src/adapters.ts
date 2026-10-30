@@ -192,15 +192,17 @@ export class CallableControlPlane implements ControlPlane {
     }
   }
   /** The task's remote-browser logins: `get` before the browser starts, `put` when the run ends. */
-  async browserState(action: 'get'): Promise<string | undefined>;
-  async browserState(action: 'put', state: string): Promise<undefined>;
-  async browserState(action: 'get' | 'put', state?: string): Promise<string | undefined> {
+  async browserState(
+    action: 'get' | 'put',
+    put?: { state: string; lastUrl?: string },
+  ): Promise<{ state?: string; lastUrl?: string }> {
     const r = await httpsCallable(this.fns, 'runBrowserState', { timeout: 60_000 })({
       runId: this.runId,
       action,
-      ...(state !== undefined ? { state } : {}),
+      ...(put ?? {}),
     });
-    return (r.data as { state?: string }).state;
+    const { state, lastUrl } = r.data as { state?: string; lastUrl?: string };
+    return { state, lastUrl };
   }
   /** A token for the run's own repo (docs/GITHUB.md); refusals come back as plain Errors. */
   async githubToken(access: 'read' | 'write'): Promise<GitHubTokenResponse> {

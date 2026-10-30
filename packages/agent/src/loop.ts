@@ -38,6 +38,8 @@ export interface LoopOptions {
   screenshot?: ToolContext['screenshot'];
   /** What the browser is, for the system prompt: a window on the user's Mac, or headless remote. */
   browserKind?: 'window' | 'headless';
+  /** Headless: what came back from the task's earlier runs (logins; where the agent was). */
+  browserRestored?: { logins: boolean; lastUrl?: string };
   /**
    * After ask_user, stay alive this long for the answer (delivered by the heartbeat) instead
    * of ending the run: a remote browser keeps its page and logins across the question.
@@ -105,6 +107,20 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     session.push(
       user(latest ? `The user commented:\n${latest.body}` : 'The user asked you to continue.'),
     );
+  }
+  // A continued conversation with a headless browser: the pages of the earlier run are gone
+  // with it, whatever the conversation says. Say so, or the agent takes one look at the blank
+  // page and gives up.
+  if (
+    input.trigger !== 'new' &&
+    session.length > 1 &&
+    hasBrowser &&
+    opts.browserKind === 'headless'
+  ) {
+    const note = headlessRestartedNote(opts.browserRestored);
+    const last = session.at(-1);
+    if (last?.role === 'user') last.parts.push({ text: note });
+    else session.push(user(note));
   }
 
   /** The user's answer goes into the conversation; a "yes" to an approval permits that call once. */
@@ -525,6 +541,18 @@ function truncate(s: string, n: number): string {
 function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
+}
+
+/** Goes into a continued conversation whose browser (and the pages it had) was started anew. */
+export const HEADLESS_RESTARTED =
+  'Note: this run has a new browser, open on a blank page. The pages of the earlier run are gone';
+
+export function headlessRestartedNote(restored?: { logins: boolean; lastUrl?: string }): string {
+  const logins = restored?.logins
+    ? ', but its logins (cookies and local storage) are restored, so you may still be signed in'
+    : ', and so are its logins';
+  const where = restored?.lastUrl ? ` Last time you were on ${restored.lastUrl}.` : '';
+  return `${HEADLESS_RESTARTED}${logins}.${where} Open the site again (browser_navigate) and continue from there; do not conclude from the blank page that the site is unreachable.`;
 }
 
 /** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */

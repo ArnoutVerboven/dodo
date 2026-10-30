@@ -293,10 +293,11 @@ export const runBrowserState = onCall(
     const run = await loadRunForCaller(getFirestore(), caller(request.auth), req.runId);
     const deps = browserStateDeps();
     if (req.action === 'get') {
-      return { ok: true, state: await loadBrowserState(deps, run.taskId) };
+      const stored = await loadBrowserState(deps, run.taskId);
+      return { ok: true, state: stored?.state, lastUrl: stored?.lastUrl };
     }
     if (!req.state) throw new HttpsError('invalid-argument', 'put needs a state');
-    await saveBrowserState(deps, run.taskId, req.state);
+    await saveBrowserState(deps, run.taskId, { state: req.state, lastUrl: req.lastUrl });
     return { ok: true };
   },
 );
