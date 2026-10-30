@@ -1,3 +1,4 @@
+import { GOOGLE_SESSION_PROMPT, GOOGLE_SESSION_RULE } from '@dodo/core';
 import { z } from 'zod';
 import { define, type ToolDef } from './tools.js';
 
@@ -23,12 +24,27 @@ export function googleSessionTool(access: GoogleSessionAccess): ToolDef {
       reason: z.string().min(1).max(300).describe('Which site wants the Google sign-in.'),
     }),
     policy: () => ({ tool: 'GoogleSession', key: 'use', category: 'sandbox' }),
-    async execute() {
+    async execute({ reason }) {
       if (loaded === undefined) {
         try {
           loaded = await access.load();
         } catch (err) {
-          return { result: { error: `Google session not available: ${(err as Error).message}` } };
+          const message = (err as Error).message;
+          // Each task asks you once; the control plane only hands the session to a task you
+          // approved.
+          if (/not approved/i.test(message))
+            return {
+              result: {
+                ok: true,
+                note: 'The run pauses here until the user answers; then call use_google_session again.',
+              },
+              askUser: {
+                kind: 'approval',
+                prompt: `${GOOGLE_SESSION_PROMPT} ${reason}`,
+                suggestedRule: GOOGLE_SESSION_RULE,
+              },
+            };
+          return { result: { error: `Google session not available: ${message}` } };
         }
       }
       return {

@@ -1,4 +1,4 @@
-import { type NotificationKind, paths } from '@dodo/core';
+import { isTaskOnlyRule, type NotificationKind, paths } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { esc, markdownToTelegram } from './telegram-format.js';
 
@@ -555,7 +555,7 @@ async function alwaysScope(
   taskId: string,
   rule: string,
 ): Promise<'task' | 'project'> {
-  if (rule.startsWith('Vault(')) return 'task';
+  if (isTaskOnlyRule(rule)) return 'task';
   const task = await deps.db.doc(paths.task(taskId)).get();
   return task.get('projectId') ? 'project' : 'task';
 }

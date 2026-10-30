@@ -185,6 +185,19 @@ describe('secret answers', () => {
     expect(s.redact('code 482913 accepted')).toBe('code {{answer:m1}} accepted');
   });
 
+  it('types a code only on the site it was asked on', async () => {
+    const s = createSecretResolver(
+      async () => 'x',
+      async () => ({ value: '482913', site: 'kbc.be' }),
+    );
+    expect(await s.resolve('{{answer:m1}}', 'login.kbc.be')).toBe('482913');
+    await expect(s.resolve('{{answer:m1}}', 'kbc.be.evil.test')).rejects.toThrow(
+      'can only be typed there',
+    );
+    s.setPage?.('www.kbc.be');
+    expect(s.pageSite?.()).toBe('kbc.be');
+  });
+
   it('refuses answer references when the run has no way to fetch them', async () => {
     const s = createSecretResolver(async () => 'x');
     await expect(s.resolve('{{answer:m1}}', 'bank.be')).rejects.toThrow('not available');

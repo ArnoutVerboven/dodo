@@ -3,6 +3,8 @@ import { type CostGate, computeCost, contextWindow } from '@dodo/budget';
 import {
   type Content,
   type FinishRequest,
+  GOOGLE_SESSION_PROMPT,
+  GOOGLE_SESSION_RULE,
   type HeartbeatResponse,
   type NotificationKind,
   paths,
@@ -336,6 +338,7 @@ export async function requestInput(
         options: req.options,
         suggestedRule: req.suggestedRule,
         secret: req.secret && req.kind === 'text' ? true : undefined,
+        site: req.secret && req.kind === 'text' ? req.site : undefined,
         costEstimate: req.costEstimate,
         image: image && { storagePath: image.storagePath, mimeType: image.mimeType },
       }),
@@ -394,14 +397,22 @@ export async function requestInput(
 }
 
 /**
- * A yes on a card whose rule is `Vault(<id>)` lets the task use that entry, so the card must
- * say so: an approval, naming the entry and its sites the way the entry itself does, whatever
- * text the run sent. Any other mention of the vault in a rule is refused.
+ * A yes on a card whose rule is `Vault(<id>)` lets the task use that entry, and one on
+ * `GoogleSession(use)` lets it use your Google sign-in, so the card must say so: an approval
+ * that opens with the control plane's own words for it (the entry's name and sites), whatever
+ * text the run sent. Any other mention of either in a rule is refused.
  */
 export async function checkedVaultCard<T extends Omit<RequestInputRequest, 'runId'>>(
   db: Firestore,
   req: T,
 ): Promise<T> {
+  if (req.suggestedRule && /^\s*GoogleSession\b/i.test(req.suggestedRule)) {
+    if (req.suggestedRule !== GOOGLE_SESSION_RULE || req.kind !== 'approval')
+      throw new RequestInputError('The Google session is asked with use_google_session only');
+    return req.prompt.startsWith(GOOGLE_SESSION_PROMPT)
+      ? req
+      : { ...req, prompt: `${GOOGLE_SESSION_PROMPT} ${req.prompt}` };
+  }
   if (!req.suggestedRule || !/^\s*Vault\b/i.test(req.suggestedRule)) return req;
   const entryId = vaultRuleEntry(req.suggestedRule);
   const snap = entryId ? await db.doc(paths.vaultEntry(entryId)).get() : undefined;

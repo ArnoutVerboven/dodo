@@ -29,4 +29,26 @@ describe('use_google_session', () => {
     }).execute({ reason: 'x' }, ctx);
     expect(broken.result).toEqual({ error: 'Google session not available: offline' });
   });
+
+  it('asks you once for the task when the control plane has no approval for it', async () => {
+    let approved = false;
+    const tool = googleSessionTool({
+      load: async () => {
+        if (!approved) throw new Error('This task is not approved to use your Google sign-in');
+        return true;
+      },
+    });
+    const out = await tool.execute({ reason: 'booking.com wants Google' }, ctx);
+    expect(out).toMatchObject({
+      askUser: {
+        kind: 'approval',
+        suggestedRule: 'GoogleSession(use)',
+        prompt: expect.stringMatching(
+          /^Let this task use your saved Google sign-in\?.*booking\.com/,
+        ),
+      },
+    });
+    approved = true;
+    expect((await tool.execute({ reason: 'x' }, ctx)).result).toMatchObject({ ok: true });
+  });
 });

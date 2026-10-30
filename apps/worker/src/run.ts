@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  asAgent,
   authHeaderArgs,
   browserTools,
   connectBrowser,
@@ -19,6 +20,7 @@ import {
   type McpClient,
   mcpTools,
   notionTools,
+  prepareDir,
   requestBrowserTool,
   requestDeviceTool,
   runAgent,
@@ -71,7 +73,9 @@ async function checkout(
   log: (m: string) => void,
 ): Promise<string | undefined> {
   const env = { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: workdir };
-  const gitIn = (args: string[]) => execFileP('git', args, { cwd: workdir, timeout: 120_000, env });
+  // As the agent's user: the checkout is the agent's to work in.
+  const gitIn = (args: string[]) =>
+    execFileP('git', args, { cwd: workdir, timeout: 120_000, env, ...asAgent() });
   try {
     if ((await readdir(workdir)).length === 0) {
       await gitIn([
@@ -138,7 +142,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const store = new FirestoreTaskStore(clients.db, task.id, env.runId, project?.id);
   const trace = new FirestoreTrace(clients.db, env.runId);
   const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
-  await mkdir(workdir, { recursive: true });
+  await prepareDir(workdir);
   const policy = new PolicyEngine(started.policy);
   // Each repo is checked out with its own read token: one repo in the task folder itself,
   // several in subfolders named after them.
@@ -151,7 +155,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
         return undefined;
       });
       const target = path.join(workdir, dir);
-      await mkdir(target, { recursive: true });
+      await prepareDir(target);
       const note = await checkout(target, repo, github, (m) => console.log(m));
       return { repo, dir, github, note };
     }),
@@ -168,7 +172,8 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     });
     restored = { logins: !!stored.state, lastUrl: stored.lastUrl };
     headless = await startHeadlessBrowser({
-      outputDir: path.join(workdir, '.browser'),
+      // Not in the task folder: page snapshots there can show what was typed into a field.
+      outputDir: path.join(os.tmpdir(), `dodo-browser-${env.runId}`),
       storageState: stored.state,
       log: (m) => console.log(m),
     }).catch((err: Error) => {

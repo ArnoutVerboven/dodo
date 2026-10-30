@@ -182,6 +182,8 @@ export const RequestInputRequest = z.object({
   suggestedRule: z.string().optional(),
   /** The answer is a secret (an MFA code): it reaches the browser, never the model. */
   secret: z.boolean().optional(),
+  /** For a secret: the site the browser was on when asked; the code is typed only there. */
+  site: z.string().max(253).optional(),
   costEstimate: MicroEur.optional(),
   /** A screenshot to show with the question (in the app and as a Telegram photo). */
   image: ImageUpload.optional(),
@@ -256,6 +258,17 @@ export type RunEvent = z.infer<typeof RunEvent>;
  * when the agent asks for it (use_google_session), and only Google's own cookies are kept.
  */
 export const SHARED_GOOGLE_STATE = '_shared-google';
+
+/** Approving this on a task lets its runs load the shared Google session (once per task). */
+export const GOOGLE_SESSION_RULE = 'GoogleSession(use)';
+
+/** How the approval card for it reads; the control plane writes this into any such card. */
+export const GOOGLE_SESSION_PROMPT =
+  'Let this task use your saved Google sign-in? Its browser then acts as your Google account (Gmail, Drive and every site you sign in to with Google) until the task ends.';
+
+/** Rules a run gets only from a card answered on its own task, never from project or global rules. */
+export const isTaskOnlyRule = (rule: string | undefined) =>
+  !!rule && (/^Vault\(/.test(rule) || rule === GOOGLE_SESSION_RULE);
 
 /** Google's sign-in domains: google.com and the country domains (google.be, google.co.uk). */
 export const isGoogleDomain = (domain: string) =>

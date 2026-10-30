@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { asAgent, prepareDir, readAsAgent, writeAsAgent } from './agent-user.js';
 import { define, type ToolDef } from './tools.js';
 
 /**
@@ -164,6 +164,8 @@ function run(
     const child = spawn('bash', ['-c', command], {
       cwd,
       env: { ...inheritedEnv(), HOME: cwd, LANG: 'C.UTF-8', DODO: '1' },
+      // In the cloud: another user than the worker, which holds the run's credential.
+      ...asAgent(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
@@ -217,7 +219,7 @@ export const execTools = [
     }),
     async execute({ command }, ctx) {
       const cwd = ctx.workdir ?? process.cwd();
-      await mkdir(cwd, { recursive: true });
+      await prepareDir(cwd);
       const r = await run(command, cwd, BASH_TIMEOUT_MS);
       return { result: { exitCode: r.code, output: clip(r.out), timedOut: r.timedOut } };
     },
@@ -229,7 +231,7 @@ export const execTools = [
     policy: ({ path: p }) => ({ tool: 'Read', key: p, category: 'sandbox' }),
     async execute({ path: p }, ctx) {
       const file = inside(ctx.workdir ?? process.cwd(), p);
-      return { result: { text: clip(await readFile(file, 'utf8')) } };
+      return { result: { text: clip((await readAsAgent(file, 50_000_000)).toString('utf8')) } };
     },
   }),
   define({
@@ -239,8 +241,7 @@ export const execTools = [
     policy: ({ path: p }) => ({ tool: 'Write', key: p, category: 'sandbox' }),
     async execute({ path: p, content }, ctx) {
       const file = inside(ctx.workdir ?? process.cwd(), p);
-      await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, content, 'utf8');
+      await writeAsAgent(file, content);
       return { result: { ok: true, bytes: Buffer.byteLength(content) } };
     },
   }),

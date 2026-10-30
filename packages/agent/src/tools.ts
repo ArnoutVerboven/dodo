@@ -45,6 +45,8 @@ export type ToolOutcome = (
         suggestedRule?: string;
         /** The answer is a secret (an MFA code): the model gets only its reference. */
         secret?: boolean;
+        /** For a secret: the site the browser was on, the only site the code is typed on. */
+        site?: string;
         /** Shown with the question in the app and sent as a photo on Telegram. */
         image?: ImageUpload;
       };
@@ -182,12 +184,13 @@ export const taskTools = [
         .describe('The element ref from the page snapshot, to crop the screenshot to it.'),
     }),
     async execute({ screenshot, screenshotElement, screenshotRef, ...question }, ctx) {
-      // A yes to a card with this rule would unlock a vault entry; only request_vault_access
-      // writes that card, with the entry's own name and sites in it.
-      if (question.suggestedRule && /^\s*Vault\b/i.test(question.suggestedRule))
+      // A yes to a card with one of these rules unlocks a vault entry or the Google session;
+      // only request_vault_access and use_google_session write those cards.
+      if (question.suggestedRule && /^\s*(Vault|GoogleSession)\b/i.test(question.suggestedRule))
         return {
           result: {
-            error: 'Ask for a vault entry with request_vault_access, not ask_user.',
+            error:
+              'Ask for a vault entry with request_vault_access, and for the Google session with use_google_session, not ask_user.',
           },
         };
       let image: ImageUpload | undefined;
@@ -208,7 +211,7 @@ export const taskTools = [
           ...question,
           // Only a text answer can be a code; a secret choice or approval means nothing.
           ...(question.secret && question.kind === 'text'
-            ? { secret: true }
+            ? { secret: true, site: ctx.secrets?.pageSite?.() }
             : { secret: undefined }),
           ...(image ? { image } : {}),
         },

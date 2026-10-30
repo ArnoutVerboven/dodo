@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { BranchName } from '@dodo/core';
 import { z } from 'zod';
+import { asAgent } from './agent-user.js';
 import { inheritedEnv } from './exec-tools.js';
 import { define, type ToolDef } from './tools.js';
 
@@ -50,6 +51,8 @@ function git(
         timeout: timeoutMs,
         maxBuffer: 4 * 1024 * 1024,
         env: { ...inheritedEnv(), GIT_TERMINAL_PROMPT: '0', HOME: cwd, LANG: 'C.UTF-8' },
+        // The checkout is the agent's (its hooks and config too): git runs as the agent.
+        ...asAgent(),
       },
       (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}`.trim() }),
     );
