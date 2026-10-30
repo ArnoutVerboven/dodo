@@ -99,6 +99,19 @@ export const TaskContextUsage = z.object({
   max: z.number().int().positive().optional(),
   model: z.string().optional(),
   updatedAt: Timestamp.optional(),
+  /**
+   * What the tokens are made of: system prompt, tools per toolset or MCP server, conversation.
+   * Estimated from their size, scaled to the measured total.
+   */
+  breakdown: z
+    .array(
+      z.object({
+        kind: z.enum(['system', 'tools', 'conversation', 'reply']),
+        label: z.string(),
+        tokens: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
   /** When the conversation was last compacted (automatically or by hand). */
   compactedAt: Timestamp.optional(),
 });

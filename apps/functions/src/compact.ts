@@ -124,6 +124,16 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
       contents: compacted,
     });
     const before = task.context?.tokens;
+    // The system prompt and tools stay as they were at the last step; only the conversation
+    // becomes the summary. The figure covers all of it, as a step's does.
+    const kept = (task.context?.breakdown ?? []).filter(
+      (p) => p.kind === 'system' || p.kind === 'tools',
+    );
+    const breakdown = [
+      ...kept,
+      { kind: 'conversation' as const, label: 'Summary (compacted)', tokens: after },
+    ];
+    const tokens = breakdown.reduce((s, p) => s + p.tokens, 0);
     const end = now();
     const batch = db.batch();
     batch.update(runRef, {
@@ -134,7 +144,8 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
       updatedAt: end,
     });
     batch.update(taskRef, {
-      'context.tokens': after,
+      'context.tokens': tokens,
+      'context.breakdown': breakdown,
       'context.max': contextWindow(last.model),
       'context.model': last.model,
       'context.updatedAt': end,
@@ -143,13 +154,13 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
     batch.create(db.collection(paths.messages(taskId)).doc(), {
       author: 'system',
       body: `Conversation compacted to save context${
-        before ? `: ${formatTokens(before)} → ${formatTokens(after)} tokens` : ''
+        before ? `: ${formatTokens(before)} → ${formatTokens(tokens)} tokens` : ''
       }. The agent continues from a summary of it.`,
       runId: runRef.id,
       createdAt: end,
     });
     await batch.commit();
-    return { state: 'compacted', before, after };
+    return { state: 'compacted', before, after: tokens };
   } catch (err) {
     const message = (err as Error).message;
     await runRef.update({

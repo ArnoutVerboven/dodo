@@ -11,6 +11,7 @@ import {
   UnknownModelError,
 } from '@dodo/budget';
 import {
+  contextBreakdown,
   eur,
   type GenerateRequest,
   type GenerateResponse,
@@ -210,6 +211,11 @@ export async function generateWithBudget(
               'context.tokens': result.usage.inputTokens + result.usage.outputTokens,
               'context.max': contextWindow(req.model),
               'context.model': req.model,
+              'context.breakdown': contextBreakdown(
+                req,
+                result.usage.inputTokens,
+                result.usage.outputTokens,
+              ),
               'context.updatedAt': now(),
             };
       // A display value: never fail a paid-for call over it.

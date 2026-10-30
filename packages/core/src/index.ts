@@ -1,4 +1,5 @@
 export * from './compaction.js';
+export * from './context-breakdown.js';
 export * from './device.js';
 export * from './email-code.js';
 export * from './github.js';
