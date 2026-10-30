@@ -28,13 +28,38 @@ export { vaultRefs as findVaultRefs } from '@dodo/core';
 /** Values shorter than this are not redacted: they would cut ordinary words out of pages. */
 const MIN_REDACT = 3;
 
+/**
+ * The value as it may show up escaped in a tool result: in a JSON or JavaScript string (with
+ * either quote), URL-encoded or as HTML. A password with a quote or a backslash in it must not
+ * slip past the redaction just because something quoted it.
+ */
+export function escapedForms(value: string): string[] {
+  const json = JSON.stringify(value).slice(1, -1);
+  const html = value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  let url = value;
+  try {
+    url = encodeURIComponent(value);
+  } catch {}
+  const forms = [value, json, json.replace(/\\"/g, '"').replace(/'/g, "\\'"), url, html];
+  return [...new Set(forms)];
+}
+
 export function createSecretResolver(
   fetchValue: (entryId: string, field: string, host: string) => Promise<string>,
   /** A secret answer to ask_user (`{{answer:<messageId>}}`); absent: such refs are refused. */
   fetchAnswer?: (messageId: string) => Promise<string>,
 ): SecretResolver {
-  /** value → reference, longest values first when redacting. */
+  /** value (and its escaped forms) → reference, longest first when redacting. */
   const seen = new Map<string, string>();
+  const remember = (value: string, ref: string) => {
+    if (value.length < MIN_REDACT) return;
+    for (const form of escapedForms(value)) seen.set(form, ref);
+  };
   /** Values this run fetched itself, by answer id, with the site they belong to. */
   const held = new Map<string, { value: string; site: string }>();
   return {
@@ -42,7 +67,7 @@ export function createSecretResolver(
       let out = text;
       for (const r of vaultRefs(text)) {
         const value = await fetchValue(r.entryId, r.field, host);
-        if (value.length >= MIN_REDACT) seen.set(value, r.ref);
+        remember(value, r.ref);
         out = out.split(r.ref).join(value);
       }
       for (const r of answerRefs(text)) {
@@ -57,7 +82,7 @@ export function createSecretResolver(
         }
         if (!fetchAnswer) throw new Error('Secret answers are not available in this run.');
         const value = await fetchAnswer(r.messageId);
-        if (value.length >= MIN_REDACT) seen.set(value, r.ref);
+        remember(value, r.ref);
         out = out.split(r.ref).join(value);
       }
       return out;
@@ -65,7 +90,7 @@ export function createSecretResolver(
     hold(id, value, site) {
       const ref = answerRef(id);
       held.set(id, { value, site });
-      if (value.length >= MIN_REDACT) seen.set(value, ref);
+      remember(value, ref);
       return ref;
     },
     redact(text) {

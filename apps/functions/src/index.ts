@@ -93,6 +93,7 @@ import { needsBrowser } from './routing.js';
 import {
   finish,
   heartbeat,
+  RequestInputError,
   reapIfStale,
   reapStaleRuns,
   requestInput,
@@ -349,7 +350,10 @@ export const runRequestInput = onCall(
     const req = parseOr<RequestInputRequest>(RequestInputRequest, request.data);
     const deps = controlDeps();
     const run = await loadRunForCaller(deps.db, caller(request.auth), req.runId);
-    const { messageId } = await requestInput(deps, run, req);
+    const { messageId } = await requestInput(deps, run, req).catch((err: Error) => {
+      if (err instanceof RequestInputError) throw new HttpsError('invalid-argument', err.message);
+      throw err;
+    });
     return { ok: true, messageId };
   },
 );
@@ -417,6 +421,10 @@ export const runBrowserState = onCall(
     }
     // The user's shared Google session: any run may load it on demand, and only Google's
     // cookies are ever kept in it, whatever the run sends.
+    // Only a run with the remote browser has a use for the Google cookies.
+    if ((req.action === 'google-get' || req.action === 'google-put') && !run.browser) {
+      throw new HttpsError('permission-denied', 'Only a run with the remote browser');
+    }
     if (req.action === 'google-get') {
       const stored = await loadBrowserState(deps, SHARED_GOOGLE_STATE);
       return { ok: true, state: stored?.state };

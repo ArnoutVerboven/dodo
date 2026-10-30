@@ -65,6 +65,17 @@ export type VaultResolveRequest = z.infer<typeof VaultResolveRequest>;
 /** The permission rule for using an entry in a task: `Vault(energy)`. */
 export const vaultRule = (entryId: string) => `Vault(${entryId})`;
 
+/** The entry id in a `Vault(<id>)` rule. */
+export const vaultRuleEntry = (rule: string | undefined): string | undefined =>
+  /^Vault\(([a-z0-9][a-z0-9-]{0,39})\)$/.exec(rule ?? '')?.[1];
+
+/**
+ * How an approval card for an entry starts, written from the entry itself (the control plane
+ * checks it): what you say yes to is this entry, on these sites, whatever the agent adds.
+ */
+export const vaultApprovalPrompt = (entry: Pick<VaultEntry, 'name' | 'domains' | 'fields'>) =>
+  `Use your vault entry "${entry.name}" (${entry.fields.map((f) => f.label.toLowerCase()).join(', ')}) on ${entry.domains.join(', ')} for this task?`;
+
 /** How the model refers to a value: `{{vault:energy.password}}`. */
 export const vaultRef = (entryId: string, field: string) => `{{vault:${entryId}.${field}}}`;
 const REF = /\{\{vault:([a-z0-9][a-z0-9-]*)\.([a-z0-9][a-z0-9_-]*)\}\}/g;
@@ -127,7 +138,8 @@ export const AnswerResolveRequest = z.object({
 export type AnswerResolveRequest = z.infer<typeof AnswerResolveRequest>;
 
 /** Same reading of an approval answer as the loop and the budget top-up. */
-export const isApproved = (answer: string) => /^(y|yes|ok|approve|allow)/i.test(answer.trim());
+export const isApproved = (answer: string) =>
+  /^(y|yes|yeah|yep|ok|okay|approve|approved|allow|allowed)\b/i.test(answer.trim());
 
 /**
  * Things about you the agent may use freely (forms, sign-ups, scheduling): not secret, so it is

@@ -11,6 +11,7 @@ import {
   type DeviceReleaseRequest,
   deviceChoice,
   deviceUid,
+  isApproved,
   paths,
   type Run,
 } from '@dodo/core';
@@ -214,9 +215,7 @@ export async function egressCheck(
   const policy = await policyForRun(deps.db, run);
   const answer = (run as Run & { answer?: { value?: string; suggestedRule?: string } }).answer;
   const approved =
-    answer?.suggestedRule && /^(y|yes|ok|approve|allow)/i.test(String(answer.value ?? '').trim())
-      ? [answer.suggestedRule]
-      : [];
+    answer?.suggestedRule && isApproved(String(answer.value ?? '')) ? [answer.suggestedRule] : [];
   const by =
     hostAllowedBy({ ...policy, allow: [...policy.allow, ...approved] }, req.host) ??
     (await mcpHostAllowed(deps.db, run, req.host).catch(() => undefined));

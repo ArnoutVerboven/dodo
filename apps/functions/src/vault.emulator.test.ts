@@ -3,6 +3,7 @@ import type { Run } from '@dodo/core';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { afterAll, describe, expect, it } from 'vitest';
+import { checkedVaultCard } from './run-control.js';
 import {
   deleteVaultEntry,
   resolveVaultValue,
@@ -89,6 +90,18 @@ describe.skipIf(!enabled)('vault (emulator)', () => {
     const req = { runId: run.id, entryId, field: 'password', host: 'www.engie.be' };
     await expect(resolveVaultValue(deps, run, req)).rejects.toThrow('not approved');
 
+    // A "yes" to a question that is not an approval, or a "no" that starts with a y, is no grant.
+    for (const input of [
+      { kind: 'text', answer: { value: 'yes', answeredAt: 1 } },
+      { kind: 'approval', answer: { value: 'you may not', answeredAt: 1 } },
+    ])
+      await db?.collection(`tasks/${taskId}/messages`).add({
+        author: 'agent',
+        body: 'q',
+        input: { prompt: 'Continue?', suggestedRule: `Vault(${entryId})`, ...input },
+      });
+    await expect(resolveVaultValue(deps, run, req)).rejects.toThrow('not approved');
+
     await db?.collection(`tasks/${taskId}/messages`).add({
       author: 'agent',
       body: 'q',
@@ -121,6 +134,30 @@ describe.skipIf(!enabled)('vault (emulator)', () => {
     await expect(resolveVaultValue(deps, run, req)).resolves.toEqual({ value: '+32470000000' });
     await db?.doc(`tasks/${taskId}`).set({ denyRules: [`Vault(${entryId})`] }, { merge: true });
     await expect(resolveVaultValue(deps, run, req)).rejects.toThrow('not approved');
+  });
+
+  it('writes the entry and its sites into any card that would grant it', async () => {
+    const { entryId } = await setup();
+    if (!db) throw new Error('no db');
+    const card = { kind: 'approval' as const, session: [], suggestedRule: `Vault(${entryId})` };
+    const head =
+      'Use your vault entry "Energy provider" (itsme phone number, password) on engie.be, itsme-id.com for this task?';
+    // A card the agent dressed up as something harmless says what it really grants.
+    await expect(
+      checkedVaultCard(db, { ...card, prompt: 'Shall I download the invoice?' }),
+    ).resolves.toMatchObject({ prompt: `${head} Shall I download the invoice?` });
+    await expect(
+      checkedVaultCard(db, { ...card, prompt: `${head} To log in.` }),
+    ).resolves.toMatchObject({ prompt: `${head} To log in.` });
+    for (const bad of [
+      { ...card, kind: 'text' as const, prompt: 'Code?' },
+      { ...card, suggestedRule: 'Vault(nope)', prompt: 'x' },
+      { ...card, suggestedRule: 'Vault', prompt: 'x' },
+      { ...card, suggestedRule: `Vault(${entryId}) `, prompt: 'x' },
+    ])
+      await expect(checkedVaultCard(db, bad)).rejects.toThrow('request_vault_access');
+    const other = { ...card, suggestedRule: 'Bash(git push:*)', prompt: 'Push?' };
+    await expect(checkedVaultCard(db, other)).resolves.toBe(other);
   });
 
   it('deletes values together with the entry', async () => {

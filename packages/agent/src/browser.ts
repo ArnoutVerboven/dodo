@@ -98,10 +98,20 @@ export const hostOf = (url: string): string => {
   }
 };
 
-/** The page the MCP result says the agent is on, from its `- Page URL:` line. */
+/**
+ * The page the MCP result says the agent is on: the `- Page URL:` line that opens its
+ * `### Page` section. Only that line counts, not any line that looks like it: a result's
+ * Error or Result section comes first and may hold text from the page.
+ */
 export function pageUrlIn(text: string): string | undefined {
-  return /^- Page URL: (\S+)/m.exec(text)?.[1];
+  return /^### Page\n- Page URL: (\S+)/m.exec(text)?.[1];
 }
+
+/**
+ * A snapshot ref of an element in the page itself, not inside a frame (`f1e3`) and not a CSS
+ * or Playwright selector: only such an element belongs to the page whose URL we checked.
+ */
+const MAIN_FRAME_REF = /^e\d+$/;
 
 /** Which policy key a call gets, given the host the agent is on and the call's arguments. */
 export function browserClaim(
@@ -201,15 +211,29 @@ export async function browserTools(
             };
           }
           let callArgs = args;
-          if (name === 'browser_type' || name === 'browser_fill_form') {
-            const resolved = await resolveVault(name, args, currentHost, ctx);
+          let injected = false;
+          if (
+            (name === 'browser_type' || name === 'browser_fill_form') &&
+            carriesSecret(name, args)
+          ) {
+            // Where the value would really go, asked of the browser right now: the host from
+            // an earlier result may be stale (the page redirected) and the element may sit in
+            // a frame from another site.
+            const page = await livePage(client);
+            if ('error' in page) return { result: { error: page.error } };
+            if (page.host !== currentHost) tainted = false;
+            currentHost = page.host;
+            const resolved = await resolveVault(name, args, page, ctx);
             if ('error' in resolved) return { result: { error: resolved.error } };
-            if (resolved.injected) tainted = true;
+            injected = resolved.injected;
+            if (injected) tainted = true;
             callArgs = resolved.args;
           }
           if (ACTIONS.has(name)) lastActionAt = now();
           const res = await client.callTool(name, callArgs);
-          return { result: afterCall(name, res, ctx) };
+          // The call's echo of its own Playwright code holds the typed text, escaped: the
+          // redaction would miss a value with a quote or a backslash in it.
+          return { result: afterCall(name, injected ? withoutCode(res) : res, ctx) };
         },
       }),
     );
@@ -354,26 +378,69 @@ export function emailCodeTool(page: {
   }) as ToolDef;
 }
 
+/** The fields of a type or fill-form call that would type a secret reference. */
+function secretTargets(name: string, args: Record<string, unknown>): unknown[] {
+  if (name === 'browser_type') return hasSecretRefs(String(args.text ?? '')) ? [args.target] : [];
+  if (!Array.isArray(args.fields)) return [];
+  return (args.fields as Array<Record<string, unknown>>)
+    .filter((f) => typeof f?.value === 'string' && hasSecretRefs(f.value))
+    .map((f) => f.target);
+}
+
+const carriesSecret = (name: string, args: Record<string, unknown>) =>
+  secretTargets(name, args).length > 0;
+
+/** The page the browser is on right now, from a fresh snapshot. */
+export async function livePage(
+  client: BrowserClient,
+): Promise<{ url: string; host: string } | { error: string }> {
+  const res = await client.callTool('browser_snapshot', {}).catch((err: Error) => ({
+    text: err.message,
+    isError: true,
+  }));
+  // A snapshot result has no Error, Result or code section before its Page section, and the
+  // tab titles above it are one line each, so its first Page URL line is the browser's.
+  const url = res.isError ? undefined : pageUrlIn(res.text);
+  if (!url) return { error: 'Could not confirm which page is open; take a snapshot and retry.' };
+  return { url, host: hostOf(url) };
+}
+
+/** A result without its `### Ran Playwright code` section. */
+export function withoutCode<T extends { text: string }>(res: T): T {
+  return {
+    ...res,
+    text: res.text.replace(
+      /^### Ran Playwright code\n```[a-z]*\n[\s\S]*?^```$\n?/m,
+      '### Ran Playwright code\n(hidden: it held a secret value)\n',
+    ),
+  };
+}
+
 /**
- * Replaces `{{vault:…}}` references in what a type or fill-form call types with the values,
- * for the site the agent is on. The model's arguments (and so the trace) keep the references;
- * only the call to the browser gets the values.
+ * Replaces `{{vault:…}}` and `{{answer:…}}` references in what a type or fill-form call types
+ * with the values, for the page the browser is on (`page`, confirmed just before). The value
+ * only goes into an element of that page itself (a snapshot ref, not a frame or a selector),
+ * and only over https. The model's arguments (and so the trace) keep the references; only the
+ * call to the browser gets the values.
  */
 export async function resolveVault(
   name: string,
   args: Record<string, unknown>,
-  host: string,
+  page: { url: string; host: string },
   ctx: ToolContext,
 ): Promise<{ args: Record<string, unknown>; injected: boolean } | { error: string }> {
-  const texts =
-    name === 'browser_type'
-      ? [String(args.text ?? '')]
-      : Array.isArray(args.fields)
-        ? (args.fields as Array<Record<string, unknown>>).map((f) => String(f?.value ?? ''))
-        : [];
-  if (!texts.some(hasSecretRefs)) return { args, injected: false };
+  const targets = secretTargets(name, args);
+  if (!targets.length) return { args, injected: false };
   if (!ctx.secrets) return { error: 'The vault is not available in this run.' };
+  const host = page.host;
   if (!host) return { error: 'Open the login page first; vault values are typed per site.' };
+  if (!page.url.startsWith('https://'))
+    return { error: `Secret values are only typed on https pages, not on ${page.url}.` };
+  if (!targets.every((t) => typeof t === 'string' && MAIN_FRAME_REF.test(t)))
+    return {
+      error:
+        "Secret values are only typed into a field of the page itself, by its ref from the snapshot (like e12): not into an embedded frame (f1e3) or by selector. If the login form is in a frame, open that frame's address directly.",
+    };
   try {
     const secrets = ctx.secrets;
     if (name === 'browser_type') {
