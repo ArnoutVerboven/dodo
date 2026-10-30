@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { EmailCodeRequest, EmailCodeResponse } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
 import {
@@ -6,6 +9,7 @@ import {
   browserTools,
   pageUrlIn,
   takeScreenshot,
+  uploadPaths,
 } from './browser.js';
 import type { TaskStore } from './control-plane.js';
 import { createSecretResolver } from './secrets.js';
@@ -119,6 +123,46 @@ describe('browserTools', () => {
       key: 'act:my.energy.be',
     });
     expect(await click.execute({ target: 'e1' }, ctx)).toEqual({ result: { error: 'boom' } });
+  });
+
+  it('uploads only files in the task folder, and nothing without one', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'dodo-upload-'));
+    await writeFile(path.join(dir, 'cv.pdf'), 'pdf');
+    expect(await uploadPaths({ paths: ['cv.pdf'] }, dir)).toEqual({
+      paths: [path.join(dir, 'cv.pdf')],
+    });
+    expect(await uploadPaths({ paths: [path.join(dir, 'cv.pdf')] }, dir)).toEqual({
+      paths: [path.join(dir, 'cv.pdf')],
+    });
+    expect(await uploadPaths({}, dir)).toEqual({ paths: [] });
+    for (const p of ['/proc/1/environ', '../other/cv.pdf', '/etc/passwd', `${dir}/../x`])
+      expect(await uploadPaths({ paths: [p] }, dir)).toMatchObject({ error: /outside/ });
+    expect(await uploadPaths({ paths: ['missing.pdf'] }, dir)).toMatchObject({
+      error: /cannot be read/,
+    });
+    expect(await uploadPaths({ paths: ['cv.pdf'] }, undefined)).toMatchObject({
+      error: /no task folder/,
+    });
+    // The tool itself refuses before the browser sees the call.
+    const calls: string[] = [];
+    const client: BrowserClient = {
+      async listTools() {
+        return [{ name: 'browser_file_upload', inputSchema: { type: 'object' } }];
+      },
+      async callTool(name) {
+        calls.push(name);
+        return { text: 'ok', isError: false };
+      },
+      async close() {},
+    };
+    const [upload] = await browserTools(client);
+    const ctx = { store: {} as TaskStore, workdir: dir };
+    expect(await upload?.execute({ paths: ['/etc/passwd'] }, ctx)).toMatchObject({
+      result: { error: expect.stringContaining('outside') },
+    });
+    expect(calls).toEqual([]);
+    await upload?.execute({ paths: ['cv.pdf'] }, ctx);
+    expect(calls).toEqual(['browser_file_upload']);
   });
 
   it('reads the page url out of a snapshot', () => {

@@ -16,12 +16,10 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Label, Select } from '@/components/ui/input';
 import { VaultSettings } from '@/components/VaultSettings';
 import { saveSettings, useSettings } from '@/lib/data';
-import { cn } from '@/lib/utils';
+import { cn, pairingCode as newCode } from '@/lib/utils';
 
 const toEur = (micro: number) => String(micro / 1e6);
 const toMicro = (v: string) => Math.round(Number(v) * 1e6);
-const newCode = () =>
-  Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8);
 
 const SECTIONS = [
   { key: 'general', label: 'General', icon: SlidersHorizontal },

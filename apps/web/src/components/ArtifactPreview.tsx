@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { previewKind, saveBlob } from '@/lib/files';
+import { safeHref } from '@/lib/utils';
 
 /** Text shown in the preview is capped so a huge log cannot freeze the page. */
 const MAX_PREVIEW_CHARS = 500_000;
@@ -136,9 +137,9 @@ export function ArtifactPreview({
                 <Download className="h-4 w-4" />
               )}
             </Button>
-            {artifact.url && (
+            {safeHref(artifact.url) && (
               <a
-                href={artifact.url}
+                href={safeHref(artifact.url)}
                 target="_blank"
                 rel="noreferrer"
                 title="Open in a new tab"

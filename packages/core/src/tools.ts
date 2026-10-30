@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { catalog } from './builtin-tools.gen.js';
-import { Timestamp } from './model.js';
+import { HttpUrl, Timestamp } from './model.js';
 
 /**
  * Tools view (Settings › Tools): which tools the agent gets. Three kinds of things:
@@ -136,7 +136,7 @@ export const McpServer = z.object({
   /** remote: an HTTP server the cloud can reach; local: run by a Mac's daemon. */
   runsOn: z.enum(['remote', 'local']),
   transport: z.enum(['http', 'stdio']),
-  url: z.string().url().optional(),
+  url: HttpUrl.optional(),
   /** Local only, as the Mac reports it (no env values: those stay on the Mac). */
   command: z.string().optional(),
   args: z.array(z.string()).optional(),

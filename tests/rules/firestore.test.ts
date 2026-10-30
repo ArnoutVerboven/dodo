@@ -137,6 +137,22 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertSucceeds(
       setDoc(doc(run(), 'tasks/t1/artifacts/a1'), { createdBy: 'agent', kind: 'text', name: 'n' }),
     );
+    await assertSucceeds(
+      setDoc(doc(run(), 'tasks/t1/artifacts/a2'), {
+        createdBy: 'agent',
+        kind: 'link',
+        name: 'doc',
+        url: 'https://docs.google.com/d/1',
+      }),
+    );
+    await assertFails(
+      setDoc(doc(run(), 'tasks/t1/artifacts/a3'), {
+        createdBy: 'agent',
+        kind: 'link',
+        name: 'doc',
+        url: 'javascript:alert(1)',
+      }),
+    );
     await assertFails(updateDoc(doc(run(), 'runs/r1'), { state: 'succeeded' }));
     await assertFails(updateDoc(doc(run(), 'runs/r1'), { interrupt: true }));
     await assertFails(getDoc(doc(run(), 'settings/global')));

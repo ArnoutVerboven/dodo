@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PolicyEngine } from '@dodo/policy';
 import { describe, expect, it } from 'vitest';
-import { classifyCommand, execTools, htmlToText } from './exec-tools.js';
+import { classifyCommand, execTools, htmlToText, privateHost } from './exec-tools.js';
 import { runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { findTool, type ToolDef, taskTools } from './tools.js';
@@ -43,6 +43,56 @@ describe('file tools', () => {
       /outside/,
     );
     await expect(read.execute({ path: '/etc/passwd' }, ctx)).rejects.toThrow(/outside/);
+  });
+});
+
+describe('http_fetch', () => {
+  it('never reaches the machine, the private network or the metadata server', () => {
+    for (const h of [
+      'localhost',
+      'LOCALHOST',
+      'app.localhost',
+      'localhost.',
+      '127.0.0.1',
+      '127.9.9.9',
+      '0.0.0.0',
+      '10.1.2.3',
+      '172.16.0.1',
+      '172.31.255.255',
+      '192.168.1.1',
+      '169.254.169.254',
+      '100.64.0.1',
+      '224.0.0.1',
+      '255.255.255.255',
+      '::1',
+      '[::1]',
+      '::',
+      '[::ffff:127.0.0.1]',
+      '[::ffff:10.0.0.1]',
+      'fd12::1',
+      '[fe80::1]',
+      'metadata.google.internal',
+      'db.c.project.internal',
+      'printer.local',
+      '2130706433',
+      '0x7f000001',
+    ])
+      expect(privateHost(h), h).toBe(true);
+    for (const h of ['example.com', '8.8.8.8', '172.32.0.1', '[2606:4700::1111]', '100.128.0.1'])
+      expect(privateHost(h), h).toBe(false);
+  });
+  it('refuses such a URL and a non-http scheme before any request', async () => {
+    const fetchTool = findTool(execTools, 'http_fetch') as ToolDef;
+    const ctx = { store: new MemoryTaskStore(sampleTask()) };
+    const metadata = await fetchTool.execute(
+      { url: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/' },
+      ctx,
+    );
+    expect(String(metadata.result.error)).toMatch(/private or local/);
+    const local = await fetchTool.execute({ url: 'http://localhost:8080/' }, ctx);
+    expect(String(local.result.error)).toMatch(/private or local/);
+    const file = await fetchTool.execute({ url: 'file:///etc/passwd' }, ctx);
+    expect(String(file.result.error)).toMatch(/Only http/);
   });
 });
 

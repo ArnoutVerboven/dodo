@@ -129,7 +129,10 @@ service cloud.firestore {
       match /artifacts/{artifactId} {
         allow read, write: if isOwner();
         allow read: if isRunOnTask(taskId);
-        allow create: if isRunOnTask(taskId) && request.resource.data.createdBy == 'agent';
+        // A link the app renders as one: http(s) only, never javascript: (see HttpUrl in core).
+        allow create: if isRunOnTask(taskId) && request.resource.data.createdBy == 'agent'
+          && (!('url' in request.resource.data)
+            || request.resource.data.url.matches('^https?://.*'));
       }
     }
 

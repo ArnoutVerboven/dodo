@@ -401,6 +401,11 @@ export async function requestInput(
  * `GoogleSession(use)` lets it use your Google sign-in, so the card must say so: an approval
  * that opens with the control plane's own words for it (the entry's name and sites), whatever
  * text the run sent. Any other mention of either in a rule is refused.
+ *
+ * Every other approval card names its rule too. "Allow always" (and Telegram's Always button)
+ * stores `suggestedRule` as written by the run, and the app shows the rule only behind "Edit
+ * the rule first", so a prompt that reads "Save the invoice?" above `Bash(curl:*)` would have
+ * you store a rule you never saw.
  */
 export async function checkedVaultCard<T extends Omit<RequestInputRequest, 'runId'>>(
   db: Firestore,
@@ -413,7 +418,11 @@ export async function checkedVaultCard<T extends Omit<RequestInputRequest, 'runI
       ? req
       : { ...req, prompt: `${GOOGLE_SESSION_PROMPT} ${req.prompt}` };
   }
-  if (!req.suggestedRule || !/^\s*Vault\b/i.test(req.suggestedRule)) return req;
+  if (!req.suggestedRule) return req;
+  if (!/^\s*Vault\b/i.test(req.suggestedRule)) {
+    if (req.kind !== 'approval' || req.prompt.includes(req.suggestedRule)) return req;
+    return { ...req, prompt: `Allow \`${req.suggestedRule}\`? ${req.prompt}` };
+  }
   const entryId = vaultRuleEntry(req.suggestedRule);
   const snap = entryId ? await db.doc(paths.vaultEntry(entryId)).get() : undefined;
   if (!snap?.exists || req.kind !== 'approval') {

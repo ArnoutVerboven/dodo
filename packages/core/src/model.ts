@@ -13,6 +13,12 @@ export const toEur = (micro: MicroEur): number => micro / MICRO_PER_EUR;
 
 export const Timestamp = z.number().int().nonnegative(); // epoch millis
 
+/**
+ * A link the app will render as one: http(s) only. `z.string().url()` also takes `javascript:`
+ * and `data:` URLs, which an `<a href>` would run in the owner's session.
+ */
+export const HttpUrl = z.url({ protocol: /^https?$/ }).max(2000);
+
 export const TaskStatus = z.enum([
   'backlog',
   'todo',
@@ -83,7 +89,7 @@ export type TaskSourceKind = z.infer<typeof TaskSourceKind>;
 export const TaskSource = z.object({
   kind: TaskSourceKind,
   /** Opens the original (the Gmail thread, the chat). */
-  url: z.string().url().optional(),
+  url: HttpUrl.optional(),
   /** Short label for the link, e.g. the sender. */
   label: z.string().max(200).optional(),
   /** The original's id in its own system, e.g. the Gmail thread id. */
@@ -221,7 +227,7 @@ export const Artifact = z.object({
   kind: z.enum(['file', 'link', 'text']),
   role: z.enum(['reference', 'output']),
   name: z.string(),
-  url: z.string().url().optional(),
+  url: HttpUrl.optional(),
   storagePath: z.string().optional(),
   text: z.string().optional(),
   createdBy: z.enum(['user', 'agent']),

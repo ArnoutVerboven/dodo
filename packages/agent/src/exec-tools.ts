@@ -198,6 +198,41 @@ const clip = (s: string) =>
     ? `${s.slice(0, MAX_OUTPUT)}\n…[truncated ${s.length - MAX_OUTPUT} chars]`
     : s;
 
+/**
+ * Hosts http_fetch never reaches, whatever the allowlist says: the worker's own machine and
+ * network, and the cloud metadata server that hands out the service account's tokens.
+ * Judged on the name or address literal; a public name that resolves to a private address
+ * (DNS rebinding) is not caught here.
+ */
+export function privateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  if (!h || h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h === 'metadata.google.internal' || h.endsWith('.internal') || h.endsWith('.local'))
+    return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 0 || // this network
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) || // link-local, metadata
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
+      a >= 224 // multicast, reserved, broadcast
+    );
+  }
+  if (h.startsWith('[') || h.includes(':')) {
+    const ip = h.replace(/^\[|\]$/g, '');
+    if (ip === '::' || ip === '::1') return true;
+    if (/^::ffff:/i.test(ip)) return privateHost(ip.slice(7)); // v4-mapped
+    return /^(fc|fd|fe[89ab])/i.test(ip); // unique local, link-local
+  }
+  // A bare number or hex literal is an IPv4 address in disguise (`2130706433`, `0x7f000001`).
+  return /^(0x[0-9a-f]+|\d+)$/i.test(h);
+}
+
 export function inside(workdir: string, p: string): string {
   const resolved = path.resolve(workdir, p);
   if (resolved !== workdir && !resolved.startsWith(`${workdir}${path.sep}`)) {
@@ -258,6 +293,11 @@ export const execTools = [
     async execute({ url }, ctx) {
       let current = url;
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const target = new URL(current);
+        if (target.protocol !== 'https:' && target.protocol !== 'http:')
+          return { result: { error: `Only http(s) URLs can be fetched, not ${target.protocol}` } };
+        if (privateHost(target.hostname))
+          return { result: { error: `${target.hostname} is a private or local host; refused.` } };
         const res = await fetch(current, {
           redirect: 'manual',
           signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),

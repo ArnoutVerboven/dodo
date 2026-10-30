@@ -1,6 +1,6 @@
 import type { TaskSource } from '@dodo/core';
 import { CalendarDays, ExternalLink, Webhook } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, safeHref } from '@/lib/utils';
 
 const LABEL: Record<TaskSource['kind'], string> = {
   gmail: 'Gmail',
@@ -82,7 +82,7 @@ export function SourceLink({ source }: { source: TaskSource }) {
   }
   return (
     <a
-      href={source.url}
+      href={safeHref(source.url)}
       target="_blank"
       rel="noreferrer noopener"
       className={cn(cls, 'transition hover:bg-accent')}

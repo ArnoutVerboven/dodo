@@ -82,7 +82,7 @@ import {
   useTask,
 } from '@/lib/data';
 import { pendingInputs } from '@/lib/thread';
-import { cn, formatEur, formatEurCents, isTyping, timeAgo } from '@/lib/utils';
+import { cn, formatEur, formatEurCents, isTyping, safeHref, timeAgo } from '@/lib/utils';
 
 const PENDING_INPUT_ID = 'pending-input';
 const REPLY_ID = 'thread-reply';
@@ -1454,7 +1454,7 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
                   </button>
                 ) : (
                   <a
-                    href={a.url}
+                    href={safeHref(a.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="min-w-0 flex-1 truncate hover:underline"

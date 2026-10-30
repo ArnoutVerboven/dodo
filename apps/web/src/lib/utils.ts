@@ -22,6 +22,35 @@ export function timeAgo(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+/**
+ * A URL safe to put in an `<a href>`: http(s) only. Links come from the agent and from task
+ * sources, and a `javascript:` URL would run in your session when clicked.
+ */
+export function safeHref(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A pairing code (devices, Telegram): 12 random lowercase letters and digits, ~62 bits. */
+export function pairingCode(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  // 36 does not divide 256; rejection keeps the draw uniform.
+  let out = '';
+  while (out.length < 12) {
+    for (const b of bytes) {
+      if (out.length < 12 && b < 252) out += alphabet[b % 36];
+    }
+    if (out.length < 12) crypto.getRandomValues(bytes);
+  }
+  return out;
+}
+
 /** True when a key event comes from a field the user is typing in, so shortcuts stay out of the way. */
 export function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
