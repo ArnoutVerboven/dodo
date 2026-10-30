@@ -81,6 +81,51 @@ export function vaultRefs(text: string): Array<{ entryId: string; field: string;
   return out;
 }
 
+/**
+ * A secret answer to ask_user (an MFA code): the user's value is kept server-side and the
+ * conversation only carries `{{answer:<messageId>}}`, which a browser tool types like a vault
+ * reference.
+ */
+export const answerRef = (messageId: string) => `{{answer:${messageId}}}`;
+const ANSWER_REF = /\{\{answer:([A-Za-z0-9_-]{1,64})\}\}/g;
+
+/** Every secret-answer reference in a text, in order, without duplicates. */
+export function answerRefs(text: string): Array<{ messageId: string; ref: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ messageId: string; ref: string }> = [];
+  for (const m of text.matchAll(ANSWER_REF)) {
+    if (seen.has(m[0])) continue;
+    seen.add(m[0]);
+    out.push({ messageId: m[1] as string, ref: m[0] });
+  }
+  return out;
+}
+
+/** The message id when a value is exactly one secret-answer reference. */
+export function secretAnswerId(value: string): string | undefined {
+  const refs = answerRefs(value);
+  return refs.length === 1 && refs[0]?.ref === value.trim() ? refs[0].messageId : undefined;
+}
+
+/** Whether a text holds anything a browser tool must resolve before typing it. */
+export const hasSecretRefs = (text: string) =>
+  vaultRefs(text).length > 0 || answerRefs(text).length > 0;
+
+/** The owner answers a secret question (app or Telegram); the value never enters the thread. */
+export const SecretAnswerRequest = z.object({
+  taskId: z.string().min(1).max(128),
+  messageId: z.string().min(1).max(64),
+  value: z.string().min(1).max(200),
+});
+export type SecretAnswerRequest = z.infer<typeof SecretAnswerRequest>;
+
+/** A run's browser tool gets the value of a secret answer on its task. */
+export const AnswerResolveRequest = z.object({
+  runId: z.string(),
+  messageId: z.string().min(1).max(64),
+});
+export type AnswerResolveRequest = z.infer<typeof AnswerResolveRequest>;
+
 /** Same reading of an approval answer as the loop and the budget top-up. */
 export const isApproved = (answer: string) => /^(y|yes|ok|approve|allow)/i.test(answer.trim());
 

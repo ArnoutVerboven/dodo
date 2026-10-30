@@ -18,6 +18,13 @@ export interface TelegramDeps {
   send: (method: string, body: Record<string, unknown>) => Promise<unknown>;
   /** Multipart calls, for photos. Absent: pictures are left out and the text goes alone. */
   upload?: (method: string, form: FormData) => Promise<unknown>;
+  /** Where a reply to a secret question (an MFA code) goes; absent: answer those in the app. */
+  saveSecret?: (req: {
+    taskId: string;
+    messageId: string;
+    value: string;
+    via: 'telegram';
+  }) => Promise<unknown>;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -34,6 +41,8 @@ export interface Notification {
     options?: string[];
     /** For approvals: the rule "Always" would store; without it there is no Always button. */
     suggestedRule?: string;
+    /** The answer is a code: ask for it as a reply, and keep it out of the chat. */
+    secret?: boolean;
   };
   /** Sent as a photo before the text: a QR code to scan, the icon to pick, a code to read. */
   image?: { data: Buffer; mimeType: string };
@@ -104,7 +113,10 @@ export async function notifyTelegram(deps: TelegramDeps, n: Notification): Promi
   if (!chatId) return false;
   const muted = (settings.telegram?.muted as NotificationKind[] | undefined) ?? [];
   if (n.kind && muted.includes(n.kind)) return false;
-  const text = `<b>${esc(n.title)}</b>\n${markdownToTelegram(n.body.slice(0, 3500))}\n<a href="${n.appUrl}/tasks/${n.taskId}">Open task</a>`;
+  const secretHint = n.input?.secret
+    ? '\n<i>Reply to this message with the code. It goes straight to the browser, and the agent never sees it; I delete your message once it is stored.</i>'
+    : '';
+  const text = `<b>${esc(n.title)}</b>\n${markdownToTelegram(n.body.slice(0, 3500))}${secretHint}\n<a href="${n.appUrl}/tasks/${n.taskId}">Open task</a>`;
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
   if (n.input) {
     const cb = (v: string) => `a:${n.taskId}:${n.input?.messageId}:${v}`.slice(0, 64);
@@ -258,8 +270,12 @@ async function postToTask(
   if (ref.inputMessageId) {
     const inputRef = deps.db.doc(`${paths.messages(ref.taskId)}/${ref.inputMessageId}`);
     const input = (await inputRef.get()).get('input') as
-      | { kind?: string; answer?: unknown }
+      | { kind?: string; answer?: unknown; secret?: boolean }
       | undefined;
+    if (input?.secret && !input.answer) {
+      await answerSecretFromChat(deps, chatId, replyTo, ref, task.title, text);
+      return;
+    }
     if (input && !input.answer) {
       await inputRef.update({
         'input.answer': {
@@ -286,6 +302,56 @@ async function postToTask(
       parse_mode: 'HTML',
       reply_to_message_id: replyTo,
     },
+    { taskId: ref.taskId },
+  );
+}
+
+/**
+ * A code sent as the answer to a secret question: stored apart (never in the thread), and the
+ * user's message with the code is deleted from the chat. The confirmation never repeats it.
+ */
+async function answerSecretFromChat(
+  deps: TelegramDeps,
+  chatId: number,
+  userMessageId: number,
+  ref: SentRef,
+  title: string | undefined,
+  text: string,
+): Promise<void> {
+  const name = esc(title || 'Untitled task');
+  if (!deps.saveSecret || !ref.inputMessageId) {
+    await sendTracked(
+      deps,
+      {
+        chat_id: chatId,
+        text: `This code can only be answered in the app for now: <b>${name}</b>.`,
+        parse_mode: 'HTML',
+      },
+      { taskId: ref.taskId },
+    );
+    return;
+  }
+  let reply: string;
+  try {
+    await deps.saveSecret({
+      taskId: ref.taskId,
+      messageId: ref.inputMessageId,
+      value: text,
+      via: 'telegram',
+    });
+    await deps.db.doc(paths.task(ref.taskId)).update({ updatedAt: Date.now() });
+    reply = `Code sent to the browser for <b>${name}</b>.`;
+  } catch (err) {
+    deps.log?.('telegram secret answer failed', { taskId: ref.taskId, err: String(err) });
+    reply = `Could not store the code for <b>${name}</b>; answer in the app.`;
+  }
+  // Bots may delete messages in a private chat; the code then leaves the chat history.
+  await deps
+    .send('deleteMessage', { chat_id: chatId, message_id: userMessageId })
+    .catch((err) => deps.log?.('telegram delete failed', { err: String(err) }));
+  await sendTracked(
+    deps,
+    { chat_id: chatId, text: reply, parse_mode: 'HTML' },
     { taskId: ref.taskId },
   );
 }

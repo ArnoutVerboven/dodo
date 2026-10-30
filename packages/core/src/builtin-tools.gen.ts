@@ -94,6 +94,10 @@ export const catalog: unknown[] = [
         "suggestedRule": {
           "type": "string"
         },
+        "secret": {
+          "description": "With kind text: the answer is a one-time code for the browser (SMS, email or authenticator code). You get {{answer:<id>}} back instead of the value; type it with browser_type.",
+          "type": "boolean"
+        },
         "screenshot": {
           "description": "Attach a screenshot of the current browser page to the question.",
           "type": "boolean"

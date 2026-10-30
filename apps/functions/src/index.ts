@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  AnswerResolveRequest,
   BrowserStateRequest,
   DeviceClaimRequest,
   DeviceEgressRequest,
@@ -14,6 +15,7 @@ import {
   paths,
   RequestInputRequest,
   SearchRequest,
+  SecretAnswerRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
 } from '@dodo/core';
@@ -36,6 +38,7 @@ import {
   onTaskClosed,
   saveBrowserState,
   secretManagerKey,
+  taskClosing,
 } from './browser-state.js';
 import { claimOwnership as claim } from './claim-ownership.js';
 import { compactTask } from './compact.js';
@@ -85,6 +88,12 @@ import {
 } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { SEARCH_TOOL, searchWithBudget } from './search.js';
+import {
+  deleteSecretAnswers,
+  resolveSecretAnswer,
+  SecretAnswerError,
+  saveSecretAnswer,
+} from './secret-answers.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
@@ -160,6 +169,8 @@ const telegramDeps = () => {
     token,
     send: token ? telegramApi(token) : async () => undefined,
     upload: token ? telegramUpload(token) : undefined,
+    saveSecret: (req: Parameters<typeof saveSecretAnswer>[1]) =>
+      saveSecretAnswer(secretAnswerDeps(), req),
     log: logger.warn,
   };
 };
@@ -326,9 +337,53 @@ export const runRequestInput = onCall(
 /** The remote browser's logins for the run's task: restored at start, kept at the end. */
 const browserStateDeps = () => ({
   storage: getStorage(),
-  key: isEmulator ? firestoreDevKey(getFirestore()) : secretManagerKey(projectId()),
+  key: browserKey(),
   log: logger.warn,
 });
+
+let browserKeyFn: (() => Promise<Buffer>) | undefined;
+/** The browser-state key, also used for secret answers; cached per instance. */
+function browserKey(): () => Promise<Buffer> {
+  browserKeyFn ??= isEmulator ? firestoreDevKey(getFirestore()) : secretManagerKey(projectId());
+  return browserKeyFn;
+}
+
+function secretAnswerDeps() {
+  return { db: getFirestore(), key: browserKey(), log: logger.warn };
+}
+
+const secretAnswerCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof SecretAnswerError) throw new HttpsError(err.code, err.message);
+    throw err;
+  }
+};
+
+/** The app answers a secret question (an MFA code): stored apart, the thread gets a reference. */
+export const answerSecret = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const req = parseOr<SecretAnswerRequest>(SecretAnswerRequest, request.data);
+    await secretAnswerCall(() => saveSecretAnswer(secretAnswerDeps(), req));
+    return { ok: true };
+  },
+);
+
+/** A run's browser tool gets the value behind `{{answer:<id>}}` (only a run on that task). */
+export const runSecretAnswer = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 2 },
+  async (request) => {
+    const req = parseOr<AnswerResolveRequest>(AnswerResolveRequest, request.data);
+    const c = caller(request.auth);
+    // The owner's own account is not a run: values never go back to a browser session.
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const run = await loadRunForCaller(getFirestore(), c, req.runId);
+    return secretAnswerCall(() => resolveSecretAnswer(secretAnswerDeps(), run, req.messageId));
+  },
+);
 
 export const runBrowserState = onCall(
   { serviceAccount: GATEWAY_SA, memory: '512MiB', maxInstances: 5 },
@@ -446,6 +501,11 @@ export const onTaskWritten = onDocumentWritten(
       before as { status?: string } | undefined,
       after as { status?: string } | undefined,
     );
+    if (taskClosing(before as { status?: string }, after as { status?: string })) {
+      await deleteSecretAnswers({ db }, event.params.taskId).catch((err) =>
+        logger.warn('secret answers delete failed', { err: String(err) }),
+      );
+    }
     if (after && !before && (after as { titleSource?: string }).titleSource === 'ai') {
       await generateTitle(
         { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },

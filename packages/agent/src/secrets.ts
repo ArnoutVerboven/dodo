@@ -1,4 +1,4 @@
-import { vaultRefs } from '@dodo/core';
+import { answerRefs, vaultRefs } from '@dodo/core';
 
 /**
  * Vault values inside a run (ARCHITECTURE §9.2). The model only ever writes references like
@@ -25,6 +25,8 @@ const MIN_REDACT = 3;
 
 export function createSecretResolver(
   fetchValue: (entryId: string, field: string, host: string) => Promise<string>,
+  /** A secret answer to ask_user (`{{answer:<messageId>}}`); absent: such refs are refused. */
+  fetchAnswer?: (messageId: string) => Promise<string>,
 ): SecretResolver {
   /** value → reference, longest values first when redacting. */
   const seen = new Map<string, string>();
@@ -33,6 +35,12 @@ export function createSecretResolver(
       let out = text;
       for (const r of vaultRefs(text)) {
         const value = await fetchValue(r.entryId, r.field, host);
+        if (value.length >= MIN_REDACT) seen.set(value, r.ref);
+        out = out.split(r.ref).join(value);
+      }
+      for (const r of answerRefs(text)) {
+        if (!fetchAnswer) throw new Error('Secret answers are not available in this run.');
+        const value = await fetchAnswer(r.messageId);
         if (value.length >= MIN_REDACT) seen.set(value, r.ref);
         out = out.split(r.ref).join(value);
       }

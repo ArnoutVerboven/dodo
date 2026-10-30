@@ -394,6 +394,37 @@ describe('handleTelegramUpdate', () => {
       expect(docs.has('tasks/t1/messages/tg_7_17')).toBe(false);
     });
 
+    it('stores a code for a secret question apart, deletes it from the chat, never echoes it', async () => {
+      const { d, docs } = setup();
+      docs.set('tasks/t1/messages/m1', {
+        input: { kind: 'text', prompt: 'SMS code?', secret: true },
+      });
+      const saved: unknown[] = [];
+      d.saveSecret = async (req) => {
+        saved.push(req);
+      };
+      await notifyTelegram(d, {
+        title: 'Needs you',
+        body: 'SMS code?',
+        taskId: 't1',
+        appUrl: 'https://app',
+        input: { messageId: 'm1', kind: 'text', secret: true },
+      });
+      expect(lastText(d)).toContain('Reply to this message with the code');
+      await handleTelegramUpdate(d, msg('482913', 20, 100));
+      expect(saved).toEqual([{ taskId: 't1', messageId: 'm1', value: '482913', via: 'telegram' }]);
+      // Not written into the thread, neither as an answer nor as a comment.
+      expect(
+        (docs.get('tasks/t1/messages/m1')?.input as { answer?: unknown } | undefined)?.answer,
+      ).toBeUndefined();
+      expect(docs.has('tasks/t1/messages/tg_7_20')).toBe(false);
+      expect(d.send).toHaveBeenCalledWith('deleteMessage', { chat_id: 7, message_id: 20 });
+      for (const [, body] of d.send.mock.calls as Array<[string, { text?: string }]>) {
+        expect(body.text ?? '').not.toContain('482913');
+      }
+      expect(lastText(d)).toContain('Code sent to the browser');
+    });
+
     it('ignores strangers', async () => {
       const { d, docs } = setup();
       await notify(d, 't1');

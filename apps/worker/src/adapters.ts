@@ -198,6 +198,18 @@ export class CallableControlPlane implements ControlPlane {
       throw new Error((err as Error).message || 'Vault value not available');
     }
   }
+  /** A secret answer to ask_user on this run's task (an MFA code), for a browser tool to type. */
+  async resolveAnswer(messageId: string): Promise<string> {
+    try {
+      const r = await httpsCallable(this.fns, 'runSecretAnswer', { timeout: 30_000 })({
+        runId: this.runId,
+        messageId,
+      });
+      return (r.data as { value: string }).value;
+    } catch (err) {
+      throw new Error((err as Error).message || 'Secret answer not available');
+    }
+  }
   /** The task's remote-browser logins: `get` before the browser starts, `put` when the run ends. */
   async browserState(
     action: 'get' | 'put',

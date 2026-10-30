@@ -113,3 +113,26 @@ describe('vault and personal info tools', () => {
     });
   });
 });
+
+describe('secret answers', () => {
+  it('resolves {{answer:…}} through its own fetch and redacts the value after', async () => {
+    const asked: string[] = [];
+    const s = createSecretResolver(
+      async () => {
+        throw new Error('no vault');
+      },
+      async (id) => {
+        asked.push(id);
+        return '482913';
+      },
+    );
+    expect(await s.resolve('{{answer:m1}}', 'bank.be')).toBe('482913');
+    expect(asked).toEqual(['m1']);
+    expect(s.redact('code 482913 accepted')).toBe('code {{answer:m1}} accepted');
+  });
+
+  it('refuses answer references when the run has no way to fetch them', async () => {
+    const s = createSecretResolver(async () => 'x');
+    await expect(s.resolve('{{answer:m1}}', 'bank.be')).rejects.toThrow('not available');
+  });
+});

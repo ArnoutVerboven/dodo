@@ -58,7 +58,7 @@ The headline use case (your own accounts in your own browser) comes before the r
 - Tracked as #24 (remote browser) and #25 (vault and MFA).
 - Headless Playwright MCP in the container with encrypted, domain-scoped session store. **Status (2026-10-29):** the browser worker job (`dodo-worker-browser`), `auto` routing for device and browser, `request_browser` step-up and the 10-minute hold after a question are built; logins kept between remote runs (per task, encrypted `storageState`) built 2026-10-30.
 - Agent vault in Secret Manager: per-task scoped secret references, taint after injection, redaction. **Built (2026-10-27):** Settings › Vault and Personal info, `vaultSave`/`vaultDelete`/`vaultResolve`, `list_vault`, `request_vault_access`, `get_personal_info`, loop-level redaction. Browser tools (#23/#24) consume it.
-- MFA as input requests, optional TOTP, `local-only` services; session handoff from the Mac.
+- MFA as input requests, optional TOTP, `local-only` services; session handoff from the Mac. **Built (2026-10-30):** secret answers: `ask_user` with `secret: true` takes a code in the app (password field) or as a Telegram reply (deleted from the chat); it is stored encrypted apart from the thread, the model gets `{{answer:<id>}}` and types it with `browser_type`, and the value is redacted like a vault value. Codes expire after 30 minutes and go when the task closes.
 - **Exit:** a remote task logged in to a site with a vault credential and an MFA code you typed from your phone.
 
 ## Phase 6 — Other task interfaces
