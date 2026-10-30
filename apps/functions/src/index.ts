@@ -69,7 +69,14 @@ import { deleteMcpServer, type McpDeps, McpError, refreshMcpServer, saveMcpServe
 import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
 import { needsBrowser } from './routing.js';
-import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
+import {
+  finish,
+  heartbeat,
+  reapIfStale,
+  reapStaleRuns,
+  requestInput,
+  start,
+} from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
@@ -116,6 +123,9 @@ const WORKER_JOB = 'dodo-worker';
 /** Same worker with headless Chromium and more memory; runs that want a browser go here. */
 const WORKER_BROWSER_JOB = 'dodo-worker-browser';
 const GATEWAY_SA = 'dodo-gateway@';
+const GATEWAY_SA_EMAIL = PROJECT_ID
+  ? `dodo-gateway@${PROJECT_ID}.iam.gserviceaccount.com`
+  : GATEWAY_SA;
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
 
 const webhookSecret = (token: string) =>
@@ -779,6 +789,25 @@ export const githubOpenPr = onCall(
     const deps = githubDeps();
     const run = await loadRunForCaller(deps.db, c, data.runId);
     return githubCall(() => openPullRequest(deps, run, data));
+  },
+);
+
+/**
+ * Lease sweep: a run whose worker died (OOM, crash, cancelled execution) is ended as
+ * `lease_lost` within minutes, so its task shows what happened without waiting for a new
+ * comment. The same check also runs before each enqueue (`reapIfStale`).
+ */
+export const reapRuns = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    serviceAccount: GATEWAY_SA_EMAIL,
+    timeoutSeconds: 120,
+    maxInstances: 1,
+    retryCount: 0,
+  },
+  async () => {
+    const reaped = await reapStaleRuns(controlDeps());
+    if (reaped.length) logger.info('reaped stale runs', { runs: reaped });
   },
 );
 
