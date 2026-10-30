@@ -90,6 +90,7 @@ import {
 } from './model-provider.js';
 import { connectNotion, runNotionTool } from './notion.js';
 import { notifyPush, type PushDeps } from './push.js';
+import { sweepReservations } from './reservations.js';
 import { needsBrowser } from './routing.js';
 import {
   finish,
@@ -1021,8 +1022,11 @@ export const reapRuns = onSchedule(
     retryCount: 0,
   },
   async () => {
-    const reaped = await reapStaleRuns(controlDeps());
+    const deps = controlDeps();
+    const reaped = await reapStaleRuns(deps);
     if (reaped.length) logger.info('reaped stale runs', { runs: reaped });
+    // Reservations a dead function left open would otherwise hold budget forever.
+    await sweepReservations(deps);
   },
 );
 

@@ -202,33 +202,15 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const scopes = scopesForRun(run, now);
 
-  // Settle the previous infra slice at its full reserved amount and reserve the next one.
-  if (run.device === 'gcp') {
-    const shape = workerShape(run);
-    const slice = computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib);
-    const prev = (await ref.get()).get('infraReservation') as string | undefined;
-    if (prev) await deps.costGate.settle(prev, slice);
-    try {
-      const r = await deps.costGate.reserve({
-        scopes,
-        category: 'infra',
-        amount: slice,
-        description: 'Cloud Run worker time',
-        taskId: run.taskId,
-        projectId: run.projectId,
-        runId: run.id,
-      });
-      await ref.update({ infraReservation: r.id, spent: FieldValue.increment(prev ? slice : 0) });
-    } catch {
-      await ref.update({ infraReservation: FieldValue.delete() });
-      return {
-        ok: false,
-        reason: 'budget_exhausted',
-        remaining: 0,
-        pendingMessages: [],
-        compact: false,
-      };
-    }
+  // Charge the worker time since the last beat and hold the next slice.
+  if (run.device === 'gcp' && !(await meterInfra(deps, run, now))) {
+    return {
+      ok: false,
+      reason: 'budget_exhausted',
+      remaining: 0,
+      pendingMessages: [],
+      compact: false,
+    };
   }
 
   const fresh = (await ref.get()).data() as Run;
@@ -700,15 +682,78 @@ export function exhaustedCap(error: string | undefined): {
   };
 }
 
+const infraCost = (run: Pick<Run, 'browser'>, ms: number) => {
+  const shape = workerShape(run);
+  return computeCost(Math.max(0, ms) / 1000, shape.vcpu, shape.gib);
+};
+
+/**
+ * Take the run's open infra reservation and the time it started covering, in one transaction:
+ * a second heartbeat at the same moment finds nothing to settle, so nothing is charged twice.
+ */
+async function takeInfraReservation(
+  deps: RunControlDeps,
+  run: Run,
+  now: number,
+): Promise<{ id: string; since: number } | undefined> {
+  const ref = deps.db.doc(paths.run(run.id));
+  return deps.db.runTransaction(async (t) => {
+    const d = (await t.get(ref)).data() ?? {};
+    const id = d.infraReservation as string | undefined;
+    if (!id) return undefined;
+    const since = (d.meteredAt as number | undefined) ?? now - HEARTBEAT_MS;
+    t.update(ref, { infraReservation: FieldValue.delete(), meteredAt: now });
+    return { id, since };
+  });
+}
+
+/**
+ * Infra metering for a Cloud Run worker: settle the previous slice at the time that actually
+ * passed (beats come every 15 s and at every step, so a fixed slice per beat over-charged),
+ * then reserve the next one. False when the budget cannot cover the next slice.
+ */
+export async function meterInfra(deps: RunControlDeps, run: Run, now: number): Promise<boolean> {
+  const ref = deps.db.doc(paths.run(run.id));
+  const prev = await takeInfraReservation(deps, run, now);
+  if (prev) {
+    const actual = infraCost(run, now - prev.since);
+    await deps.costGate.settle(prev.id, actual);
+    await ref.update({ spent: FieldValue.increment(actual) });
+  }
+  let next: { id: string };
+  try {
+    next = await deps.costGate.reserve({
+      scopes: scopesForRun(run, now),
+      category: 'infra',
+      amount: infraCost(run, HEARTBEAT_MS),
+      description: 'Cloud Run worker time',
+      taskId: run.taskId,
+      projectId: run.projectId,
+      runId: run.id,
+    });
+  } catch {
+    return false;
+  }
+  // Keep one open reservation per run: if another beat got there first, cancel ours.
+  const kept = await deps.db.runTransaction(async (t) => {
+    const d = (await t.get(ref)).data() ?? {};
+    if (d.infraReservation) return false;
+    t.update(ref, {
+      infraReservation: next.id,
+      meteredAt: (d.meteredAt as number | undefined) ?? now,
+    });
+    return true;
+  });
+  if (!kept) await deps.costGate.settle(next.id, 0);
+  return true;
+}
+
 /** Shared tail: settle the infra slice and make the run identity worthless. */
 async function endRun(deps: RunControlDeps, run: Run) {
-  const prev = (await deps.db.doc(paths.run(run.id)).get()).get('infraReservation') as
-    | string
-    | undefined;
-  if (prev) {
-    const shape = workerShape(run);
-    await deps.costGate.settle(prev, computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib));
-  }
+  const now = (deps.now ?? Date.now)();
+  // The last slice is charged for the time it actually ran, not in full.
+  const prev = await takeInfraReservation(deps, run, now);
+  if (prev) await deps.costGate.settle(prev.id, infraCost(run, now - prev.since));
   try {
     await deps.auth.deleteUser(runUid(run.id));
   } catch (err) {

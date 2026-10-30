@@ -158,7 +158,9 @@ export async function generateWithBudget(
   );
   const reserveAmount = tokenCost(req.model, inputTokens, maxOutputTokens);
 
-  await takeGovernor(deps, reserveAmount, now());
+  // The credit goes back to the hour it was taken from, even if the call crosses the hour.
+  const takenAt = now();
+  await takeGovernor(deps, reserveAmount, takenAt);
 
   let reservation: { id: string; amount: MicroEur };
   try {
@@ -173,7 +175,7 @@ export async function generateWithBudget(
       model: req.model,
     });
   } catch (err) {
-    await returnGovernor(deps, reserveAmount, now());
+    await returnGovernor(deps, reserveAmount, takenAt);
     if (err instanceof BudgetExceededError) {
       throw budgetExhausted(err.scopeKey, err.available, err.requested, inputTokens);
     }
@@ -233,7 +235,7 @@ export async function generateWithBudget(
     };
   } finally {
     await deps.costGate.settle(reservation.id, actual);
-    await returnGovernor(deps, reservation.amount - actual, now());
+    await returnGovernor(deps, reservation.amount - actual, takenAt);
   }
 }
 

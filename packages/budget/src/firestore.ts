@@ -83,8 +83,22 @@ const DEFAULT_JOB = 1_000_000;
  * the project's monthly budget, and the task's own budget or the default task budget.
  */
 export function defaultLimitFor(db: Firestore) {
+  // Settings are read once per transaction, not once per scope.
+  const settingsIn = new WeakMap<Transaction, Promise<Record<string, unknown>>>();
+  const settingsFor = (t: Transaction) => {
+    let p = settingsIn.get(t);
+    if (!p) {
+      p = t.get(db.doc(paths.settings())).then((snap) => snap.data() ?? {});
+      settingsIn.set(t, p);
+    }
+    return p;
+  };
   return async (scopeKey: string, t: Transaction): Promise<number | undefined> => {
-    const settings = (await t.get(db.doc(paths.settings()))).data() ?? {};
+    const settings = (await settingsFor(t)) as {
+      totalBudget?: number;
+      monthlyBudget?: number;
+      defaultTaskBudget?: number;
+    };
     if (scopeKey === 'total') return settings.totalBudget ?? DEFAULT_TOTAL;
     if (scopeKey.startsWith('global_')) return settings.monthlyBudget ?? DEFAULT_MONTHLY;
     if (scopeKey.startsWith('project_')) {
