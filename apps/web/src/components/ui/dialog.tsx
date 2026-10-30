@@ -14,7 +14,8 @@ export function Dialog({
 }: {
   open: boolean;
   onClose: () => void;
-  title: string;
+  /** Without a title the dialog has no header bar, only Close in its top right corner. */
+  title?: string;
   children: React.ReactNode;
   /** Overrides the width, e.g. for a file preview. */
   className?: string;
@@ -25,7 +26,11 @@ export function Dialog({
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // showModal focuses the first control (Close); a field marked data-autofocus wins.
+      d.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    }
     if (!open && d.open) d.close();
   }, [open]);
   return (
@@ -37,15 +42,24 @@ export function Dialog({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-2 border-b px-5 py-3">
-        <h2 className="min-w-0 truncate font-semibold">{title}</h2>
-        <div className="flex shrink-0 items-center gap-1">
+      {title !== undefined ? (
+        <div className="flex items-center justify-between gap-2 border-b px-5 py-3">
+          <h2 className="min-w-0 truncate font-semibold">{title}</h2>
+          <div className="flex shrink-0 items-center gap-1">
+            {actions}
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1">
           {actions}
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X className="h-4 w-4" />
           </Button>
         </div>
-      </div>
+      )}
       <div className="p-5">{open && children}</div>
     </dialog>
   );

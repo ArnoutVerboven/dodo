@@ -8,7 +8,6 @@ import {
   type Run,
   resolveAiConfig,
   type Task,
-  type TaskPriority,
   type TaskStatus,
   type ThreadMessage,
   tokenUnit,
@@ -18,29 +17,23 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
-  CalendarDays,
   ChartPie,
   ChevronDown,
   ChevronRight,
   Download,
   FileText,
-  Folder,
   HardDrive,
   Link2,
   Loader2,
-  type LucideIcon,
   Minimize2,
-  Minus,
   Paperclip,
   Pencil,
-  Plus,
   Send,
   Settings2,
   Square,
   Trash2,
   Upload,
   User,
-  X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -48,21 +41,21 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { ArtifactPreview, canPreview, downloadArtifact } from '@/components/ArtifactPreview';
-import { appendText, parseTags } from '@/components/NewTaskDialog';
 import { PushToTalkButton } from '@/components/PushToTalk';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import { SourceLink } from '@/components/SourceIcon';
 import {
-  dueTone,
-  formatDue,
-  PRIORITIES,
-  priorityMeta,
-  STATUSES,
-  statusMeta,
-} from '@/components/task-meta';
+  appendText,
+  composer,
+  DueChip,
+  PriorityChip,
+  ProjectChip,
+  SelectChip,
+  TagChips,
+} from '@/components/task-fields';
+import { STATUSES, statusMeta } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
-import { Dropdown, type DropdownOption } from '@/components/ui/dropdown';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Meter } from '@/components/ui/progress';
 import { useAuth } from '@/lib/auth';
@@ -196,9 +189,7 @@ function TitleEditor({ task }: { task: Task }) {
 
 /** One compact row of editable properties in place of a form of labelled boxes. */
 function PropertyBar({ task }: { task: Task }) {
-  const { data: projects } = useProjects();
   const status = statusMeta(task.status);
-  const priority = priorityMeta(task.priority);
   const closed = task.status === 'done' || task.status === 'cancelled';
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -211,183 +202,21 @@ function PropertyBar({ task }: { task: Task }) {
         options={STATUSES}
         onChange={(v) => updateTask(task.id, { status: v as TaskStatus })}
       />
-      <SelectChip
-        label="Priority"
-        icon={priority.icon}
-        tone={priority.tone}
-        text={task.priority === 'none' ? 'Priority' : priority.label}
-        muted={task.priority === 'none'}
+      <PriorityChip
         value={task.priority}
-        options={PRIORITIES}
-        onChange={(v) => updateTask(task.id, { priority: v as TaskPriority })}
+        onChange={(priority) => updateTask(task.id, { priority })}
       />
-      <DueChip task={task} closed={closed} />
-      <SelectChip
-        label="Project"
-        icon={Folder}
-        text={projects.find((p) => p.id === task.projectId)?.name ?? 'Project'}
-        muted={!task.projectId}
-        value={task.projectId ?? ''}
-        options={[
-          { value: '', label: 'No project', icon: Minus, tone: 'text-muted-foreground' },
-          ...projects.map((p) => ({ value: p.id, label: p.name, icon: Folder })),
-        ]}
-        onChange={(v) => updateTask(task.id, { projectId: v || undefined })}
+      <DueChip
+        value={task.dueDate}
+        closed={closed}
+        onChange={(dueDate) => updateTask(task.id, { dueDate })}
       />
-      <TagEditor task={task} />
+      <ProjectChip
+        value={task.projectId}
+        onChange={(projectId) => updateTask(task.id, { projectId })}
+      />
+      <TagChips tags={task.tags} onChange={(tags) => updateTask(task.id, { tags })} />
     </div>
-  );
-}
-
-const chip =
-  'relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition hover:bg-accent focus-within:ring-2 focus-within:ring-primary/30';
-
-/** A chip that opens the app's own menu: light in the bar, the full list when clicked. */
-function SelectChip({
-  label,
-  icon: Icon,
-  tone,
-  text,
-  muted = false,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  icon: LucideIcon;
-  tone?: string;
-  text: string;
-  muted?: boolean;
-  value: string;
-  options: DropdownOption[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Dropdown
-      ariaLabel={label}
-      value={value}
-      options={options}
-      onChange={onChange}
-      searchable={options.length > 8}
-      triggerClassName={cn(
-        chip,
-        'outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-        muted ? 'text-muted-foreground' : 'bg-muted/60',
-      )}
-    >
-      <Icon className={cn('h-3.5 w-3.5', tone)} />
-      <span>{text}</span>
-    </Dropdown>
-  );
-}
-
-function DueChip({ task, closed }: { task: Task; closed: boolean }) {
-  const input = useRef<HTMLInputElement>(null);
-  const open = () => {
-    const el = input.current;
-    if (!el) return;
-    try {
-      el.showPicker();
-    } catch {
-      el.focus();
-    }
-  };
-  return (
-    <span
-      className={cn(chip, task.dueDate ? 'bg-muted/60' : 'text-muted-foreground')}
-      title={task.dueDate ? `Due ${task.dueDate}` : 'Due date'}
-    >
-      <button type="button" className="inline-flex items-center gap-1.5" onClick={open}>
-        <CalendarDays
-          className={cn('h-3.5 w-3.5', task.dueDate && dueTone(task.dueDate, closed))}
-        />
-        <span className={cn(task.dueDate && dueTone(task.dueDate, closed))}>
-          {task.dueDate ? formatDue(task.dueDate) : 'Due date'}
-        </span>
-      </button>
-      {task.dueDate && (
-        <button
-          type="button"
-          aria-label="Clear due date"
-          className="rounded text-muted-foreground hover:text-foreground"
-          onClick={() => updateTask(task.id, { dueDate: undefined })}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-      <input
-        ref={input}
-        type="date"
-        aria-label="Due date"
-        tabIndex={-1}
-        className="pointer-events-none absolute bottom-0 left-0 h-0 w-0 opacity-0"
-        value={task.dueDate ?? ''}
-        onChange={(e) => updateTask(task.id, { dueDate: e.target.value || undefined })}
-      />
-    </span>
-  );
-}
-
-function TagEditor({ task }: { task: Task }) {
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState('');
-  const commit = () => {
-    const tags = parseTags([...task.tags, draft].join(','));
-    if (tags.length !== task.tags.length) void updateTask(task.id, { tags });
-    setDraft('');
-  };
-  return (
-    <>
-      {task.tags.map((t) => (
-        <span
-          key={t}
-          className="group inline-flex h-7 items-center gap-1 rounded-md bg-muted/60 px-2 text-xs text-muted-foreground"
-        >
-          #{t}
-          <button
-            type="button"
-            aria-label={`Remove tag ${t}`}
-            className="hidden hover:text-foreground group-hover:inline"
-            onClick={() => updateTask(task.id, { tags: task.tags.filter((x) => x !== t) })}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </span>
-      ))}
-      {adding ? (
-        <input
-          // biome-ignore lint/a11y/noAutofocus: opened by an explicit click on "Tag"
-          autoFocus
-          aria-label="New tag"
-          className="h-7 w-28 rounded-md border bg-card px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-          placeholder="tag, Enter"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ',') {
-              e.preventDefault();
-              commit();
-            }
-            if (e.key === 'Escape') {
-              setDraft('');
-              setAdding(false);
-            }
-          }}
-          onBlur={() => {
-            commit();
-            setAdding(false);
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          className={cn(chip, 'text-muted-foreground')}
-          onClick={() => setAdding(true)}
-        >
-          <Plus className="h-3.5 w-3.5" /> Tag
-        </button>
-      )}
-    </>
   );
 }
 
@@ -713,10 +542,6 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
     </Card>
   );
 }
-
-/** A reply box: one border around the field and its icon buttons, which line up with the text. */
-const composer =
-  'flex items-end gap-1 rounded-lg border bg-card p-1 focus-within:ring-2 focus-within:ring-primary/30';
 
 /** Clicks on links, buttons, fields or selected text should not toggle the trace. */
 function isPlainClick(e: React.MouseEvent): boolean {
