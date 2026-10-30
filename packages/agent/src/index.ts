@@ -6,6 +6,7 @@ export * from './github-tools.js';
 export * from './loop.js';
 export * from './mcp.js';
 export * from './prompt.js';
+export * from './search-tools.js';
 export * from './secrets.js';
 export * from './testing.js';
 export * from './tools.js';

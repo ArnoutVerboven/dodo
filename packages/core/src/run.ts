@@ -74,6 +74,28 @@ export const GenerateResponse = z.object({
 });
 export type GenerateResponse = z.infer<typeof GenerateResponse>;
 
+/** A web search through the gateway (Gemini grounding with Google Search), paid per query. */
+export const SearchRequest = z.object({
+  runId: z.string(),
+  query: z.string().trim().min(1).max(500),
+});
+export type SearchRequest = z.infer<typeof SearchRequest>;
+
+export const SearchSource = z.object({ title: z.string(), url: z.string() });
+export type SearchSource = z.infer<typeof SearchSource>;
+
+export const SearchResponse = z.object({
+  /** The grounded answer: what the sources say, in a few paragraphs. */
+  answer: z.string(),
+  sources: z.array(SearchSource),
+  /** The queries Google ran; each one is billed. */
+  queries: z.array(z.string()),
+  cost: MicroEur,
+  /** Room left in the tightest budget after this search. */
+  remaining: MicroEur,
+});
+export type SearchResponse = z.infer<typeof SearchResponse>;
+
 export const HeartbeatRequest = z.object({ runId: z.string() });
 export const HeartbeatResponse = z.object({
   ok: z.boolean(),

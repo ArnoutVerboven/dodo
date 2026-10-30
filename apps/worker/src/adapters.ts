@@ -20,6 +20,7 @@ import {
   type RequestInputRequest,
   type RunEvent,
   type RunToolAccess,
+  SearchResponse,
   type StatusLine,
   Task,
   VaultEntry,
@@ -163,6 +164,10 @@ export class CallableControlPlane implements ControlPlane {
     return GenerateResponse.parse(
       await this.call('gatewayGenerate', { runId: this.runId, ...req }),
     );
+  }
+  /** web_search: the control plane runs it and charges the task; budget refusals end the run. */
+  async search(query: string) {
+    return SearchResponse.parse(await this.call('gatewaySearch', { runId: this.runId, query }));
   }
   async heartbeat() {
     return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }));

@@ -25,7 +25,29 @@ export interface ModelProvider {
   generate(req: ModelRequest): Promise<ModelResult>;
 }
 
-export class VertexProvider implements ModelProvider {
+/** A grounded search: one Gemini call with Google Search as its only tool. */
+export interface SearchRequest {
+  model: string;
+  query: string;
+  maxOutputTokens: number;
+}
+
+export interface SearchResult {
+  answer: string;
+  sources: Array<{ title: string; url: string }>;
+  /** The queries Google ran for it; Gemini 3 bills each one when a source is cited. */
+  queries: string[];
+  usage: Usage;
+}
+
+export interface SearchProvider {
+  search(req: SearchRequest): Promise<SearchResult>;
+}
+
+const SEARCH_SYSTEM =
+  'You are a web search tool for another agent. Search the web and answer the query with the facts the sources give: concise, specific (names, numbers, dates, prices, addresses), and say when sources disagree or nothing relevant was found. No preamble, no follow-up questions.';
+
+export class VertexProvider implements ModelProvider, SearchProvider {
   private readonly ai: GoogleGenAI;
   constructor(project: string, location: string) {
     this.ai = new GoogleGenAI({ vertexai: true, project, location });
@@ -67,13 +89,69 @@ export class VertexProvider implements ModelProvider {
       },
     };
   }
+
+  async search(req: SearchRequest): Promise<SearchResult> {
+    const r = await this.ai.models.generateContent({
+      model: req.model,
+      contents: [{ role: 'user', parts: [{ text: req.query }] }],
+      config: {
+        systemInstruction: SEARCH_SYSTEM,
+        tools: [{ googleSearch: {} }],
+        maxOutputTokens: req.maxOutputTokens,
+        temperature: 0.2,
+        // Thinking would come out of the same small output allowance; a lookup needs none.
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+    const candidate = r.candidates?.[0];
+    const answer = (candidate?.content?.parts ?? [])
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join('');
+    const meta = candidate?.groundingMetadata;
+    const seen = new Set<string>();
+    const sources = (meta?.groundingChunks ?? []).flatMap((c) => {
+      const url = c.web?.uri;
+      if (!url || seen.has(url)) return [];
+      seen.add(url);
+      return [{ title: c.web?.title || c.web?.domain || url, url }];
+    });
+    const u = r.usageMetadata;
+    return {
+      answer,
+      sources,
+      queries: meta?.webSearchQueries ?? [],
+      usage: {
+        inputTokens: u?.promptTokenCount ?? 0,
+        outputTokens: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0),
+        thinkingTokens: u?.thoughtsTokenCount ?? 0,
+        cachedInputTokens: u?.cachedContentTokenCount ?? 0,
+      },
+    };
+  }
 }
 
 /**
  * Deterministic stand-in for the emulator and tests: no network, no cost. It follows a tiny
  * script so an end-to-end run exercises every tool: status → summary → message → finish.
  */
-export class FakeProvider implements ModelProvider {
+export class FakeProvider implements ModelProvider, SearchProvider {
+  /** A canned answer with two sources; "nothing" in the query finds none (no query billed). */
+  async search(req: SearchRequest): Promise<SearchResult> {
+    const none = /nothing/i.test(req.query);
+    return {
+      answer: none ? 'No results.' : `Fake search results for: ${req.query}`,
+      sources: none
+        ? []
+        : [
+            { title: 'example.com', url: 'https://example.com/a' },
+            { title: 'example.org', url: 'https://example.org/b' },
+          ],
+      queries: none ? [req.query] : [req.query, `${req.query} 2026`],
+      usage: { inputTokens: 40, outputTokens: 60, thinkingTokens: 0, cachedInputTokens: 0 },
+    };
+  }
+
   async countTokens(req: Pick<ModelRequest, 'contents'>) {
     return Math.ceil(JSON.stringify(req.contents).length / 4);
   }
@@ -98,6 +176,12 @@ export class FakeProvider implements ModelProvider {
       .flatMap((c) => c.parts)
       .map((p) => p.functionResponse)
       .find((r) => r?.name === 'bash');
+    // "Search: <query>" in the task runs web_search once; its answer goes into the summary.
+    const wantsSearch = /Search: (.+)/.exec(firstUser)?.[1]?.trim();
+    const searched = req.contents
+      .flatMap((c) => c.parts)
+      .map((p) => p.functionResponse)
+      .find((r) => r?.name === 'web_search');
     if (!req.tools?.length) {
       parts = [{ text: `Fake title for ${lastUser.slice(0, 30)}` }];
     } else if (/ask me|question/i.test(lastUser) && turns === 0) {
@@ -124,8 +208,11 @@ export class FakeProvider implements ModelProvider {
       ];
     } else if (wantsRun && !ran) {
       parts = [call('bash', { command: wantsRun })];
-    } else if (turns === 1 || ((wantsFetch || wantsRun) && turns === 2)) {
-      const output = ran ? `\n\nOutput:\n\`\`\`\n${JSON.stringify(ran.response)}\n\`\`\`` : '';
+    } else if (wantsSearch && !searched) {
+      parts = [call('web_search', { query: wantsSearch })];
+    } else if (turns === 1 || ((wantsFetch || wantsRun || wantsSearch) && turns === 2)) {
+      const done = ran ?? searched;
+      const output = done ? `\n\nOutput:\n\`\`\`\n${JSON.stringify(done.response)}\n\`\`\`` : '';
       parts = [
         call('update_summary', {
           markdown: `## Fake summary\n\nThe fake model read: ${lastUser.slice(0, 80)}${output}`,

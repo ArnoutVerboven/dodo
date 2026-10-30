@@ -13,6 +13,7 @@ import {
   McpServerSaveRequest,
   paths,
   RequestInputRequest,
+  SearchRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
 } from '@dodo/core';
@@ -66,11 +67,17 @@ import {
 } from './jobs.js';
 import { handleMessage, parseMessage } from './kill-switch.js';
 import { deleteMcpServer, type McpDeps, McpError, refreshMcpServer, saveMcpServer } from './mcp.js';
-import { FakeProvider, type ModelProvider, VertexProvider } from './model-provider.js';
+import {
+  FakeProvider,
+  type ModelProvider,
+  type SearchProvider,
+  VertexProvider,
+} from './model-provider.js';
 import { notifyPush, type PushDeps } from './push.js';
 import { needsBrowser } from './routing.js';
 import { finish, heartbeat, reapIfStale, requestInput, start } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
+import { SEARCH_TOOL, searchWithBudget } from './search.js';
 import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
 import { generateTitle } from './title.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
@@ -127,8 +134,8 @@ const projectId = () => {
   return id;
 };
 
-let providerInstance: ModelProvider | undefined;
-const provider = (): ModelProvider => {
+let providerInstance: (ModelProvider & SearchProvider) | undefined;
+const provider = (): ModelProvider & SearchProvider => {
   providerInstance ??=
     MODEL_BACKEND.value() === 'fake' || isEmulator
       ? new FakeProvider()
@@ -241,6 +248,33 @@ export const gatewayGenerate = onCall(
       // message is what you need to see on the run.
       logger.error('gateway failed', { runId: run.id, model: req.model, err: String(err) });
       throw new HttpsError('unknown', `Model call failed: ${String(err).slice(0, 500)}`);
+    }
+  },
+);
+
+/** The web_search tool: a grounded Gemini call, charged per query to the run's budgets. */
+export const gatewaySearch = onCall(
+  { serviceAccount: GATEWAY_SA, memory: '512MiB', timeoutSeconds: 120, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<SearchRequest>(SearchRequest, request.data);
+    const db = getFirestore();
+    const run = await loadRunForCaller(db, caller(request.auth), req.runId);
+    try {
+      return await searchWithBudget(
+        { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
+        {
+          scopes: scopesForRun(run),
+          taskId: run.taskId,
+          projectId: run.projectId,
+          runId: run.id,
+          description: `${SEARCH_TOOL}: ${req.query.slice(0, 120)}`,
+        },
+        req.query,
+      );
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      logger.error('search failed', { runId: run.id, err: String(err) });
+      throw new HttpsError('unknown', `Search failed: ${String(err).slice(0, 500)}`);
     }
   },
 );

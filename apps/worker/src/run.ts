@@ -21,6 +21,7 @@ import {
   type ToolDef,
   takeScreenshot,
   taskTools,
+  webSearchTool,
 } from '@dodo/agent';
 import {
   CORE_TOOLS,
@@ -182,6 +183,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const builtins = [
     ...taskTools,
     ...execTools,
+    webSearchTool((query) => control.search(query)),
     ...(githubAccess ? githubTools(githubAccess) : []),
     ...(browser ? await browserTools(browser) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
