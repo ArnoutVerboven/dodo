@@ -235,6 +235,22 @@ describe('runAgent', () => {
     expect(last?.role).toBe('user');
     expect(JSON.stringify(last)).toContain('B');
     expect(JSON.stringify(last)).toContain(HEADLESS_RESTARTED);
+    expect(JSON.stringify(last)).toContain('so are its logins');
+    // With the task's logins and last page restored, the note says so.
+    const { control: c3, run: run3 } = setup([
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    await run3(
+      { trigger: 'resume', session: prior, answer: { prompt: 'Which?', value: 'B' } },
+      {
+        tools: [...taskTools, browserTool],
+        browserKind: 'headless',
+        browserRestored: { logins: true, lastUrl: 'https://example.com/account' },
+      },
+    );
+    const last3 = JSON.stringify(c3.requests[0]?.contents.at(-1));
+    expect(last3).toContain('logins (cookies and local storage) are restored');
+    expect(last3).toContain('Last time you were on https://example.com/account');
     // A window on the Mac keeps its tabs: no such note.
     const { control: c2, run: run2 } = setup([
       { calls: [{ name: 'finish', args: { outcome: 'done' } }] },

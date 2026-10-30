@@ -127,20 +127,27 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   // The browser only when the run wants one: the daemon's server on your Chrome, or headless
   // Chromium started here in the browser worker image.
   let headless: HeadlessBrowser | undefined;
-  let browserUrl = env.browserUrl;
-  if (started.browser && !browserUrl && env.headlessBrowser) {
+  let restored: { logins: boolean; lastUrl?: string } | undefined;
+  if (started.browser && !env.browserUrl && env.headlessBrowser) {
+    // The task's logins from earlier runs come back into the fresh context.
+    const stored = await control.browserState('get').catch((err: Error) => {
+      console.log(`browser logins unavailable: ${err.message}`);
+      return {} as { state?: string; lastUrl?: string };
+    });
+    restored = { logins: !!stored.state, lastUrl: stored.lastUrl };
     headless = await startHeadlessBrowser({
       outputDir: path.join(workdir, '.browser'),
+      storageState: stored.state,
       log: (m) => console.log(m),
     }).catch((err: Error) => {
       console.log(`headless browser unavailable: ${err.message}`);
       return undefined;
     });
-    browserUrl = headless?.url;
   }
-  const browser =
-    started.browser && browserUrl
-      ? await connectBrowser(browserUrl).catch((err: Error) => {
+  const browser = headless
+    ? headless.client
+    : started.browser && env.browserUrl
+      ? await connectBrowser(env.browserUrl).catch((err: Error) => {
           console.log(`browser unavailable: ${err.message}`);
           return undefined;
         })
@@ -206,6 +213,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       ),
       screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
       browserKind: headless ? 'headless' : 'window',
+      browserRestored: headless ? restored : undefined,
       // A headless page is lost with the run: hold it for the answer when the agent asks.
       inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
       deadline: env.deadline,
@@ -213,6 +221,14 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
+  if (headless) {
+    // Whatever the run did to the logins is kept for the task's next run.
+    const lastUrl = headless.lastUrl();
+    await headless
+      .storageState()
+      .then((state) => control.browserState('put', { state, lastUrl }))
+      .catch((err: Error) => console.log(`browser logins not kept: ${err.message}`));
+  }
   await browser?.close();
   await headless?.stop();
   await Promise.all(mcp.clients.map((c) => c.close()));

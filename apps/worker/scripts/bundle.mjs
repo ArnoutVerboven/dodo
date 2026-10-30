@@ -13,8 +13,8 @@ await build({
   format: 'esm',
   sourcemap: true,
   // firebase-admin is only used by the dev loop and stays external (installed in the workspace);
-  // @playwright/mcp is installed in the browser image only and resolved at runtime.
-  external: ['firebase-admin', '@playwright/mcp'],
+  // @playwright/mcp and playwright are installed in the browser image only, resolved at runtime.
+  external: ['firebase-admin', '@playwright/mcp', 'playwright'],
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },
