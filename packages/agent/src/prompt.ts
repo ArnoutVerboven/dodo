@@ -18,14 +18,6 @@ export interface PromptFeatures {
 export const PHONE_APP_LOGIN =
   "Phone app logins (itsme, a bank app): the user is usually answering from the phone that has the app, and the app cannot scan a QR code shown on that same phone. So when the page offers it, pick the option without a QR code (itsme: log in with your phone number, which sends a push to the app) and enter the user's mobile number from get_personal_info (or the vault entry's phone field), then ask_user to approve in the app, with a screenshot of any code or icon the page shows to match. When the page only offers a QR code, ask with the screenshot and say it must be scanned from another screen (a laptop, a tablet). These requests and QR codes expire within a minute or two and only work while this page is open: ask the moment the page shows them, and if the answer says it failed, expired or went wrong, start the login again on the page for a fresh request and ask again with a new screenshot rather than reusing the old one.";
 
-/**
- * itsme rejects sessions from the cloud browser: the QR code it shows there is refused by the
- * app the moment it is scanned, whatever the browser calls itself (a datacenter IP, an
- * automated browser). A real Chrome on the user's Mac works.
- */
-export const CLOUD_ITSME =
-  "itsme does not work from this cloud browser: the app rejects its QR codes and requests as soon as they are scanned or confirmed, however fresh they are. When a site offers only itsme to log in, do not ask the user to scan: say in the Summary that the login needs the agent's browser on their Mac (set the task's device to the Mac, or have it online with device auto) and finish as blocked. Other logins (password, a code by SMS or mail) work here.";
-
 export function systemPrompt(
   _task: Task,
   project: Project | undefined,
@@ -71,7 +63,6 @@ export function systemPrompt(
       '',
       `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.`,
       PHONE_APP_LOGIN,
-      CLOUD_ITSME,
     );
   }
   if (features.canRequestBrowser) {
