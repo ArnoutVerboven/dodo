@@ -5,6 +5,8 @@ import type { LocalMcpConfig } from './mcp.js';
 
 /** Everything the daemon needs besides its sign-in, in ~/.dodo/config.json. */
 export interface CliConfig {
+  /** The daemon pulls and builds origin/main by itself while idle (default on). */
+  autoUpdate?: boolean;
   deviceId: string;
   name: string;
   firebase: { apiKey: string; projectId: string; appId?: string };

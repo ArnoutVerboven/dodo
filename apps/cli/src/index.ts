@@ -47,6 +47,7 @@ import {
   syncServers,
 } from './mcp.js';
 import { sandboxReport } from './sandbox.js';
+import { applyUpdate, checkForUpdate, repoRoot } from './update.js';
 
 const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
 
@@ -54,6 +55,8 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
                          everything below in one go: pair, add the folders, set up the local
                          model (an MLX model already in your Hugging Face cache), check, and
                          keep the daemon running in the background (launchd on macOS)
+  dodo update            pull the newest dodo, build it and restart the daemon on it
+                         (the daemon also does this by itself while idle)
   dodo login <code> [--name "My Mac"] [--project <id>] [--emulator]
                          pair this Mac with the code from Settings › Your Macs
   dodo daemon [--once]   wait for runs addressed to this Mac and execute them
@@ -690,10 +693,32 @@ async function main(full: string[]): Promise<number> {
     case 'version':
       console.log(VERSION);
       return 0;
+    case 'update':
+      return update();
     default:
       console.log(HELP);
       return cmd === undefined || cmd === 'help' ? 0 : 2;
   }
+}
+
+/** `pnpm mac update`: the newest dodo from main, built, and the daemon restarted on it. */
+async function update(): Promise<number> {
+  const repo = repoRoot();
+  if (!repo) throw new Error('Not a git checkout of dodo; update it by hand.');
+  const check = await checkForUpdate(repo);
+  if (check.state === 'skipped') console.log(`Not pulling: ${check.why}.`);
+  if (check.state === 'behind') {
+    console.log(`Updating (${check.commits} new commit${check.commits === 1 ? '' : 's'})…`);
+    const r = await applyUpdate(repo, (m) => console.log(m.replace(/^update: /, '  ')));
+    if (!r.ok) throw new Error(r.error);
+  }
+  if (check.state === 'current') console.log('Already up to date.');
+  console.log(
+    restartAgent()
+      ? 'Daemon restarted on this version. From now on it updates itself.'
+      : 'No background daemon installed; run `pnpm mac setup` or `pnpm dodo daemon`.',
+  );
+  return 0;
 }
 
 main(process.argv.slice(2)).then(

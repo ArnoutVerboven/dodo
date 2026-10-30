@@ -44,6 +44,7 @@ import {
   startSandbox,
   stopSandbox,
 } from './sandbox.js';
+import { applyUpdate, autoUpdateOn, checkForUpdate, repoRoot, UPDATE_CHECK_MS } from './update.js';
 
 export interface DaemonOptions {
   /** Exit after the first run finishes (tests). */
@@ -52,7 +53,13 @@ export interface DaemonOptions {
 }
 
 /** Why the daemon stopped on its own; each one is something you fix, not a crash. */
-export type StopReason = 'revoked' | 'update_needed' | 'signed_out' | 'sandbox_missing' | 'once';
+export type StopReason =
+  | 'revoked'
+  | 'update_needed'
+  | 'updated'
+  | 'signed_out'
+  | 'sandbox_missing'
+  | 'once';
 
 /**
  * The daemon: sign in as the device, say hello every 30 s, and when a queued run addressed to
@@ -149,6 +156,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       log(why);
       for (const s of subs) s();
       clearInterval(beat);
+      clearInterval(updates);
       modelServer?.stop();
       void Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop(), shared?.close()]).then(
         () => resolve(reason),
@@ -180,6 +188,40 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     };
     const beat = setInterval(hello, DEVICE_HEARTBEAT_MS);
     void hello();
+
+    // Staying current: the worker runs from this checkout, so an old one means old tools.
+    const repo = autoUpdateOn(config) && !opts.once ? repoRoot() : undefined;
+    let lastSkip: string | undefined;
+    const update = async () => {
+      if (!repo || stopped || busy) return;
+      busy = 'update';
+      try {
+        const check = await checkForUpdate(repo);
+        if (check.state === 'skipped') {
+          if (check.why !== lastSkip) log(`update: not updating (${check.why})`);
+          lastSkip = check.why;
+          return;
+        }
+        if (check.state === 'current') return;
+        log(
+          `update: ${check.commits} new commit${check.commits === 1 ? '' : 's'} on main; updating`,
+        );
+        const r = await applyUpdate(repo, log);
+        if (!r.ok) {
+          log(`update failed: ${r.error}. Fix it with \`git pull && pnpm install && pnpm build\`.`);
+          return;
+        }
+        // launchd starts the daemon again (KeepAlive), now on the new build.
+        stop('updated', 'update: built the new version; restarting.');
+      } catch (err) {
+        log(`update: ${(err as Error).message}`);
+      } finally {
+        if (busy === 'update') busy = undefined;
+        if (!stopped) void next();
+      }
+    };
+    const updates = setInterval(() => void update(), UPDATE_CHECK_MS);
+    setTimeout(() => void update(), 20_000);
     subs.push(
       onSnapshot(
         deviceRef,

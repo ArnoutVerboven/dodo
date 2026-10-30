@@ -123,3 +123,12 @@ export async function needsBrowser(
     .toLowerCase();
   return /^yes\b/.test(text);
 }
+
+/**
+ * Words that mean a website has to be used, for the browser decision without a model call
+ * (local-model tasks, and a reply on a task that ran without a browser). English and Dutch.
+ */
+const BROWSER_WORDS =
+  /\b(log ?in|logon|sign ?in|sign ?up|inlog\w*|aanmeld\w*|website|web ?site|webpage|portal|browser|book(ing)?|reserv\w*|boek\w*|order|bestel\w*|checkout|check ?out|cart|winkelmand|fill (in|out)|invul\w*|form(ulier)?|click|klik\w*|dashboard|my account|mijn account|screenshot)\b|\bhttps?:\/\/|\b[\w-]+\.(com|be|nl|eu|org|net|io|co\.uk|de|fr)\b/i;
+
+export const looksLikeBrowserWork = (text: string) => BROWSER_WORDS.test(text);

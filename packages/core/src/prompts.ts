@@ -68,7 +68,7 @@ export const agentBrowserHeadless = (hold: string, deviceOnly: string) =>
  * the user's Gmail and types it, so a login by email code needs nobody.
  */
 export const EMAIL_CODE_LOGIN =
-  "Emailed codes: when a page says it sent a code to the user's email, call get_email_code with the code field's ref right away. It waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used). Choosing how to sign in: the user prefers 'Continue with Google' / 'Sign in with Google' wherever a site offers it. In the cloud browser, call use_google_session first (it loads their saved Google session), then click the Google button; in a Chrome window on their computer they are usually signed in to Google already. Where a site has no Google option: a password from the vault, then the site's own 'continue with email' that sends a code (with the email address from get_personal_info or the site's vault entry). get_email_code reads codes, not sign-in links: when the mail holds only a link, ask the user.";
+  "Emailed codes: when a page says it sent a code to the user's email, call get_email_code with the code field's target (its ref from the snapshot) right away. It waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used). Choosing how to sign in: the user prefers 'Continue with Google' / 'Sign in with Google' wherever a site offers it. In the cloud browser, call use_google_session first (it loads their saved Google session), then click the Google button; in a Chrome window on their computer they are usually signed in to Google already. Where a site has no Google option: a password from the vault, then the site's own 'continue with email' that sends a code (with the email address from get_personal_info or the site's vault entry). get_email_code reads codes, not sign-in links: when the mail holds only a link, ask the user.";
 
 /**
  * Logins approved in a phone app (itsme and the like). The user answers from that same phone
@@ -80,7 +80,7 @@ export const PHONE_APP_LOGIN =
 
 /** Browser section for a run without a browser that may ask for one. */
 export const AGENT_REQUEST_BROWSER =
-  'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation.';
+  'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation. Logging in to a site, also by an emailed code, is browser work: call request_browser for it rather than telling the user it cannot be done.';
 
 /** Repository section, when the task has a GitHub checkout (one repo, or several in subfolders). */
 export const agentRepository = (repo: string | string[], dirs?: string[]) => {

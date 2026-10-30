@@ -1,6 +1,6 @@
 import type { Device } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
-import { routeDevice, routeLocalModel, routeToMac } from './routing.js';
+import { looksLikeBrowserWork, routeDevice, routeLocalModel, routeToMac } from './routing.js';
 import { decideBrowser } from './triggers.js';
 
 const now = 1_000_000;
@@ -86,6 +86,28 @@ describe('decideBrowser', () => {
       true,
     );
     expect((await decideBrowser('auto', { trigger: 'comment' }, yes)).browser).toBe(false);
+  });
+
+  it('auto: a reply about a website gets a browser on a task that ran without one', async () => {
+    const reply = (hint: string) =>
+      decideBrowser('auto', { trigger: 'comment', browser: false, hint }, no);
+    expect(await reply('Can you log in to booking.com and check my reservation?')).toEqual({
+      browser: true,
+      reason: 'the reply is about a website',
+    });
+    expect((await reply('Thanks, shorter please')).browser).toBe(false);
+    expect(
+      (await decideBrowser('none', { trigger: 'comment', browser: false, hint: 'log in' }, yes))
+        .browser,
+    ).toBe(false);
+  });
+
+  it('knows website work from the words alone (local-model tasks)', () => {
+    expect(looksLikeBrowserWork('Log in to Booking.com and list my bookings')).toBe(true);
+    expect(looksLikeBrowserWork('Bestel een taart bij de bakker')).toBe(true);
+    expect(looksLikeBrowserWork('check https://example.org/status')).toBe(true);
+    expect(looksLikeBrowserWork('Summarise this PDF in three bullets')).toBe(false);
+    expect(looksLikeBrowserWork('Write a haiku about autumn')).toBe(false);
   });
 
   it('auto: no browser when the router fails or is absent', async () => {

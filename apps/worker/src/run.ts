@@ -198,6 +198,12 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     started.browser && !browser
       ? 'A browser was requested for this run but none is available here; work without one and say so if the task needs it.'
       : undefined,
+    !started.browser && started.browserSetting === 'none'
+      ? "The browser is off for this task (its Browser setting is None). If the task needs a website, say so and ask the user to set Browser to Auto or Chrome; don't claim browsers cannot be used."
+      : undefined,
+    started.google
+      ? undefined
+      : 'Google is not connected (Settings › Integrations), so there are no Gmail, Calendar or Drive tools and emailed sign-in codes cannot be read; if the task needs them, tell the user to connect Google rather than saying it is impossible.',
   ].filter(Boolean);
   const taskForRun = notes.length
     ? { ...task, description: `${task.description}\n\n(${notes.join(' ')})` }
