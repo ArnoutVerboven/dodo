@@ -105,7 +105,7 @@ export function compactedSession(summary: string): Content[] {
 /** "8k", "0.21M": token counts as the task view shows them. Pass a unit to pin it. */
 export function formatTokens(n: number, unit?: TokenUnit): string {
   const u = unit ?? (n >= 100_000 ? 'M' : n >= 1_000 ? 'k' : '');
-  if (u === 'M') return `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (u === 'M') return `${(n / 1_000_000).toFixed(2)}M`;
   if (u === 'k') return `${Math.round(n / 1_000)}k`;
   return String(n);
 }
