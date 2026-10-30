@@ -32,7 +32,9 @@ import { runDaemon, workerEntry } from './daemon.js';
 import { agentInstalled, installAgent, restartAgent, uninstallAgent } from './launchd.js';
 import {
   checkLocalModel,
+  DEFAULT_IDLE_MINUTES,
   DEFAULT_LOCAL_MODEL_URL,
+  DEFAULT_SHARED_PORT,
   isLoopback,
   normaliseBaseUrl,
 } from './local-model.js';
@@ -71,9 +73,14 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
                          the extension's token, so Chrome never asks to allow the agent
   dodo browser use window|extension
   dodo model             the local model tasks can use (Model: Local model, your Mac)
-  dodo model set [url] [--model <name>]
-                         where its OpenAI-compatible server listens on this Mac (default
-                         ${DEFAULT_LOCAL_MODEL_URL}, mlx_lm.server); checks it and restarts the daemon
+  dodo model set --mlx <repo>
+                         an MLX model from the Hugging Face cache, started on demand: the
+                         daemon runs mlx_lm.server on the first request and stops it when idle
+                         (--idle <minutes>, default 10); other apps can share it at
+                         http://localhost:${DEFAULT_SHARED_PORT}/v1
+  dodo model set [url] [--model <name>] [-- <command>]
+                         any OpenAI-compatible server on this Mac (default
+                         ${DEFAULT_LOCAL_MODEL_URL}); with a command, started on demand too
   dodo model test        ask it to call a tool, to see that the agent can work with it
   dodo model off         no local model on this Mac
   dodo status            this Mac as the server sees it
@@ -362,7 +369,26 @@ async function browser(action: string | undefined, token: string | undefined) {
   }
 }
 
-async function model(action: string | undefined, url: string | undefined, flags: Flags) {
+/** The command's program as an absolute path: the launchd daemon's PATH is short. */
+function resolveProgram(command: string[]): string[] {
+  const [program, ...args] = command;
+  if (!program || program.includes('/')) return command;
+  try {
+    const found = execFileSync('/bin/sh', ['-lc', `command -v ${JSON.stringify(program)}`], {
+      encoding: 'utf8',
+    }).trim();
+    return found ? [found, ...args] : command;
+  } catch {
+    throw new Error(`${program} is not installed (or not on your PATH).`);
+  }
+}
+
+async function model(
+  action: string | undefined,
+  url: string | undefined,
+  flags: Flags,
+  rest: string[],
+) {
   const config = requireConfig();
   if (action === 'set') {
     const base = normaliseBaseUrl(url ?? DEFAULT_LOCAL_MODEL_URL);
@@ -370,13 +396,30 @@ async function model(action: string | undefined, url: string | undefined, flags:
       throw new Error(
         `The local model must run on this Mac (localhost), not ${new URL(base).host}: the worker's sandbox reaches only this machine.`,
       );
-    config.localModel = { url: base, ...(str(flags.model) ? { model: str(flags.model) } : {}) };
+    const mlx = str(flags.mlx);
+    const port = new URL(base).port || '8080';
+    const command = mlx
+      ? ['mlx_lm.server', '--model', mlx, '--port', port]
+      : rest.length
+        ? rest
+        : undefined;
+    const name = str(flags.model) ?? mlx;
+    const idle = Number(str(flags.idle));
+    const shared = Number(str(flags.port));
+    config.localModel = {
+      url: base,
+      ...(name ? { model: name } : {}),
+      ...(command ? { command: resolveProgram(command) } : {}),
+      ...(idle > 0 ? { idleMinutes: idle } : {}),
+      ...(shared > 0 ? { port: shared } : {}),
+    };
     writeConfig(config);
-    console.log(`Local model: ${config.localModel.model ?? "the server's default"} at ${base}`);
+    describeModel(config.localModel);
     if (agentInstalled()) {
       restartAgent();
-      console.log('Restarted the background daemon so runs pick it up.');
-    } else console.log('Restart `dodo daemon` if it is running, so runs pick it up.');
+      console.log('Restarted the background daemon so it picks this up.');
+    } else console.log('Restart `dodo daemon` if it is running, so it picks this up.');
+    if (command) return;
   } else if (action === 'off') {
     config.localModel = undefined;
     writeConfig(config);
@@ -384,24 +427,31 @@ async function model(action: string | undefined, url: string | undefined, flags:
     if (agentInstalled()) restartAgent();
     return;
   } else if (action !== undefined && action !== 'test') {
-    throw new Error('Usage: dodo model [set [url] [--model <name>]|test|off]');
+    throw new Error(
+      'Usage: dodo model [set [url] [--model <name>] [--mlx <repo> | -- <command>] [--idle <min>] [--port <n>]|test|off]',
+    );
   }
   if (!config.localModel) {
     console.log(
-      `No local model set up. Start a server (see docs/LOCAL_MODEL.md), then: dodo model set ${DEFAULT_LOCAL_MODEL_URL}`,
+      'No local model set up. For an MLX model in your Hugging Face cache:\n  dodo model set --mlx mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit\n(see docs/LOCAL_MODEL.md)',
     );
     return;
   }
-  if (action !== 'test' && action !== 'set') {
-    console.log(
-      `Local model: ${config.localModel.model ?? "the server's default"} at ${config.localModel.url}`,
-    );
-  }
-  console.log('Checking it (the first call loads the model, which can take a minute)…');
-  const r = await checkLocalModel(config.localModel);
+  if (action !== 'test') describeModel(config.localModel);
+  // On demand: test through the daemon's endpoint, which starts the server if it must.
+  const target = config.localModel.command?.length
+    ? {
+        ...config.localModel,
+        url: `http://localhost:${config.localModel.port ?? DEFAULT_SHARED_PORT}/v1`,
+      }
+    : config.localModel;
+  console.log(`Checking ${target.url} (the first call loads the model, which can take a minute)…`);
+  const r = await checkLocalModel(target);
   if (r.models.length) console.log(`  the server lists: ${r.models.join(', ')}`);
   if (!r.ok) {
-    console.log(`  not working: ${r.problem}`);
+    console.log(
+      `  not working: ${r.problem}${config.localModel.command?.length ? ' (is the daemon running? see ~/.dodo/model.log)' : ''}`,
+    );
     return;
   }
   console.log(
@@ -409,6 +459,18 @@ async function model(action: string | undefined, url: string | undefined, flags:
       ? `  ok: it called a tool (${r.seconds}s). Pick "Local model (your Mac)" as a task's model.`
       : `  it answered in ${r.seconds}s but did not call the tool: the agent needs a model and server with tool calling.`,
   );
+}
+
+function describeModel(m: NonNullable<CliConfig['localModel']>) {
+  console.log(`Local model: ${m.model ?? "the server's default"} at ${m.url}`);
+  if (m.command?.length) {
+    console.log(
+      `  on demand: the daemon starts \`${m.command.join(' ')}\` on the first request and stops it after ${m.idleMinutes ?? DEFAULT_IDLE_MINUTES} idle minutes`,
+    );
+    console.log(
+      `  shared endpoint for dodo and other apps: http://localhost:${m.port ?? DEFAULT_SHARED_PORT}/v1`,
+    );
+  } else console.log('  you keep the server running yourself');
 }
 
 /** Open a page in the user's default browser (macOS only; elsewhere the URL is printed). */
@@ -473,7 +535,15 @@ async function doctor(): Promise<boolean> {
     }`,
   );
   // Optional too: only tasks set to the local model need it.
-  if (config.localModel) {
+  if (config.localModel?.command?.length) {
+    // On demand: not started here (it holds the model in memory); `dodo model test` does.
+    const program = config.localModel.command[0] as string;
+    ok(
+      `local model on demand (${program.split('/').pop()})`,
+      !program.includes('/') || existsSync(program),
+      'dodo model test starts it and checks tool calls',
+    );
+  } else if (config.localModel) {
     const r = await checkLocalModel(config.localModel);
     console.log(
       `${r.ok && r.toolCalls ? 'ok  ' : 'info'} local model at ${config.localModel.url}: ${
@@ -574,7 +644,7 @@ async function main(full: string[]): Promise<number> {
       await mcp(sub, third, argv, rest);
       return 0;
     case 'model':
-      await model(sub, third, flags);
+      await model(sub, third, flags, rest);
       return 0;
     case 'doctor':
       await doctor();
