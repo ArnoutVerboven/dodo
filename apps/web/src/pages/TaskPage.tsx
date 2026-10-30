@@ -3,16 +3,19 @@ import {
   type Artifact,
   compactThreshold,
   formatTokens,
+  formatTokenUsage,
   type Run,
   resolveAiConfig,
   type Task,
   type TaskPriority,
   type TaskStatus,
   type ThreadMessage,
+  tokenUnit,
 } from '@dodo/core';
 import {
   ArrowDown,
   ArrowLeft,
+  ArrowRight,
   Bot,
   CalendarDays,
   ChevronDown,
@@ -21,6 +24,7 @@ import {
   FileText,
   Folder,
   HardDrive,
+  Info,
   Link2,
   Loader2,
   type LucideIcon,
@@ -58,6 +62,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Meter } from '@/components/ui/progress';
+import { useAuth } from '@/lib/auth';
 import {
   addFileArtifact,
   addLinkArtifact,
@@ -80,7 +85,7 @@ import {
   useTask,
 } from '@/lib/data';
 import { pendingInputs } from '@/lib/thread';
-import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
+import { cn, formatEur, formatEurCents, isTyping, timeAgo } from '@/lib/utils';
 
 const PENDING_INPUT_ID = 'pending-input';
 const REPLY_ID = 'thread-reply';
@@ -384,6 +389,19 @@ function TagEditor({ task }: { task: Task }) {
   );
 }
 
+/**
+ * Takes you to the latest open question and puts the cursor where you type the answer: its own
+ * answer box, or the reply box for a question answered with buttons or already replied to.
+ */
+function openAnswer() {
+  const question = document.getElementById(PENDING_INPUT_ID);
+  const field =
+    question?.querySelector<HTMLInputElement>('input[data-answer]') ??
+    document.getElementById(REPLY_ID);
+  question?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  field?.focus({ preventScroll: !!question });
+}
+
 function StatusCard({ task }: { task: Task }) {
   const s = task.statusLine;
   const needsYou = task.status === 'needs_input' || s?.needsYou;
@@ -393,19 +411,11 @@ function StatusCard({ task }: { task: Task }) {
         title={needsYou ? 'Needs you' : 'Status'}
         action={
           needsYou && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="-my-1 h-7"
-              onClick={() => {
-                // The latest open question, or the reply box when you already answered in the thread.
-                const target =
-                  document.getElementById(PENDING_INPUT_ID) ?? document.getElementById(REPLY_ID);
-                target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                if (target?.id === REPLY_ID) target.focus({ preventScroll: true });
-              }}
-            >
-              Answer <ArrowDown className="h-3.5 w-3.5" />
+            <Button size="sm" variant="ghost" className="-my-1 h-7" onClick={openAnswer}>
+              Answer
+              {/* The thread sits below on a phone and to the right from md up. */}
+              <ArrowDown className="h-3.5 w-3.5 md:hidden" />
+              <ArrowRight className="hidden h-3.5 w-3.5 md:block" />
             </Button>
           )
         }
@@ -663,11 +673,11 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
             void send();
           }}
         >
-          <div className="flex items-end gap-2 rounded-lg border bg-card p-1.5 focus-within:ring-2 focus-within:ring-primary/30">
+          <div className={composer}>
             <Textarea
               id={REPLY_ID}
               rows={1}
-              className="max-h-48 min-h-9 resize-none border-0 field-sizing-content focus-visible:ring-0"
+              className="max-h-48 min-h-8 resize-none border-0 bg-transparent px-2 field-sizing-content focus-visible:ring-0"
               placeholder={
                 liveRun ? 'Steer the agent while it works…' : 'Reply or steer the agent…'
               }
@@ -701,6 +711,10 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
     </Card>
   );
 }
+
+/** A reply box: one border around the field and its icon buttons, which line up with the text. */
+const composer =
+  'flex items-end gap-1 rounded-lg border bg-card p-1 focus-within:ring-2 focus-within:ring-primary/30';
 
 /** Clicks on links, buttons, fields or selected text should not toggle the trace. */
 function isPlainClick(e: React.MouseEvent): boolean {
@@ -909,28 +923,34 @@ function InputRequestView({
   if (req.answer) {
     if (req.secret) {
       return (
-        <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
-          Answered with a code (hidden; it went straight to the browser).
+        <p className="mt-2 flex items-start gap-2 text-sm">
+          <UserAvatar />
+          <span className="text-muted-foreground">
+            A code (hidden; it went straight to the browser).
+          </span>
         </p>
       );
     }
     return (
-      <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
-        Answered: <b>{req.answer.value}</b>
-        {req.answer.alwaysAllow && (
-          <>
-            {' '}
-            (always allow <code className="text-xs">{req.answer.alwaysAllow.rule}</code>{' '}
-            {SCOPE_LABEL[req.answer.alwaysAllow.scope]},{' '}
-            <Link
-              to="/tools?tab=permissions#allowed-actions"
-              className="underline underline-offset-2"
-            >
-              manage
-            </Link>
-            )
-          </>
-        )}
+      <p className="mt-2 flex items-start gap-2 text-sm">
+        <UserAvatar />
+        <span className="min-w-0">
+          {req.answer.value}
+          {req.answer.alwaysAllow && (
+            <>
+              {' '}
+              (always allow <code className="text-xs">{req.answer.alwaysAllow.rule}</code>{' '}
+              {SCOPE_LABEL[req.answer.alwaysAllow.scope]},{' '}
+              <Link
+                to="/tools?tab=permissions#allowed-actions"
+                className="underline underline-offset-2"
+              >
+                manage
+              </Link>
+              )
+            </>
+          )}
+        </span>
       </p>
     );
   }
@@ -964,10 +984,7 @@ function InputRequestView({
     void answer(req.kind === 'approval' ? `deny: ${text.trim()}` : text.trim());
   };
   return (
-    <div
-      id={latest ? PENDING_INPUT_ID : undefined}
-      className="mt-2 scroll-mt-20 space-y-2 rounded-md border border-attention bg-attention-bg p-3 text-sm"
-    >
+    <div id={latest ? PENDING_INPUT_ID : undefined} className="mt-2 scroll-mt-20 space-y-2 text-sm">
       {req.prompt.trim() !== message.body.trim() && <p className="font-medium">{req.prompt}</p>}
       {req.costEstimate !== undefined && (
         <p className="text-xs">Estimated cost: {formatEur(req.costEstimate)}</p>
@@ -1082,9 +1099,11 @@ function InputRequestView({
         </div>
       )}
       {(req.kind === 'text' || req.kind === 'approval') && (
-        <div className="flex gap-2">
+        <div className={composer}>
           <Input
-            className="h-8"
+            data-answer
+            className="h-8 border-0 bg-transparent px-2 focus-visible:ring-0"
+            aria-label="Your answer"
             placeholder={
               req.kind === 'approval'
                 ? 'Deny and tell the agent why…'
@@ -1109,8 +1128,14 @@ function InputRequestView({
               }
             }}
           />
-          <Button size="sm" disabled={!text.trim()} onClick={sendText}>
-            Send
+          <Button
+            size="icon"
+            aria-label="Send"
+            title="Send (Enter)"
+            disabled={!text.trim()}
+            onClick={sendText}
+          >
+            <Send className="h-4 w-4" />
           </Button>
         </div>
       )}
@@ -1155,7 +1180,7 @@ function AiCard({ task }: { task: Task }) {
           <div className="mb-1 flex justify-between text-xs">
             <span className="text-muted-foreground">Spent</span>
             <span>
-              {formatEur(spend.spent)} of {formatEur(resolved.budget)}
+              {formatEurCents(spend.spent)} / {formatEurCents(resolved.budget)}
             </span>
           </div>
           <Meter value={spend.spent + spend.reserved} max={resolved.budget} />
@@ -1231,16 +1256,23 @@ function ContextUsage({ task }: { task: Task }) {
       setState({ kind: 'note', text: (err as Error).message || 'Compaction failed.' });
     }
   };
+  const unit = tokenUnit(ctx.max);
+  const info = ctx.compactedAt
+    ? `Compacted ${timeAgo(ctx.compactedAt)}; again at ${formatTokens(threshold, unit)} tokens.`
+    : `Compacts automatically at ${formatTokens(threshold, unit)} tokens.`;
   return (
     <div>
-      <div className="mb-1 flex justify-between text-xs">
-        <span className="text-muted-foreground">Context</span>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="flex items-center gap-1 text-muted-foreground">
+          Context
+          <InfoTip text={info} />
+        </span>
         <span
-          title={`${ctx.tokens.toLocaleString()} of ${ctx.max.toLocaleString()} tokens${
+          title={`${ctx.tokens.toLocaleString()} / ${ctx.max.toLocaleString()} tokens${
             ctx.model ? ` (${ctx.model})` : ''
           }`}
         >
-          {formatTokens(ctx.tokens)} of {formatTokens(ctx.max)} tokens
+          {formatTokenUsage(ctx.tokens, ctx.max)} tokens
         </span>
       </div>
       <Meter value={ctx.tokens} max={ctx.max} />
@@ -1250,9 +1282,7 @@ function ContextUsage({ task }: { task: Task }) {
             ? 'Compacting at the next step…'
             : state.kind === 'note'
               ? state.text
-              : ctx.compactedAt
-                ? `Compacted ${timeAgo(ctx.compactedAt)}; again at ${formatTokens(threshold)}`
-                : `Compacts automatically at ${formatTokens(threshold)}`}
+              : null}
         </span>
         <Button
           size="sm"
@@ -1271,6 +1301,50 @@ function ContextUsage({ task }: { task: Task }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+/** An info icon whose note shows on hover, or on focus for keyboards and phones. */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group/tip relative inline-flex">
+      <button
+        type="button"
+        aria-label={text}
+        className="rounded-full text-muted-foreground/70 outline-none hover:text-foreground focus-visible:text-foreground"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1.5 w-max max-w-48 rounded-md border bg-card px-2 py-1 text-xs text-foreground opacity-0 shadow-sm transition group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
+/** Your Google profile picture, or a person icon when there is none. */
+function UserAvatar() {
+  const { user } = useAuth();
+  const [broken, setBroken] = useState(false);
+  return user?.photoURL && !broken ? (
+    <img
+      src={user.photoURL}
+      alt="You"
+      title="Your answer"
+      referrerPolicy="no-referrer"
+      onError={() => setBroken(true)}
+      className="mt-px h-5 w-5 shrink-0 rounded-full"
+    />
+  ) : (
+    <span
+      title="Your answer"
+      className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted"
+    >
+      <User className="h-3 w-3" />
+    </span>
   );
 }
 

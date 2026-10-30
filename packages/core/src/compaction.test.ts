@@ -4,6 +4,7 @@ import {
   compactionRequest,
   compactThreshold,
   formatTokens,
+  formatTokenUsage,
   renderTranscript,
 } from './compaction.js';
 import type { Content } from './run.js';
@@ -65,5 +66,13 @@ describe('compaction', () => {
     expect(formatTokens(8_400)).toBe('8k');
     expect(formatTokens(212_000)).toBe('0.21M');
     expect(formatTokens(1_048_576)).toBe('1.05M');
+    expect(formatTokens(200_000)).toBe('0.2M');
+    expect(formatTokens(45_200, 'M')).toBe('0.05M');
+  });
+
+  it('shows usage in one unit, picked from the limit', () => {
+    expect(formatTokenUsage(45_200, 200_000)).toBe('45k / 200k');
+    expect(formatTokenUsage(150_000, 1_048_576)).toBe('0.15M / 1.05M');
+    expect(formatTokenUsage(0, 1_000_000)).toBe('0M / 1M');
   });
 });
