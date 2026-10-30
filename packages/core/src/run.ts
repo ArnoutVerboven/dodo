@@ -103,7 +103,11 @@ export type SearchResponse = z.infer<typeof SearchResponse>;
  */
 export const TranscribeRequest = z.object({
   audio: z.string().min(1).max(6_000_000),
-  mimeType: z.string().regex(/^audio\/[a-z0-9.+-]+$/i),
+  /** As MediaRecorder reports it, parameters and all: `audio/webm;codecs=opus`. */
+  mimeType: z
+    .string()
+    .max(100)
+    .regex(/^audio\/[a-z0-9.+-]+(\s*;\s*[a-z0-9-]+=[a-z0-9.,"+-]+)*$/i),
   /** The browser's language (`nl-BE`), a hint for which language to expect. */
   language: z.string().max(35).optional(),
 });
