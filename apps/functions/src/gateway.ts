@@ -70,7 +70,12 @@ const SCOPE_NAMES = {
  * The kind tells the run what to offer (a top-up only for the task's own budget), the rest is
  * what the user reads.
  */
-function budgetExhausted(key: string, room: MicroEur, needed: MicroEur, inputTokens?: number) {
+export function budgetExhausted(
+  key: string,
+  room: MicroEur,
+  needed: MicroEur,
+  inputTokens?: number,
+) {
   const kind = scopeKind(key);
   const why = `${SCOPE_NAMES[kind]} has ${fmtEur(room)} left and this call needs ${fmtEur(needed)}${
     inputTokens ? ` (${Math.round(inputTokens / 1000)}k input tokens)` : ''
@@ -229,8 +234,12 @@ export async function generateWithBudget(
 const governorDoc = (db: Firestore, now: number) =>
   db.collection('governor').doc(new Date(now).toISOString().slice(0, 13));
 
-/** Reserve against the hourly cap; refuses with resource-exhausted when it would be exceeded. */
-async function takeGovernor(deps: GatewayDeps, amount: MicroEur, now: number) {
+/** Reserve against the hourly cap (model calls and paid tools); refuses with resource-exhausted when it would be exceeded. */
+export async function takeGovernor(
+  deps: Pick<GatewayDeps, 'db' | 'hourlyCap'>,
+  amount: MicroEur,
+  now: number,
+) {
   const ref = governorDoc(deps.db, now);
   await deps.db.runTransaction(async (t) => {
     const snap = await t.get(ref);
@@ -251,7 +260,11 @@ async function takeGovernor(deps: GatewayDeps, amount: MicroEur, now: number) {
   });
 }
 
-async function returnGovernor(deps: GatewayDeps, amount: MicroEur, now: number) {
+export async function returnGovernor(
+  deps: Pick<GatewayDeps, 'db' | 'hourlyCap'>,
+  amount: MicroEur,
+  now: number,
+) {
   if (amount <= 0) return;
   await governorDoc(deps.db, now).set({ used: FieldValue.increment(-amount) }, { merge: true });
 }

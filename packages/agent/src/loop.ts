@@ -361,6 +361,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
           data: { name: fc.name, args: fc.args ?? {} },
         });
         let result: Record<string, unknown>;
+        let cost: number | undefined;
         if (!tool) {
           result = { error: `Unknown tool ${fc.name}` };
         } else {
@@ -415,6 +416,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
               }
               const outcome = await tool.execute(parsed.data, ctx);
               result = redact(outcome.result);
+              cost = outcome.cost;
               if ('askUser' in outcome) {
                 responses.push(functionResponse(fc, result));
                 session.push({ role: 'user', parts: [...responses] });
@@ -485,6 +487,31 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 break;
               }
             } catch (err) {
+              // A paid tool the budget, the kill switch or a lost lease refused ends the run
+              // the way a refused model call does (a budget end offers the top-up).
+              const stop =
+                err instanceof GatewayBudgetError
+                  ? ('budget_exhausted' as const)
+                  : err instanceof GatewayHaltedError
+                    ? ('halted' as const)
+                    : err instanceof LeaseLostError
+                      ? ('lease_lost' as const)
+                      : undefined;
+              if (stop) {
+                result = { error: `Not run: ${(err as Error).message}` };
+                responses.push(functionResponse(fc, result));
+                session.push({ role: 'user', parts: responses });
+                await trace.emit({
+                  type: 'tool_result',
+                  summary: `${fc.name} refused: ${truncate((err as Error).message, 100)}`,
+                  data: { name: fc.name },
+                });
+                finishWith(
+                  stop,
+                  stop === 'budget_exhausted' ? { error: (err as Error).message } : {},
+                );
+                break;
+              }
               log('tool failed', { tool: fc.name, err: String(err) });
               result = redact({ error: `Tool failed: ${(err as Error).message}` });
             }
@@ -495,6 +522,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
           type: 'tool_result',
           summary: `${fc.name} → ${truncate(JSON.stringify(result), 100)}`,
           data: { name: fc.name, result: truncateValue(result) },
+          ...(cost !== undefined ? { cost } : {}),
         });
       }
       if (end) break;

@@ -2,6 +2,7 @@ import type { BuiltinGroup, BuiltinTool } from '@dodo/core';
 import { BROWSER_TOOLS } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
+import { webSearchTool } from './search-tools.js';
 import {
   requestBrowserTool,
   requestDeviceTool,
@@ -35,6 +36,18 @@ export function builtinCatalog(): BuiltinTool[] {
   const entries: Array<[ToolDef[], BuiltinGroup]> = [
     [taskTools, 'task'],
     [execTools, 'exec'],
+    [
+      [
+        webSearchTool(async () => ({
+          answer: '',
+          sources: [],
+          queries: [],
+          cost: 0,
+          remaining: 0,
+        })),
+      ],
+      'web',
+    ],
     [github, 'github'],
     [[requestBrowserTool as ToolDef, requestDeviceTool as ToolDef], 'browser'],
   ];

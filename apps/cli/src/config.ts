@@ -20,8 +20,17 @@ export interface CliConfig {
   /**
    * The local model (`dodo model set`): an OpenAI-compatible server on this Mac that tasks set
    * to the local model talk to. `model` is the name to ask it for, when it serves several.
+   * With `command`, the daemon serves a shared endpoint on `port` (default 8090) that starts
+   * the server on the first request and stops it after `idleMinutes` (default 10) without
+   * one, so the model's memory is free in between; other apps can use that endpoint too.
    */
-  localModel?: { url: string; model?: string };
+  localModel?: {
+    url: string;
+    model?: string;
+    command?: string[];
+    idleMinutes?: number;
+    port?: number;
+  };
 }
 
 export const VERSION = '0.1.0';

@@ -313,6 +313,25 @@ export const catalog: unknown[] = [
     }
   },
   {
+    "name": "web_search",
+    "group": "web",
+    "description": "Search the web (Google) and get a short answer with its sources. Use it to find facts, current information, prices, opening hours, documentation or the right page to open; then http_fetch or the browser to read a source in full. One focused question per call; each search costs about €0.01–0.07 from the task budget, so do not repeat a search that already answered.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "What to find, as a question or search terms. Include place and date if they matter."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
     "name": "push_branch",
     "group": "github",
     "description": "Push the current commit (HEAD) of the checkout to a branch on <repo>. Commit first with bash (git checkout -b, git add, git commit). Never the default branch. Needs your approval unless allowed; plain git push has no credentials.",
