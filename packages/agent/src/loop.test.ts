@@ -1,6 +1,7 @@
+import { HEADLESS_RESTARTED } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
-import { HEADLESS_RESTARTED, HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
+import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { requestBrowserTool, requestDeviceTool, taskTools, toDeclarations } from './tools.js';
 

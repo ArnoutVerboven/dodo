@@ -1,13 +1,17 @@
 import {
+  answerTurn,
   COMPACT_SYSTEM,
   type Content,
+  commentTurn,
   compactedSession,
   compactionRequest,
   compactThreshold,
   type HeartbeatResponse,
+  headlessRestartedNote,
   type Part,
   type RunEndReason,
   repoFor,
+  steerTurn,
   summaryText,
 } from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
@@ -105,9 +109,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   } else if (input.trigger === 'comment') {
     const messages = await store.recentMessages(5);
     const latest = messages.filter((m) => m.author === 'user').at(-1);
-    session.push(
-      user(latest ? `The user commented:\n${latest.body}` : 'The user asked you to continue.'),
-    );
+    session.push(user(commentTurn(latest?.body)));
   }
   // A continued conversation with a headless browser: the pages of the earlier run are gone
   // with it, whatever the conversation says. Say so, or the agent takes one look at the blank
@@ -129,7 +131,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     if (a.suggestedRule && !a.alwaysAllow && /^(y|yes|ok|approve|allow)/i.test(a.value.trim())) {
       opts.policy?.allowOnce(a.suggestedRule);
     }
-    session.push(user(`Answer to your question "${a.prompt}":\n${a.value}`));
+    session.push(user(answerTurn(a.prompt, a.value)));
   }
 
   // Heartbeat: lease renewal + infra metering + flags + steering. Also on a timer so a long
@@ -222,7 +224,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       for (const m of latestFlags?.pendingMessages ?? []) {
         if (seenMessages.has(m.id)) continue;
         seenMessages.add(m.id);
-        session.push(user(`The user commented while you were working:\n${m.body}`));
+        session.push(user(steerTurn(m.body)));
         await trace.emit({
           type: 'steer',
           summary: `User: ${truncate(m.body, 80)}`,
@@ -553,18 +555,6 @@ function truncate(s: string, n: number): string {
 function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
   const json = JSON.stringify(v);
   return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
-}
-
-/** Goes into a continued conversation whose browser (and the pages it had) was started anew. */
-export const HEADLESS_RESTARTED =
-  'Note: this run has a new browser, open on a blank page. The pages of the earlier run are gone';
-
-export function headlessRestartedNote(restored?: { logins: boolean; lastUrl?: string }): string {
-  const logins = restored?.logins
-    ? ', but its logins (cookies and local storage) are restored, so you may still be signed in'
-    : ', and so are its logins';
-  const where = restored?.lastUrl ? ` Last time you were on ${restored.lastUrl}.` : '';
-  return `${HEADLESS_RESTARTED}${logins}.${where} Open the site again (browser_navigate) and continue from there; do not conclude from the blank page that the site is unreachable.`;
 }
 
 /** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */

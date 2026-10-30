@@ -112,7 +112,7 @@ describe.skipIf(!enabled)('github (emulator)', () => {
     expect(next).toMatch(/^https:\/\/github\.com\/apps\/dodo-demo\/installations\/new\?state=/);
     const installState = new URL(next).searchParams.get('state') ?? undefined;
     const done = await completeGitHubConnect(deps, { installation_id: '7', state: installState });
-    expect(done).toBe('https://dodo.test/settings?github=connected');
+    expect(done).toBe('https://dodo.test/settings?section=integrations&github=connected');
     return { deps, gh };
   };
 
