@@ -209,7 +209,8 @@ export type RequestInputResponse = z.infer<typeof RequestInputResponse>;
  */
 export const BrowserStateRequest = z.object({
   runId: z.string(),
-  action: z.enum(['get', 'put']),
+  /** `google-get` / `google-put`: the user's shared Google session (Google cookies only). */
+  action: z.enum(['get', 'put', 'google-get', 'google-put']),
   /** `put`: the storage state as JSON. */
   state: z.string().max(2_000_000).optional(),
   /** `put`: the page the agent was on when the run ended, as a hint for the next run. */
@@ -249,3 +250,31 @@ export const RunEvent = z.object({
   createdAt: Timestamp,
 });
 export type RunEvent = z.infer<typeof RunEvent>;
+
+/**
+ * The user's shared Google session (ARCHITECTURE §9.1): a task's remote browser loads it only
+ * when the agent asks for it (use_google_session), and only Google's own cookies are kept.
+ */
+export const SHARED_GOOGLE_STATE = '_shared-google';
+
+/** Google's sign-in domains: google.com and the country domains (google.be, google.co.uk). */
+export const isGoogleDomain = (domain: string) =>
+  /(^|\.)google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/i.test(domain.replace(/^\./, ''));
+
+/** A Playwright storage state reduced to Google's cookies and origins; undefined when none. */
+export function googleOnlyState(json: string): string | undefined {
+  let v: { cookies?: Array<{ domain?: string }>; origins?: Array<{ origin?: string }> };
+  try {
+    v = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  const cookies = (Array.isArray(v?.cookies) ? v.cookies : []).filter((c) =>
+    isGoogleDomain(String(c?.domain ?? '')),
+  );
+  const origins = (Array.isArray(v?.origins) ? v.origins : []).filter((o) =>
+    isGoogleDomain(/^https:\/\/([^/:]+)/i.exec(String(o?.origin ?? ''))?.[1] ?? ''),
+  );
+  if (!cookies.length) return undefined;
+  return JSON.stringify({ cookies, origins });
+}

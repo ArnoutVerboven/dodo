@@ -68,7 +68,7 @@ export const agentBrowserHeadless = (hold: string, deviceOnly: string) =>
  * the user's Gmail and types it, so a login by email code needs nobody.
  */
 export const EMAIL_CODE_LOGIN =
-  "Emailed codes: when a page says it sent a code to the user's email, call get_email_code with the code field's ref right away. It waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used). Choosing how to sign in: prefer a way that finishes without the user, in this order: a password from the vault, then the site's own 'continue with email' that sends a code (with the email address from get_personal_info or the site's vault entry), and only then 'Continue with Google' (or Apple, Facebook), which in a fresh browser needs the user's Google password and phone; in a Chrome window where the user is already signed in to Google, 'Continue with Google' is fine. get_email_code reads codes, not sign-in links: when the mail holds only a link, ask the user.";
+  "Emailed codes: when a page says it sent a code to the user's email, call get_email_code with the code field's ref right away. It waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used). Choosing how to sign in: the user prefers 'Continue with Google' / 'Sign in with Google' wherever a site offers it. In the cloud browser, call use_google_session first (it loads their saved Google session), then click the Google button; in a Chrome window on their computer they are usually signed in to Google already. Where a site has no Google option: a password from the vault, then the site's own 'continue with email' that sends a code (with the email address from get_personal_info or the site's vault entry). get_email_code reads codes, not sign-in links: when the mail holds only a link, ask the user.";
 
 /**
  * Logins approved in a phone app (itsme and the like). The user answers from that same phone
@@ -284,7 +284,7 @@ export const PROMPTS: PromptInfo[] = [
     group: 'Task agent',
     name: 'Emailed codes and sign-in choice',
     purpose:
-      'Appended after either browser section: get_email_code for codes sent by email, and which sign-in option to prefer.',
+      'Appended after either browser section: get_email_code for codes sent by email, and which sign-in option to prefer (Google first, through use_google_session in the cloud).',
     kind: 'system section',
     text: EMAIL_CODE_LOGIN,
   },

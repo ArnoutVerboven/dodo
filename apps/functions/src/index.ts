@@ -11,6 +11,7 @@ import {
   GenerateRequest,
   GitHubTokenRequest,
   GoogleToolRequest,
+  googleOnlyState,
   HeartbeatRequest,
   McpServerIdRequest,
   McpServerSaveRequest,
@@ -20,6 +21,7 @@ import {
   RequestInputRequest,
   SearchRequest,
   SecretAnswerRequest,
+  SHARED_GOOGLE_STATE,
   TranscribeRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
@@ -412,6 +414,19 @@ export const runBrowserState = onCall(
     if (req.action === 'get') {
       const stored = await loadBrowserState(deps, run.taskId);
       return { ok: true, state: stored?.state, lastUrl: stored?.lastUrl };
+    }
+    // The user's shared Google session: any run may load it on demand, and only Google's
+    // cookies are ever kept in it, whatever the run sends.
+    if (req.action === 'google-get') {
+      const stored = await loadBrowserState(deps, SHARED_GOOGLE_STATE);
+      return { ok: true, state: stored?.state };
+    }
+    if (req.action === 'google-put') {
+      const google = req.state ? googleOnlyState(req.state) : undefined;
+      if (!google) return { ok: true };
+      await saveBrowserState(deps, SHARED_GOOGLE_STATE, { state: google });
+      logger.info('shared google session saved', { runId: run.id, taskId: run.taskId });
+      return { ok: true };
     }
     if (!req.state) throw new HttpsError('invalid-argument', 'put needs a state');
     await saveBrowserState(deps, run.taskId, { state: req.state, lastUrl: req.lastUrl });

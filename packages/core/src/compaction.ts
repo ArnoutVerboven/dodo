@@ -102,9 +102,22 @@ export function compactedSession(summary: string): Content[] {
   ];
 }
 
-/** "8k", "0.21M": token counts as the task view shows them. */
-export function formatTokens(n: number): string {
-  if (n >= 100_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+/** "8k", "0.21M": token counts as the task view shows them. Pass a unit to pin it. */
+export function formatTokens(n: number, unit?: TokenUnit): string {
+  const u = unit ?? (n >= 100_000 ? 'M' : n >= 1_000 ? 'k' : '');
+  if (u === 'M') return `${(n / 1_000_000).toFixed(2)}M`;
+  if (u === 'k') return `${Math.round(n / 1_000)}k`;
   return String(n);
+}
+
+export type TokenUnit = 'k' | 'M';
+
+/** One unit for a count and its limit, picked from the limit: "45k / 200k", "0.05M / 1.05M". */
+export function tokenUnit(max: number): TokenUnit {
+  return max >= 1_000_000 ? 'M' : 'k';
+}
+
+export function formatTokenUsage(tokens: number, max: number): string {
+  const unit = tokenUnit(max);
+  return `${formatTokens(tokens, unit)} / ${formatTokens(max, unit)}`;
 }
