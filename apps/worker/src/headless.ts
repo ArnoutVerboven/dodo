@@ -70,8 +70,14 @@ export async function startHeadlessBrowser(opts: {
     createConnection: typeof CreateConnection;
   };
 
-  // The container runs the worker as an unprivileged user without user namespaces.
-  const browser = await chromium.launch({ headless: true, chromiumSandbox: false });
+  const browser = await chromium.launch({
+    headless: true,
+    // The container runs the worker as an unprivileged user without user namespaces.
+    chromiumSandbox: false,
+    // Without this Chromium tells every page it is automated (navigator.webdriver), and login
+    // providers such as itsme refuse the session.
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
   const restored = parseStorageState(opts.storageState);
   if (opts.storageState && !restored) opts.log('browser: stored logins unreadable; starting fresh');
   const context = await browser.newContext({

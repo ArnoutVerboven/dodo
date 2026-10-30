@@ -65,7 +65,7 @@ export const catalog: unknown[] = [
   {
     "name": "ask_user",
     "group": "core",
-    "description": "Ask the user and stop until they answer. Use it when a short answer saves a lot of work or rework (inputs only they know, a choice that changes the outcome) or for an approval; otherwise make your best assumption, say so, and keep going. Ask everything you will need for the rest of the task in this one call, as a short numbered list with your best guess for each, then finish the task yourself once they answer. Lead with what you need from them. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. the code or the icon to pick in their phone app, or a QR code (a QR code that is a link is added to the question as text, to tap on the phone); they may be answering from their phone.",
+    "description": "Ask the user and stop until they answer. Use it when a short answer saves a lot of work or rework (inputs only they know, a choice that changes the outcome) or for an approval; otherwise make your best assumption, say so, and keep going. Ask everything you will need for the rest of the task in this one call, as a short numbered list with your best guess for each, then finish the task yourself once they answer. Lead with what you need from them. The run pauses after this call and continues with the answer. Set screenshot to attach a picture of the browser page when the user has to see it to answer, e.g. the code or the icon to pick in their phone app, or a QR code (which they must scan from another screen); they may be answering from their phone.",
     "inputSchema": {
       "type": "object",
       "properties": {
