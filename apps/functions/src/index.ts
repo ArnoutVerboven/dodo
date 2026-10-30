@@ -99,7 +99,13 @@ import {
   SecretAnswerError,
   saveSecretAnswer,
 } from './secret-answers.js';
-import { handleTelegramUpdate, notifyTelegram, telegramApi, telegramUpload } from './telegram.js';
+import {
+  ackTelegram,
+  handleTelegramUpdate,
+  notifyTelegram,
+  telegramApi,
+  telegramUpload,
+} from './telegram.js';
 import { generateTitle } from './title.js';
 import { transcribeWithBudget } from './transcribe.js';
 import { onInputAnswered, onTaskChanged, onUserMessage } from './triggers.js';
@@ -208,6 +214,7 @@ const controlDeps = () => {
         (err) => logger.warn('notify failed', { err: String(err) }),
       );
     },
+    ackTelegram: (taskId: string) => ackTelegram(telegramDeps(), taskId),
   };
 };
 

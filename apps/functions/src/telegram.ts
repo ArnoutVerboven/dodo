@@ -11,6 +11,9 @@ import { esc, markdownToTelegram } from './telegram-format.js';
  * you replied to; a plain message goes to the task of the bot's last message, when that one was
  * about a task. If that message asked a question still waiting for an answer, the text answers
  * it; otherwise it is posted as a comment, which continues the task just as one from the app does.
+ * The bot reacts on your message instead of replying: 👀 once the agent has it, 👍 once the agent
+ * is through with it (its run ended or asked the next question). A secret code gets neither: the
+ * bot deletes that message.
  */
 export interface TelegramDeps {
   db: Firestore;
@@ -249,7 +252,9 @@ async function postToTask(
   text: string,
 ): Promise<void> {
   const taskRef = deps.db.doc(paths.task(ref.taskId));
-  const task = (await taskRef.get()).data() as { title?: string } | undefined;
+  const task = (await taskRef.get()).data() as
+    | { title?: string; status?: string; ai?: { enabled?: boolean } }
+    | undefined;
   if (!task) {
     await sendTracked(
       deps,
@@ -266,44 +271,87 @@ async function postToTask(
     if ((err as { code?: number }).code === ALREADY_EXISTS) return;
     throw err;
   }
-  let answered = false;
-  if (ref.inputMessageId) {
-    const inputRef = deps.db.doc(`${paths.messages(ref.taskId)}/${ref.inputMessageId}`);
-    const input = (await inputRef.get()).get('input') as
-      | { kind?: string; answer?: unknown; secret?: boolean }
-      | undefined;
+  let input: { kind?: string; answer?: unknown; secret?: boolean } | undefined;
+  const inputRef = ref.inputMessageId
+    ? deps.db.doc(`${paths.messages(ref.taskId)}/${ref.inputMessageId}`)
+    : undefined;
+  if (inputRef) {
+    input = (await inputRef.get()).get('input') as typeof input;
     if (input?.secret && !input.answer) {
       await answerSecretFromChat(deps, chatId, replyTo, ref, task.title, text);
       return;
     }
-    if (input && !input.answer) {
-      await inputRef.update({
-        'input.answer': {
-          value: answerValue(input.kind, text),
-          answeredAt: now,
-          via: 'telegram',
-        },
-      });
-      answered = true;
-    }
   }
-  if (!answered) {
+  // Only an AI task that is still open gets a run to process the text; for any other the text
+  // is simply stored, which is all there is to do.
+  const willRun = !!task.ai?.enabled && task.status !== 'done' && task.status !== 'cancelled';
+  // Remembered before the text lands, so a run that ends quickly still finds it (see ackTelegram).
+  if (willRun) {
+    await deps.db.doc(pendingDoc(ref.taskId)).set(
+      { messages: { [`${chatId}_${replyTo}`]: { chatId, messageId: replyTo, at: now } } },
+      {
+        merge: true,
+      },
+    );
+  }
+  if (inputRef && input && !input.answer) {
+    await inputRef.update({
+      'input.answer': {
+        value: answerValue(input.kind, text),
+        answeredAt: now,
+        via: 'telegram',
+      },
+    });
+  } else {
     await deps.db
       .doc(`${paths.messages(ref.taskId)}/tg_${chatId}_${replyTo}`)
       .set({ author: 'user', body: text, createdAt: now, via: 'telegram' });
   }
   await taskRef.update({ updatedAt: now });
-  const title = esc(task.title || 'Untitled task');
-  await sendTracked(
-    deps,
-    {
+  // 👀: received and handed to the agent; 👍 follows when its run is through (ackTelegram).
+  await react(deps, chatId, replyTo, willRun ? EYES : THUMBS_UP);
+}
+
+const EYES = '👀';
+const THUMBS_UP = '👍';
+
+/** Server-only: the Telegram messages a task's agent has not finished processing yet. */
+const pendingDoc = (taskId: string) => `telegramPending/${taskId}`;
+
+/** Sets the bot's reaction on a message (replacing any earlier one). Never throws. */
+async function react(deps: TelegramDeps, chatId: number, messageId: number, emoji: string) {
+  try {
+    await deps.send('setMessageReaction', {
       chat_id: chatId,
-      text: answered ? `Answered on <b>${title}</b>.` : `Added to <b>${title}</b>.`,
-      parse_mode: 'HTML',
-      reply_to_message_id: replyTo,
-    },
-    { taskId: ref.taskId },
-  );
+      message_id: messageId,
+      reaction: [{ type: 'emoji', emoji }],
+    });
+  } catch (err) {
+    deps.log?.('telegram reaction failed', { err: String(err) });
+  }
+}
+
+/**
+ * The agent is through with the task's Telegram messages: its run ended or asked the next
+ * question. Each message it got from Telegram trades its 👀 for a 👍. Never throws.
+ */
+export async function ackTelegram(deps: TelegramDeps, taskId: string): Promise<void> {
+  if (!deps.token) return;
+  try {
+    const ref = deps.db.doc(pendingDoc(taskId));
+    const pending = (await ref.get()).data()?.messages as
+      | Record<string, { chatId: number; messageId: number }>
+      | undefined;
+    const entries = Object.entries(pending ?? {});
+    if (!entries.length) return;
+    // Only the entries read here: one that lands meanwhile waits for the run it starts.
+    await ref.update(
+      Object.fromEntries(entries.map(([k]) => [`messages.${k}`, FieldValue.delete()])),
+    );
+    for (const [, m] of entries) await react(deps, m.chatId, m.messageId, THUMBS_UP);
+  } catch (err) {
+    deps.log?.('telegram ack failed', { taskId, err: String(err) });
+  }
 }
 
 /**

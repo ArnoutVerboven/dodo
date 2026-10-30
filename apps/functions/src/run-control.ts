@@ -50,6 +50,8 @@ export interface RunControlDeps {
   costGate: CostGate;
   /** Push a "needs you" / "finished" notice to the user's channels. Never throws. */
   notify?: Notify;
+  /** The agent is through with the task's Telegram messages: 👀 becomes 👍. Never throws. */
+  ackTelegram?: (taskId: string) => Promise<void>;
   /** Where remote MCP servers' Authorization headers are kept (the vault's secret). */
   mcpSecrets?: Pick<VaultSecretStore, 'read'>;
   now?: () => number;
@@ -364,6 +366,8 @@ export async function requestInput(
     }),
     image: image && { data: image.data, mimeType: image.mimeType },
   });
+  // Asking the next question means the messages before it were read.
+  await deps.ackTelegram?.(run.taskId);
   return { messageId: messageRef.id };
 }
 
@@ -546,6 +550,14 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   }
   await batch.commit();
   await endRun(deps, run);
+  // The agent is through with what it was told, unless the run goes on in another one: a held
+  // question was already acknowledged when it was asked, and a move to a browser or the Mac
+  // continues the same work.
+  const continues =
+    req.reason === 'waiting_input' ||
+    req.reason === 'needs_browser' ||
+    (req.reason === 'needs_device' && macs.length > 0);
+  if (!continues) await deps.ackTelegram?.(run.taskId);
 
   if (req.reason === 'waiting_input') {
     // The question was posted (and announced) when the hold began. If the answer came in the
