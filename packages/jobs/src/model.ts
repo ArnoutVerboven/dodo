@@ -197,6 +197,8 @@ export const ConnectorStatus = z.object({
   missingScopes: z.array(z.string()).default([]),
   error: z.string().optional(),
   connectedAt: Timestamp.optional(),
+  /** The agent's Drive folder, found or created on first use (Settings › Integrations names it). */
+  driveFolder: z.object({ name: z.string(), id: z.string(), url: z.string() }).optional(),
   updatedAt: Timestamp,
 });
 export type ConnectorStatus = z.infer<typeof ConnectorStatus>;
@@ -209,7 +211,12 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   // Create events, only after you approve them on the task.
   'https://www.googleapis.com/auth/calendar.events',
+  // The agent's Drive tools: search, read and edit your files, save outputs to the dodo folder.
+  'https://www.googleapis.com/auth/drive',
 ] as const;
+
+/** Scopes only the agent's tools need: the Jobs keep working without them. */
+export const OPTIONAL_GOOGLE_SCOPES: readonly string[] = ['https://www.googleapis.com/auth/drive'];
 
 /** Which connector each job needs. */
 export const JOB_CONNECTOR: Record<JobKind, string> = {

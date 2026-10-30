@@ -347,5 +347,7 @@ export const GlobalSettings = z.object({
   devicePairing: z.object({ code: z.string(), createdAt: Timestamp }).optional(),
   /** Permission rules answered "Always allow" everywhere, e.g. `Browser(navigate:x.com)`. */
   allowRules: z.array(z.string()).optional(),
+  /** Google for the agent (Settings › Integrations): the Drive folder saved files go to. */
+  google: z.object({ driveFolder: z.string().optional() }).optional(),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;

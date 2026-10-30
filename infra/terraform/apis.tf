@@ -28,6 +28,8 @@ locals {
     # Jobs (docs/JOBS.md): read the inbox, draft replies, read free/busy.
     "gmail.googleapis.com",
     "calendar-json.googleapis.com",
+    # The agent's Google tools: search, read and save files in Drive.
+    "drive.googleapis.com",
   ])
 }
 

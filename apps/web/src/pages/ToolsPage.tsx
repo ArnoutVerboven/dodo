@@ -606,7 +606,16 @@ pnpm dodo mcp add notes --url http://localhost:3000/mcp`}
 
 /* ------------------------------ built-in ------------------------------ */
 
-const GROUP_ORDER: BuiltinGroup[] = ['core', 'task', 'vault', 'exec', 'web', 'github', 'browser'];
+const GROUP_ORDER: BuiltinGroup[] = [
+  'core',
+  'task',
+  'vault',
+  'exec',
+  'web',
+  'google',
+  'github',
+  'browser',
+];
 
 function BuiltinTab({ onInspect }: { onInspect: (t: Inspected) => void }) {
   const { data: toolSettings } = useToolSettings();
@@ -688,6 +697,15 @@ const RULE_OF: Record<string, string> = {
   write_file: 'Write(<path>)',
   http_fetch: 'Http(domain:<host>)',
   web_search: 'WebSearch(<query>)',
+  gmail_search: 'Gmail(search:<query>)',
+  gmail_read_thread: 'Gmail(read:<thread>)',
+  calendar_list_events: 'Calendar(list)',
+  calendar_create_event: 'Calendar(create:<title>)',
+  drive_search: 'Drive(search:<text>)',
+  drive_read: 'Drive(read:<file>)',
+  drive_download: 'Drive(read:<file>)',
+  drive_save_file: 'Drive(save:<name>)',
+  drive_update_file: 'Drive(edit:<file>)',
   push_branch: 'GitHub(push:<repo>)',
   open_pull_request: 'GitHub(pr:<repo>)',
   request_vault_access: 'Vault(<entry>)',

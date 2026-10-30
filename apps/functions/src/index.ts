@@ -10,6 +10,7 @@ import {
   FinishRequest,
   GenerateRequest,
   GitHubTokenRequest,
+  GoogleToolRequest,
   HeartbeatRequest,
   McpServerIdRequest,
   McpServerSaveRequest,
@@ -59,6 +60,7 @@ import {
   startGitHubConnect,
   syncRepos,
 } from './github.js';
+import { runGoogleTool } from './google-tools.js';
 import { createApiToken, handleApiRequest, IngestError } from './ingest.js';
 import {
   completeGoogleConnect,
@@ -944,6 +946,26 @@ export const reapRuns = onSchedule(
   async () => {
     const reaped = await reapStaleRuns(controlDeps());
     if (reaped.length) logger.info('reaped stale runs', { runs: reaped });
+  },
+);
+
+/**
+ * The agent's Google tools (Gmail, Calendar, Drive): one operation for a run, done here with the
+ * Google token. Runs as the Jobs account, the only one that can read that token.
+ */
+export const googleTool = onCall(
+  { serviceAccount: JOBS_SA, memory: '512MiB', timeoutSeconds: 180, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<GoogleToolRequest>(GoogleToolRequest, request.data);
+    const c = caller(request.auth);
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const shared = jobsShared();
+    const run = await loadRunForCaller(shared.db, c, req.runId);
+    return runGoogleTool(
+      { db: shared.db, oauth: shared.oauth, tokens: shared.tokens, log: shared.log },
+      run,
+      req.call,
+    );
   },
 );
 

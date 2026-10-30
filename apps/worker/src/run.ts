@@ -12,6 +12,7 @@ import {
   execTools,
   type GitHubAccess,
   githubTools,
+  googleTools,
   inheritedEnv,
   LocalModelControlPlane,
   type McpClient,
@@ -27,6 +28,7 @@ import {
 import {
   CORE_TOOLS,
   type GitHubTokenResponse,
+  GOOGLE_SCOPE,
   isLocalModel,
   Project,
   type RunToolAccess,
@@ -178,6 +180,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     repo
       ? `Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.`
       : undefined,
+    started.google && !started.google.scopes.includes(GOOGLE_SCOPE.drive)
+      ? 'Google Drive is not connected (the Google connection lacks Drive access), so files cannot be saved to Drive.'
+      : undefined,
     started.browser && !browser
       ? 'A browser was requested for this run but none is available here; work without one and say so if the task needs it.'
       : undefined,
@@ -202,6 +207,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...taskTools,
     ...execTools,
     webSearchTool((query) => control.search(query)),
+    ...(started.google ? googleTools((call) => control.google(call), started.google) : []),
     ...(githubAccess ? githubTools(githubAccess) : []),
     ...(browser ? await browserTools(browser, { emailCode: (req) => control.emailCode(req) }) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
@@ -242,6 +248,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
       deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
+      googleFolder: started.google?.folder,
       log: (m, d) => console.log(m, d ?? ''),
     },
   );

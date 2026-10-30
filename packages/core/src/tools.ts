@@ -19,12 +19,21 @@ import { Timestamp } from './model.js';
 /** The tools every run keeps: without them the agent cannot report or stop. */
 export const CORE_TOOLS = ['update_summary', 'set_status', 'post_message', 'ask_user', 'finish'];
 
-export const BuiltinGroup = z.enum(['core', 'task', 'vault', 'exec', 'web', 'github', 'browser']);
+export const BuiltinGroup = z.enum([
+  'core',
+  'task',
+  'vault',
+  'exec',
+  'web',
+  'google',
+  'github',
+  'browser',
+]);
 export type BuiltinGroup = z.infer<typeof BuiltinGroup>;
 
 /**
  * What a group needs before a run gets it, beyond being turned on. Toolsets choose among the
- * `task`, `vault`, `exec` and `web` groups; `github` and `browser` follow the task's Repo and Browser
+ * `task`, `vault`, `exec`, `web` and `google` groups; `github` and `browser` follow the task's Repo and Browser
  * settings, so a toolset does not take them away.
  */
 export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolsets: boolean }> = {
@@ -47,6 +56,11 @@ export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolset
   web: {
     label: 'Web search',
     note: 'Google Search through Gemini, answered with sources. Each search is charged to the task’s budget (about €0.014 a query).',
+    toolsets: true,
+  },
+  google: {
+    label: 'Google',
+    note: 'Only when Google is connected (Settings › Integrations). Gmail search and read, your calendar, and Drive; saved files go to your dodo folder. Creating events and changing existing files ask first.',
     toolsets: true,
   },
   github: {

@@ -6,6 +6,7 @@ import {
   AGENT_REQUEST_BROWSER,
   AGENT_SYSTEM,
   agentBrowserHeadless,
+  agentGoogle,
   agentHeadlessHold,
   agentProject,
   agentRepository,
@@ -27,6 +28,8 @@ export interface PromptFeatures {
   /** A remote run that request_device can move to the user's Mac. */
   canRequestDevice?: boolean;
   github?: string;
+  /** The run has Google tools; the Drive folder saved files go to. */
+  google?: string;
 }
 
 export function systemPrompt(
@@ -48,6 +51,7 @@ export function systemPrompt(
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github) lines.push('', agentRepository(features.github));
+  if (features.google) lines.push('', agentGoogle(features.google));
   if (project) {
     lines.push('', agentProject(project.name, project.description, project.instructions));
   }

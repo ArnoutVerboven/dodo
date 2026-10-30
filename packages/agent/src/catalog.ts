@@ -1,7 +1,13 @@
-import type { BuiltinGroup, BuiltinTool } from '@dodo/core';
+import {
+  type BuiltinGroup,
+  type BuiltinTool,
+  DEFAULT_DRIVE_FOLDER,
+  GOOGLE_SCOPE,
+} from '@dodo/core';
 import { BROWSER_TOOLS, emailCodeTool } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
+import { googleTools } from './google-tools.js';
 import { webSearchTool } from './search-tools.js';
 import {
   requestBrowserTool,
@@ -47,6 +53,13 @@ export function builtinCatalog(): BuiltinTool[] {
         })),
       ],
       'web',
+    ],
+    [
+      googleTools(async () => ({}), {
+        scopes: Object.values(GOOGLE_SCOPE),
+        folder: DEFAULT_DRIVE_FOLDER,
+      }),
+      'google',
     ],
     [github, 'github'],
     [

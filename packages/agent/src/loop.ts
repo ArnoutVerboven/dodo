@@ -6,6 +6,7 @@ import {
   compactedSession,
   compactionRequest,
   compactThreshold,
+  DEFAULT_DRIVE_FOLDER,
   type HeartbeatResponse,
   headlessRestartedNote,
   type Part,
@@ -25,6 +26,7 @@ import {
   type TaskStore,
   type TraceSink,
 } from './control-plane.js';
+import { GOOGLE_TOOLS } from './google-tools.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
 import { findTool, type ToolContext, type ToolDef, toDeclarations } from './tools.js';
@@ -58,6 +60,8 @@ export interface LoopOptions {
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
   heartbeatMs?: number;
+  /** The Drive folder the Google tools save to, for the system prompt. */
+  googleFolder?: string;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -85,6 +89,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     canRequestDevice: tools.some((t) => t.name === 'request_device'),
     github: tools.some((t) => t.name === 'open_pull_request')
       ? repoFor(input.task, input.project)
+      : undefined,
+    google: tools.some((t) => GOOGLE_TOOLS.includes(t.name as (typeof GOOGLE_TOOLS)[number]))
+      ? (opts.googleFolder ?? DEFAULT_DRIVE_FOLDER)
       : undefined,
   });
   // Vault values never go back to the model, the trace or the task: cut them out of every

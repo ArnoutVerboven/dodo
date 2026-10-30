@@ -20,6 +20,7 @@ import {
   Download,
   FileText,
   Folder,
+  HardDrive,
   Link2,
   Loader2,
   type LucideIcon,
@@ -83,6 +84,9 @@ import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
 
 const PENDING_INPUT_ID = 'pending-input';
 const REPLY_ID = 'thread-reply';
+
+/** A file the agent saved to Google Drive (drive_save_file) is attached as its Drive link. */
+const isDriveUrl = (url?: string) => !!url && /^https:\/\/(drive|docs)\.google\.com\//.test(url);
 
 export function TaskPage() {
   const { id } = useParams();
@@ -1404,7 +1408,12 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
                 key={a.id}
                 className="group flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent/60"
               >
-                {a.kind === 'link' ? (
+                {a.kind === 'link' && isDriveUrl(a.url) ? (
+                  <HardDrive
+                    className="h-4 w-4 shrink-0 text-muted-foreground"
+                    aria-label="Google Drive"
+                  />
+                ) : a.kind === 'link' ? (
                   <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : (
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1427,6 +1436,9 @@ function ArtifactsCard({ taskId }: { taskId: string }) {
                   >
                     {a.name}
                   </a>
+                )}
+                {a.kind === 'link' && isDriveUrl(a.url) && (
+                  <span className="text-xs text-muted-foreground">in Drive</span>
                 )}
                 {a.role === 'output' && <span className="text-xs text-success">output</span>}
                 <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
