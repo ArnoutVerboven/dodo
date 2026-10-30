@@ -1,5 +1,5 @@
 import type { FunctionDeclaration, ImageUpload } from '@dodo/core';
-import { vaultRef, vaultRule } from '@dodo/core';
+import { vaultApprovalPrompt, vaultRef, vaultRule } from '@dodo/core';
 import type { ActionCategory, PolicyEngine } from '@dodo/policy';
 import { z } from 'zod';
 import type { TaskStore } from './control-plane.js';
@@ -182,6 +182,14 @@ export const taskTools = [
         .describe('The element ref from the page snapshot, to crop the screenshot to it.'),
     }),
     async execute({ screenshot, screenshotElement, screenshotRef, ...question }, ctx) {
+      // A yes to a card with this rule would unlock a vault entry; only request_vault_access
+      // writes that card, with the entry's own name and sites in it.
+      if (question.suggestedRule && /^\s*Vault\b/i.test(question.suggestedRule))
+        return {
+          result: {
+            error: 'Ask for a vault entry with request_vault_access, not ask_user.',
+          },
+        };
       let image: ImageUpload | undefined;
       let note = 'The run pauses here until the user answers.';
       if (screenshot) {
@@ -298,12 +306,11 @@ export const taskTools = [
     async execute({ entryId, reason }, { store }) {
       const entry = (await store.listVault()).find((e) => e.id === entryId);
       if (!entry) return { result: { error: `No vault entry ${entryId}; see list_vault.` } };
-      const fields = entry.fields.map((f) => f.label.toLowerCase()).join(', ');
       return {
         result: { ok: true, note: 'The run pauses here until the user answers.' },
         askUser: {
           kind: 'approval',
-          prompt: `Use your vault entry "${entry.name}" (${fields}) on ${entry.domains.join(', ')} for this task? ${reason}`,
+          prompt: `${vaultApprovalPrompt(entry)} ${reason}`,
           suggestedRule: vaultRule(entry.id),
         },
       };

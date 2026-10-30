@@ -9,6 +9,7 @@ import {
   DEFAULT_DRIVE_FOLDER,
   type HeartbeatResponse,
   headlessRestartedNote,
+  isApproved,
   type Part,
   type RunEndReason,
   reposFor,
@@ -141,7 +142,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
 
   /** The user's answer goes into the conversation; a "yes" to an approval permits that call once. */
   function takeAnswer(a: NonNullable<RunInput['answer']>) {
-    if (a.suggestedRule && !a.alwaysAllow && /^(y|yes|ok|approve|allow)/i.test(a.value.trim())) {
+    if (a.suggestedRule && !a.alwaysAllow && isApproved(a.value)) {
       opts.policy?.allowOnce(a.suggestedRule);
     }
     session.push(user(answerTurn(a.prompt, a.value)));

@@ -130,6 +130,8 @@ describe('browserTools', () => {
 
   it('types vault values only on their site, keeps refs in the args, and blocks scripts after', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
+    /** Where the browser really is: a page may move on between two calls. */
+    let at = 'about:blank';
     const client: BrowserClient = {
       async listTools() {
         return ['browser_navigate', 'browser_type', 'browser_fill_form', 'browser_evaluate'].map(
@@ -138,8 +140,13 @@ describe('browserTools', () => {
       },
       async callTool(name, args) {
         calls.push([name, args]);
-        const url = name === 'browser_navigate' ? args.url : 'https://login.engie.be/';
-        return { text: `- Page URL: ${url}\nfield: ${JSON.stringify(args)}`, isError: false };
+        if (name === 'browser_navigate') at = String(args.url);
+        // Like Playwright MCP: the call's own code (with the typed text, escaped) comes first.
+        const code = `### Ran Playwright code\n\`\`\`js\nawait page.fill(${JSON.stringify(args).replace(/'/g, "\\'")});\n\`\`\`\n`;
+        return {
+          text: `${code}### Page\n- Page URL: ${at}\nfield: ${JSON.stringify(args)}`,
+          isError: false,
+        };
       },
       async close() {},
     };
@@ -147,12 +154,13 @@ describe('browserTools', () => {
     const secrets = createSecretResolver(async (e, f, host) => {
       asked.push(`${e}.${f}@${host}`);
       if (host !== 'login.engie.be') throw new Error('Energy may only be used on login.engie.be');
-      return f === 'phone' ? '+32470111222' : 'pw-123';
+      return f === 'phone' ? '+32470111222' : "pw'1\\23";
     });
     const ctx = { store: {} as TaskStore, secrets };
     const byName = Object.fromEntries((await browserTools(client)).map((t) => [t.name, t]));
     const run = (name: string, args: Record<string, unknown>) =>
       (byName[name] as NonNullable<(typeof byName)[string]>).execute(args, ctx);
+    const typed = () => calls.filter(([n]) => n === 'browser_type' || n === 'browser_fill_form');
 
     // Before any page: refused, nothing typed.
     expect(await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).toEqual({
@@ -162,24 +170,52 @@ describe('browserTools', () => {
     expect(await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).toEqual({
       result: { error: 'Energy may only be used on login.engie.be' },
     });
+    // The agent last saw the login page, but the page has since moved on to another site.
     await run('browser_navigate', { url: 'https://login.engie.be/' });
+    at = 'https://login.engie.be.evil.test/';
+    expect(await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).toEqual({
+      result: { error: 'Energy may only be used on login.engie.be' },
+    });
+    // Not over plain http, not into a frame, not by selector.
+    at = 'http://login.engie.be/';
+    expect(
+      (await run('browser_type', { target: 'e1', text: '{{vault:energy.phone}}' })).result,
+    ).toEqual({ error: expect.stringContaining('only typed on https pages') });
+    at = 'https://login.engie.be/';
+    for (const target of ['f1e3', '#password', 'iframe >> internal:control=enter-frame >> input'])
+      expect(
+        (await run('browser_type', { target, text: '{{vault:energy.phone}}' })).result,
+      ).toEqual({ error: expect.stringContaining('not into an embedded frame') });
+    expect(
+      (
+        await run('browser_fill_form', {
+          fields: [{ name: 'pw', target: 'f2e1', value: '{{vault:energy.password}}' }],
+        })
+      ).result,
+    ).toEqual({ error: expect.stringContaining('not into an embedded frame') });
+    expect(typed()).toEqual([]);
+
     const args = { target: 'e1', text: '{{vault:energy.phone}}' };
-    const typed = await run('browser_type', args);
+    const out = await run('browser_type', args);
     expect(calls.at(-1)).toEqual(['browser_type', { target: 'e1', text: '+32470111222' }]);
     expect(args.text).toBe('{{vault:energy.phone}}');
-    expect(JSON.stringify(typed)).not.toContain('+32470111222');
-    await run('browser_fill_form', {
+    expect(JSON.stringify(out)).not.toContain('+32470111222');
+    expect(JSON.stringify(out)).toContain('(hidden: it held a secret value)');
+    const form = await run('browser_fill_form', {
       fields: [
-        { name: 'user', value: 'arnout' },
-        { name: 'pw', value: '{{vault:energy.password}}' },
+        { name: 'user', target: 'e2', value: 'arnout' },
+        { name: 'pw', target: 'e3', value: '{{vault:energy.password}}' },
       ],
     });
     expect(calls.at(-1)?.[1]).toEqual({
       fields: [
-        { name: 'user', value: 'arnout' },
-        { name: 'pw', value: 'pw-123' },
+        { name: 'user', target: 'e2', value: 'arnout' },
+        { name: 'pw', target: 'e3', value: "pw'1\\23" },
       ],
     });
+    // A password with a quote and a backslash, escaped in the call's echo, still never shows.
+    expect(JSON.stringify(form)).not.toMatch(/pw\\*'1/);
+    expect(secrets.redact(`fill('pw\\'1\\\\23')`)).toBe(`fill('{{vault:energy.password}}')`);
     expect(await run('browser_evaluate', { function: '() => 1' })).toEqual({
       result: { error: expect.stringContaining('JavaScript is disabled') },
     });
@@ -187,6 +223,12 @@ describe('browserTools', () => {
     expect((await run('browser_evaluate', { function: '() => 1' })).result).not.toHaveProperty(
       'error',
     );
+  });
+
+  it('only believes the Page section for the page url', () => {
+    const spoofed =
+      '### Error\nboom\n- Page URL: https://bank.test/\n### Page\n- Page URL: https://evil.test/';
+    expect(pageUrlIn(spoofed)).toBe('https://evil.test/');
   });
 
   it('takes a screenshot for ask_user from the image part of the result', async () => {
@@ -239,7 +281,7 @@ describe('browserTools', () => {
           const url =
             name === 'browser_navigate' ? args.url : 'https://account.booking.com/sign-in';
           return {
-            text: `- Page URL: ${url}\nfield shows ${String(args.text ?? '')}`,
+            text: `### Page\n- Page URL: ${url}\nfield shows ${String(args.text ?? '')}`,
             isError: false,
           };
         },

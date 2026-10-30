@@ -13,6 +13,9 @@ import {
   type RunNotionAccess,
   type RunToolAccess,
   type TaskStatus,
+  VaultEntry,
+  vaultApprovalPrompt,
+  vaultRuleEntry,
 } from '@dodo/core';
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -313,6 +316,7 @@ export async function requestInput(
   run: Run,
   req: Omit<RequestInputRequest, 'runId'>,
 ): Promise<{ messageId: string }> {
+  req = await checkedVaultCard(deps.db, req);
   const now = (deps.now ?? Date.now)();
   const sessionPath = await saveSession(deps, run.id, req.session);
   const messageRef = deps.db.collection(paths.messages(run.taskId)).doc();
@@ -388,6 +392,27 @@ export async function requestInput(
   await deps.ackTelegram?.(run.taskId);
   return { messageId: messageRef.id };
 }
+
+/**
+ * A yes on a card whose rule is `Vault(<id>)` lets the task use that entry, so the card must
+ * say so: an approval, naming the entry and its sites the way the entry itself does, whatever
+ * text the run sent. Any other mention of the vault in a rule is refused.
+ */
+export async function checkedVaultCard<T extends Omit<RequestInputRequest, 'runId'>>(
+  db: Firestore,
+  req: T,
+): Promise<T> {
+  if (!req.suggestedRule || !/^\s*Vault\b/i.test(req.suggestedRule)) return req;
+  const entryId = vaultRuleEntry(req.suggestedRule);
+  const snap = entryId ? await db.doc(paths.vaultEntry(entryId)).get() : undefined;
+  if (!snap?.exists || req.kind !== 'approval') {
+    throw new RequestInputError('Vault access is asked with request_vault_access only');
+  }
+  const head = vaultApprovalPrompt(VaultEntry.parse({ id: snap.id, ...snap.data() }));
+  return req.prompt.startsWith(head) ? req : { ...req, prompt: `${head} ${req.prompt}` };
+}
+
+export class RequestInputError extends Error {}
 
 const IMAGE_EXT: Record<string, string> = {
   'image/png': 'png',

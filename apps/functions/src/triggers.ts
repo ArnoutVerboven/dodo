@@ -1,6 +1,7 @@
 import {
   type Device,
   type GlobalSettings,
+  isApproved,
   isLocalModel,
   type Project,
   paths,
@@ -268,7 +269,7 @@ export async function onInputAnswered(
   }
 
   if (after.input?.topUp) {
-    if (!/^(y|yes|approve|ok)/i.test(answer.value)) {
+    if (!isApproved(answer.value)) {
       // Not `todo`: that starts a run, which would hit the same budget and ask again.
       await db.doc(paths.task(taskId)).update({
         status: 'needs_input',

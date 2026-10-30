@@ -112,6 +112,7 @@ export async function vaultGranted(db: Firestore, run: Run, entryId: string): Pr
     .where('input.suggestedRule', '==', rule)
     .get();
   return approvals.docs.some((d) => {
+    if (d.get('input.kind') !== 'approval') return false;
     const value = d.get('input.answer.value');
     return typeof value === 'string' && isApproved(value);
   });

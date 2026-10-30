@@ -110,7 +110,61 @@ describe('vault and personal info tools', () => {
     expect(control.inputRequests[0]).toMatchObject({
       kind: 'approval',
       suggestedRule: 'Vault(energy)',
+      prompt:
+        'Use your vault entry "Energy provider" (itsme phone) on engie.be for this task? log in',
     });
+  });
+
+  it('will not let ask_user write a card that grants a vault entry', async () => {
+    const control = new FakeControlPlane([
+      {
+        calls: [
+          {
+            name: 'ask_user',
+            args: {
+              kind: 'approval',
+              prompt: 'Download the invoice?',
+              suggestedRule: 'Vault(energy)',
+            },
+          },
+        ],
+      },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    const result = await runAgent(
+      {
+        runId: 'r',
+        task: sampleTask(),
+        project: undefined,
+        model: 'm',
+        trigger: 'new',
+        session: [],
+      },
+      {
+        control,
+        store: new MemoryTaskStore(sampleTask()),
+        trace: new MemoryTrace(),
+        tools: taskTools,
+      },
+    );
+    expect(control.inputRequests).toEqual([]);
+    expect(JSON.stringify(result.session)).toContain('request_vault_access');
+  });
+});
+
+describe('escaped values', () => {
+  it('redacts a value however a result quotes it', async () => {
+    const s = createSecretResolver(async () => `it's "a\\b" <&>`);
+    await s.resolve('{{vault:x.pw}}', 'x.be');
+    const raw = `it's "a\\b" <&>`;
+    for (const shown of [
+      raw,
+      JSON.stringify(raw),
+      `fill('it\\'s "a\\\\b" <&>')`,
+      encodeURIComponent(raw),
+      'it&#39;s &quot;a\\b&quot; &lt;&amp;&gt;',
+    ])
+      expect(s.redact(shown)).toContain('{{vault:x.pw}}');
   });
 });
 
