@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
 import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
-import { requestBrowserTool, taskTools, toDeclarations } from './tools.js';
+import { requestBrowserTool, requestDeviceTool, taskTools, toDeclarations } from './tools.js';
 
 function setup(script: ConstructorParameters<typeof FakeControlPlane>[0]) {
   const control = new FakeControlPlane(script);
@@ -132,6 +132,23 @@ describe('runAgent', () => {
     const result = await run({}, { inputHoldMs: 5000, heartbeatMs: 10 });
     expect(result.reason).toBe('interrupted');
     expect(control.finishes[0]?.reason).toBe('interrupted');
+  });
+
+  it("moves to the user's Mac when the agent asks for it", async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'request_device', args: { reason: 'itsme login' } }] },
+    ]);
+    const browserTool = { ...taskTools[0], name: 'browser_navigate' };
+    const result = await run(
+      {},
+      { tools: [...taskTools, browserTool, requestDeviceTool], browserKind: 'headless' },
+    );
+    expect(result.reason).toBe('needs_device');
+    expect(control.finishes[0]?.reason).toBe('needs_device');
+    expect(control.finishes[0]?.session.at(-1)?.parts[0]?.functionResponse?.name).toBe(
+      'request_device',
+    );
+    expect(control.requests[0]?.systemInstruction).toContain('request_device');
   });
 
   it('restarts with a browser when the agent asks for one', async () => {

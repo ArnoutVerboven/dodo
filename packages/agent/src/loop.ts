@@ -82,6 +82,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     browser: hasBrowser ? (opts.browserKind ?? 'window') : undefined,
     holdMinutes: hasBrowser && opts.inputHoldMs ? Math.round(opts.inputHoldMs / 60_000) : undefined,
     canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
+    canRequestDevice: tools.some((t) => t.name === 'request_device'),
     github: tools.some((t) => t.name === 'open_pull_request')
       ? repoFor(input.task, input.project)
       : undefined,
@@ -448,6 +449,17 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
                 }
                 pendingInput = { ...outcome.askUser, session };
                 finishWith('waiting_input');
+                break;
+              }
+              if ('needsDevice' in outcome) {
+                responses.push(functionResponse(fc, result));
+                session.push({ role: 'user', parts: responses });
+                await trace.emit({
+                  type: 'tool_result',
+                  summary: "request_device: moving to the user's Mac",
+                  data: { name: fc.name },
+                });
+                finishWith('needs_device');
                 break;
               }
               if ('needsBrowser' in outcome) {

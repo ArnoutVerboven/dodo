@@ -48,9 +48,20 @@ export const agentHeadlessHold = (holdMinutes: number | string) =>
 export const AGENT_HEADLESS_NO_HOLD =
   'The run ends when you ask the user something; the next run starts on a blank page with the logins restored (open the site again), so finish a login in one go where you can.';
 
-/** Browser section: headless Chromium in the cloud. `hold` is one of the two texts above. */
-export const agentBrowserHeadless = (hold: string) =>
-  `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.`;
+/** Headless browser: a site that needs the user's own browser, when request_device can move the run. */
+export const AGENT_HEADLESS_REQUEST_DEVICE =
+  "A site that only works in the user's own browser (an itsme login, a passkey, a device-bound login) is not for this browser: the itsme app rejects this browser's QR codes and requests, so do not ask the user to scan one here. Call request_device the moment such a page appears; the run continues on their Mac in a real Chrome window.";
+
+/** Headless browser: a site that needs the user's own browser, without request_device. */
+export const AGENT_HEADLESS_DEVICE_BLOCKED =
+  "A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.";
+
+/**
+ * Browser section: headless Chromium in the cloud. `hold` is one of the two hold texts above,
+ * `deviceOnly` one of the two device texts.
+ */
+export const agentBrowserHeadless = (hold: string, deviceOnly: string) =>
+  `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} ${deviceOnly}`;
 
 /**
  * Logins approved in a phone app (itsme and the like). The user answers from that same phone
@@ -241,9 +252,9 @@ export const PROMPTS: PromptInfo[] = [
     group: 'Task agent',
     name: 'Browser: headless in the cloud',
     purpose:
-      'Appended when the run has the remote headless Chromium. The middle sentence depends on whether the page is held open while a question waits.',
+      'Appended when the run has the remote headless Chromium. The hold sentence depends on whether the page is held open while a question waits; the last one on whether request_device can move the run to your Mac.',
     kind: 'system section',
-    text: `${agentBrowserHeadless(agentHeadlessHold('{holdMinutes}'))}\n\nWithout a hold, the middle sentence is:\n${AGENT_HEADLESS_NO_HOLD}`,
+    text: `${agentBrowserHeadless(agentHeadlessHold('{holdMinutes}'), AGENT_HEADLESS_REQUEST_DEVICE)}\n\nWithout a hold, the hold sentence is:\n${AGENT_HEADLESS_NO_HOLD}\n\nWithout request_device, the last sentence is:\n${AGENT_HEADLESS_DEVICE_BLOCKED}`,
   },
   {
     id: 'agent-phone-login',

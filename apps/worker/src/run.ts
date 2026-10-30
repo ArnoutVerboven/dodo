@@ -16,6 +16,7 @@ import {
   type McpClient,
   mcpTools,
   requestBrowserTool,
+  requestDeviceTool,
   runAgent,
   type ToolDef,
   takeScreenshot,
@@ -185,6 +186,8 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...(browser ? await browserTools(browser) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
     ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),
+    // A remote browser run: some logins only work from the user's own Mac.
+    ...(headless ? [requestDeviceTool] : []),
   ];
   const tools = [...filterBuiltins(builtins, started.tools), ...mcp.tools];
   if (started.tools?.toolsets.length)

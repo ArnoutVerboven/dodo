@@ -1,6 +1,8 @@
 import {
   AGENT_BROWSER_WINDOW,
+  AGENT_HEADLESS_DEVICE_BLOCKED,
   AGENT_HEADLESS_NO_HOLD,
+  AGENT_HEADLESS_REQUEST_DEVICE,
   AGENT_REQUEST_BROWSER,
   AGENT_SYSTEM,
   agentBrowserHeadless,
@@ -21,6 +23,8 @@ export interface PromptFeatures {
   holdMinutes?: number;
   /** No browser now, but request_browser can get one. */
   canRequestBrowser?: boolean;
+  /** A remote run that request_device can move to the user's Mac. */
+  canRequestDevice?: boolean;
   github?: string;
 }
 
@@ -36,7 +40,10 @@ export function systemPrompt(
     const hold = features.holdMinutes
       ? agentHeadlessHold(features.holdMinutes)
       : AGENT_HEADLESS_NO_HOLD;
-    lines.push('', agentBrowserHeadless(hold), PHONE_APP_LOGIN);
+    const deviceOnly = features.canRequestDevice
+      ? AGENT_HEADLESS_REQUEST_DEVICE
+      : AGENT_HEADLESS_DEVICE_BLOCKED;
+    lines.push('', agentBrowserHeadless(hold, deviceOnly), PHONE_APP_LOGIN);
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github) lines.push('', agentRepository(features.github));
