@@ -139,7 +139,7 @@ service cloud.firestore {
       // The daemon reports presence and its folders on its own document; the owner decides the rest.
       allow update: if isDevice(deviceId)
         && resource.data.state == 'approved'
-        && onlyChanges(['lastSeen', 'version', 'protocol', 'folders', 'browser', 'currentRunId', 'updatedAt']);
+        && onlyChanges(['lastSeen', 'version', 'protocol', 'folders', 'browser', 'localModel', 'currentRunId', 'updatedAt']);
     }
 
     match /runs/{runId} {

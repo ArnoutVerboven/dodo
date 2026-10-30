@@ -11,7 +11,7 @@ import {
   headlessRestartedNote,
   type Part,
   type RunEndReason,
-  repoFor,
+  reposFor,
   steerTurn,
   summaryText,
 } from '@dodo/core';
@@ -91,7 +91,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
     canRequestDevice: tools.some((t) => t.name === 'request_device'),
     github: tools.some((t) => t.name === 'open_pull_request')
-      ? repoFor(input.task, input.project)
+      ? reposFor(input.task, input.project)
       : undefined,
     google: tools.some((t) => GOOGLE_TOOLS.includes(t.name as (typeof GOOGLE_TOOLS)[number]))
       ? (opts.googleFolder ?? DEFAULT_DRIVE_FOLDER)

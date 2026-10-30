@@ -14,6 +14,7 @@ import {
   EMAIL_CODE_LOGIN,
   PHONE_APP_LOGIN,
   type Project,
+  repoDir,
   type Task,
 } from '@dodo/core';
 
@@ -28,7 +29,8 @@ export interface PromptFeatures {
   canRequestBrowser?: boolean;
   /** A remote run that request_device can move to the user's Mac. */
   canRequestDevice?: boolean;
-  github?: string;
+  /** The run's GitHub repos, checked out in the task folder (subfolders when several). */
+  github?: string[];
   /** The run has Google tools; the Drive folder saved files go to. */
   google?: string;
   /** The run has Notion tools; the workspace they reach. */
@@ -53,7 +55,14 @@ export function systemPrompt(
     lines.push('', agentBrowserHeadless(hold, deviceOnly), EMAIL_CODE_LOGIN, PHONE_APP_LOGIN);
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
-  if (features.github) lines.push('', agentRepository(features.github));
+  if (features.github?.length)
+    lines.push(
+      '',
+      agentRepository(
+        features.github,
+        features.github.map((r) => repoDir(r, features.github ?? [])),
+      ),
+    );
   if (features.google) lines.push('', agentGoogle(features.google));
   if (features.notion) lines.push('', agentNotion(features.notion.workspace));
   if (project) {

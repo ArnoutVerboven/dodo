@@ -29,6 +29,7 @@ import {
   Loader2,
   type LucideIcon,
   Minimize2,
+  Minus,
   Paperclip,
   Pencil,
   Plus,
@@ -60,6 +61,7 @@ import {
 } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import { Dropdown, type DropdownOption } from '@/components/ui/dropdown';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Meter } from '@/components/ui/progress';
 import { useAuth } from '@/lib/auth';
@@ -226,8 +228,8 @@ function PropertyBar({ task }: { task: Task }) {
         muted={!task.projectId}
         value={task.projectId ?? ''}
         options={[
-          { value: '', label: 'No project' },
-          ...projects.map((p) => ({ value: p.id, label: p.name })),
+          { value: '', label: 'No project', icon: Minus, tone: 'text-muted-foreground' },
+          ...projects.map((p) => ({ value: p.id, label: p.name, icon: Folder })),
         ]}
         onChange={(v) => updateTask(task.id, { projectId: v || undefined })}
       />
@@ -239,7 +241,7 @@ function PropertyBar({ task }: { task: Task }) {
 const chip =
   'relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition hover:bg-accent focus-within:ring-2 focus-within:ring-primary/30';
 
-/** A chip that opens a native select: looks light, stays accessible and works on mobile. */
+/** A chip that opens the app's own menu: light in the bar, the full list when clicked. */
 function SelectChip({
   label,
   icon: Icon,
@@ -256,26 +258,25 @@ function SelectChip({
   text: string;
   muted?: boolean;
   value: string;
-  options: { value: string; label: string }[];
+  options: DropdownOption[];
   onChange: (value: string) => void;
 }) {
   return (
-    <span className={cn(chip, muted ? 'text-muted-foreground' : 'bg-muted/60')} title={label}>
+    <Dropdown
+      ariaLabel={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+      searchable={options.length > 8}
+      triggerClassName={cn(
+        chip,
+        'outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+        muted ? 'text-muted-foreground' : 'bg-muted/60',
+      )}
+    >
       <Icon className={cn('h-3.5 w-3.5', tone)} />
       <span>{text}</span>
-      <select
-        aria-label={label}
-        className="absolute inset-0 cursor-pointer opacity-0"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </span>
+    </Dropdown>
   );
 }
 
@@ -1160,6 +1161,8 @@ function AiCard({ task }: { task: Task }) {
   }, [task.ai]);
   const project = projects.find((p) => p.id === task.projectId);
   const resolved = resolveAiConfig(task, project, settings);
+  // What applies where the task sets nothing: the project's defaults, then the global ones.
+  const inherited = resolveAiConfig({ ai: { enabled: false } }, project, settings);
   const { enabled: _a, ...draftRest } = draft;
   const { enabled: _b, ...savedRest } = task.ai;
   const dirty = JSON.stringify(draftRest) !== JSON.stringify(savedRest);
@@ -1203,7 +1206,12 @@ function AiCard({ task }: { task: Task }) {
             <ChevronRight className="h-3.5 w-3.5 transition group-open/adv:rotate-90" />
           </summary>
           <div className="mt-3 space-y-3">
-            <AiConfigFields value={draft} onChange={setDraft} showEnabled={false} />
+            <AiConfigFields
+              value={draft}
+              onChange={setDraft}
+              showEnabled={false}
+              inherited={inherited}
+            />
             {dirty && (
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setDraft(task.ai)}>

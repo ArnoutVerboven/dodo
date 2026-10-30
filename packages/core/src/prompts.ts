@@ -82,9 +82,15 @@ export const PHONE_APP_LOGIN =
 export const AGENT_REQUEST_BROWSER =
   'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation.';
 
-/** Repository section, when the task has a GitHub checkout. */
-export const agentRepository = (repo: string) =>
-  `Repository: ${repo} is checked out in the task folder. Work on a new branch (git checkout -b dodo/<short-name>), commit with bash, and publish with open_pull_request (or push_branch to update a branch you already opened a pull request for). Both ask the user first; plain git push has no credentials. Never push to the default branch. Put the pull request link in the Summary.`;
+/** Repository section, when the task has a GitHub checkout (one repo, or several in subfolders). */
+export const agentRepository = (repo: string | string[], dirs?: string[]) => {
+  const repos = Array.isArray(repo) ? repo : [repo];
+  const where =
+    repos.length > 1
+      ? `Repositories: ${repos.map((r, i) => `${r} in ${dirs?.[i] ?? r.split('/')[1]}/`).join(', ')} are checked out in the task folder. Pass repo to push_branch and open_pull_request to say which one.`
+      : `Repository: ${repos[0]} is checked out in the task folder.`;
+  return `${where} Work on a new branch (git checkout -b dodo/<short-name>), commit with bash, and publish with open_pull_request (or push_branch to update a branch you already opened a pull request for). Both ask the user first; plain git push has no credentials. Never push to the default branch. Put the pull request link in the Summary.`;
+};
 
 /** Google section, when the run has the Gmail, Calendar or Drive tools. */
 export const agentGoogle = (folder: string) =>

@@ -1,6 +1,6 @@
 # A local model on your Mac
 
-A task (or project) with **Model: Local model (your Mac, free)** runs on your Mac and talks to a model served there, instead of Gemini through the gateway. Nothing is billed and the conversation never goes to a model in the cloud. The daemon can start the model server only when a request comes in and stop it when idle (`dodo model set --mlx <repo>`), or you run a server yourself and `dodo model set <url>` tells the daemon where it is.
+A task (or project) with the local model as **Model** (listed by the name of the model your Mac serves, with a laptop mark for local only) runs on your Mac and talks to a model served there, instead of Gemini through the gateway. Nothing is billed and the conversation never goes to a model in the cloud. The daemon can start the model server only when a request comes in and stop it when idle (`dodo model set --mlx <repo>`), or you run a server yourself and `dodo model set <url>` tells the daemon where it is.
 
 ## How it works
 
@@ -21,7 +21,7 @@ One command, in the dodo checkout:
 git pull && pnpm mac setup
 ```
 
-`setup` finds the model in the cache, installs mlx-lm when it is missing (with `uv`, `pipx` or `pip3`), sets the model up to start on demand, and restarts the daemon. Pairing and folders stay as they are. Then, in the web app, set **Model** to **Local model (your Mac, free)** on a task, or as a project default under Projects. `pnpm dodo model test` loads it once and checks that it calls tools.
+`setup` finds the model in the cache, installs mlx-lm when it is missing (with `uv`, `pipx` or `pip3`), sets the model up to start on demand, and restarts the daemon. Pairing and folders stay as they are. Then, in the web app, set **Model** to the local model (its name, with the laptop mark) on a task, or as a project default under Projects. `pnpm dodo model test` loads it once and checks that it calls tools.
 
 To pick another model later: `pnpm dodo model set --mlx <repo>`. `pnpm dodo setup --no-model` skips the model.
 

@@ -89,4 +89,21 @@ describe('github tools', () => {
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${Buffer.from('x-access-token:tok').toString('base64')}`,
     );
   });
+
+  it('with several repos, name the repo and push from its subfolder', async () => {
+    const { access, store, bare } = await setup();
+    const root = path.dirname(bare);
+    const other: GitHubAccess = { ...access, repo: 'me/web', dir: 'web', remoteUrl: bare };
+    const tools = githubTools([{ ...access, dir: 'work' }, other]);
+    const push = findTool(tools, 'push_branch') as ToolDef;
+    const claim = push.policy?.({ repo: 'me/web', branch: 'x' }, { store, workdir: root });
+    expect(claim).toMatchObject({ key: 'push:me/web' });
+    const missing = await push.execute(
+      { repo: 'me/web', branch: 'dodo/x' },
+      { store, workdir: root },
+    );
+    expect(missing.result.error).toMatch(/Not a git checkout/);
+    const ok = await push.execute({ repo: 'me/app', branch: 'dodo/y' }, { store, workdir: root });
+    expect(ok.result).toMatchObject({ ok: true, pushed: 'me/app@dodo/y' });
+  });
 });

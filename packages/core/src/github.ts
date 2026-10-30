@@ -55,10 +55,14 @@ export const GitHubConnection = z.object({
 });
 export type GitHubConnection = z.infer<typeof GitHubConnection>;
 
-/** A run asks for a token for its own repo. `write` needs an approved push or pull request. */
+/**
+ * A run asks for a token for one of its own repos (the first when `repo` is absent). `write`
+ * needs an approved push or pull request.
+ */
 export const GitHubTokenRequest = z.object({
   runId: z.string(),
   access: z.enum(['read', 'write']),
+  repo: z.string().optional(),
 });
 export type GitHubTokenRequest = z.infer<typeof GitHubTokenRequest>;
 
@@ -83,6 +87,8 @@ export const BranchName = z
 
 export const GitHubOpenPrRequest = z.object({
   runId: z.string(),
+  /** One of the run's repos; the first when absent. */
+  repo: z.string().optional(),
   head: BranchName,
   base: BranchName.optional(),
   title: z.string().min(1).max(256),
@@ -94,14 +100,46 @@ export type GitHubOpenPrRequest = z.input<typeof GitHubOpenPrRequest>;
 /** The permission rules: `GitHub(push:owner/name)` and `GitHub(pr:owner/name)`. */
 export const githubRule = (action: 'push' | 'pr', repo: string) => `GitHub(${action}:${repo})`;
 
-/** The repo a run works on: the task's own, else its project's. Empty or malformed is none. */
+/** At most this many repos are checked out for one run. */
+export const MAX_REPOS = 5;
+
+/** The repos one settings layer names: `repos`, else the older single `repo`. Cleaned, deduped. */
+export function repoList(ai: { repo?: string; repos?: string[] } | undefined): string[] {
+  const raw = ai?.repos?.length ? ai.repos : ai?.repo ? [ai.repo] : [];
+  const out: string[] = [];
+  for (const r of raw) {
+    const name = r.trim().replace(/^https:\/\/github\.com\/|\.git$/g, '');
+    if (!RepoName.safeParse(name).success) continue;
+    if (out.some((o) => o.toLowerCase() === name.toLowerCase())) continue;
+    out.push(name);
+  }
+  return out.slice(0, MAX_REPOS);
+}
+
+/** The repos a run works on: the task's own, else its project's. Malformed names are dropped. */
+export function reposFor(
+  task: { ai: { repo?: string; repos?: string[] } },
+  project: { defaults: { repo?: string; repos?: string[] } } | undefined,
+): string[] {
+  const own = repoList(task.ai);
+  return own.length ? own : repoList(project?.defaults);
+}
+
+/** The first repo a run works on, if any. */
 export function repoFor(
-  task: { ai: { repo?: string } },
-  project: { defaults: { repo?: string } } | undefined,
+  task: { ai: { repo?: string; repos?: string[] } },
+  project: { defaults: { repo?: string; repos?: string[] } } | undefined,
 ): string | undefined {
-  const raw = (task.ai.repo?.trim() || project?.defaults.repo?.trim() || '').replace(
-    /^https:\/\/github\.com\/|\.git$/g,
-    '',
-  );
-  return RepoName.safeParse(raw).success ? raw : undefined;
+  return reposFor(task, project)[0];
+}
+
+/**
+ * Where a repo is checked out, relative to the task folder: the folder itself for a single repo,
+ * else a subfolder named after the repo (`owner-name` when two repos share a name).
+ */
+export function repoDir(repo: string, repos: string[]): string {
+  if (repos.length <= 1) return '.';
+  const name = repo.split('/')[1] ?? repo;
+  const clash = repos.filter((r) => (r.split('/')[1] ?? r).toLowerCase() === name.toLowerCase());
+  return clash.length > 1 ? repo.replace('/', '-') : name;
 }

@@ -13,7 +13,9 @@ The app asks for: **Contents** read/write (clone, push branches), **Pull request
 
 ## Repos per project and per task
 
-The **Repo** field in a project's default AI settings or a task's AI settings picks from your connected repos (or takes any `owner/name`; public repos work without the app). The task's repo wins over the project's.
+The **Repos** field in a project's default AI settings or a task's AI settings picks one or more of your connected repos (or takes any `owner/name` you type; public repos work without the app). A task's repos replace the project's as a whole; with none of its own, the field shows the project's. Stored as `ai.repos` (`defaults.repos` on a project); the older single `repo` still reads as a list of one. At most five per run.
+
+With one repo, it is checked out in the task folder itself. With several, each goes in a subfolder named after it (`owner-name` when two share a name), and `push_branch` and `open_pull_request` take a `repo` argument.
 
 ## What a run gets
 
@@ -27,10 +29,10 @@ The **Repo** field in a project's default AI settings or a task's AI settings pi
 
 ## Code
 
-- `packages/core/src/github.ts`: shared types, `repoFor`, `githubRule`.
+- `packages/core/src/github.ts`: shared types, `reposFor`, `repoDir`, `githubRule`.
 - `apps/functions/src/github.ts`: manifest flow, install callback, repo sync, run tokens, pull requests (`githubConnect`, `githubCallback`, `githubSync`, `githubDisconnect`, `githubToken`, `githubOpenPr`).
 - `packages/agent/src/github-tools.ts`: `push_branch`, `open_pull_request`.
 - `apps/worker/src/run.ts`: checkout with the read token.
 - `apps/web/src/components/GitHubSettings.tsx`: the Settings card.
 
-Later: more than one repo per task, CI status and review comments as input for the agent, GitHub Issues as a task connector.
+Later: CI status and review comments as input for the agent, GitHub Issues as a task connector.

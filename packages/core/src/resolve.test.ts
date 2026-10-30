@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { repoDir, repoList, reposFor } from './github.js';
 import { eur, InputRequest } from './model.js';
 import { resolveAiConfig } from './resolve.js';
 
@@ -34,6 +35,30 @@ describe('resolveAiConfig', () => {
     });
     expect(r.model).toBe('auto');
     expect(r.device).toBe('auto');
+  });
+});
+
+describe('repos', () => {
+  it('read the older single repo as a list, clean and dedupe', () => {
+    expect(repoList({ repo: 'me/app' })).toEqual(['me/app']);
+    expect(
+      repoList({ repos: ['https://github.com/me/app.git', 'Me/App', 'not a repo', 'me/web'] }),
+    ).toEqual(['me/app', 'me/web']);
+    expect(repoList({ repo: 'me/old', repos: ['me/new'] })).toEqual(['me/new']);
+  });
+
+  it('take the task repos over the project ones, as a whole', () => {
+    const project = { defaults: { repos: ['me/a', 'me/b'] } };
+    expect(reposFor({ ai: {} }, project)).toEqual(['me/a', 'me/b']);
+    expect(reposFor({ ai: { repos: ['me/c'] } }, project)).toEqual(['me/c']);
+    const r = resolveAiConfig({ ai: { enabled: true } }, project, settings);
+    expect(r.repos).toEqual(['me/a', 'me/b']);
+  });
+
+  it('check one repo out in the task folder, several in subfolders', () => {
+    expect(repoDir('me/app', ['me/app'])).toBe('.');
+    expect(repoDir('me/app', ['me/app', 'me/web'])).toBe('app');
+    expect(repoDir('me/app', ['me/app', 'you/app'])).toBe('me-app');
   });
 });
 
