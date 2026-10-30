@@ -229,8 +229,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       tools,
       policy,
       workdir,
-      secrets: createSecretResolver((entryId, field, host) =>
-        control.resolveVault(entryId, field, host),
+      secrets: createSecretResolver(
+        (entryId, field, host) => control.resolveVault(entryId, field, host),
+        (messageId) => control.resolveAnswer(messageId),
       ),
       screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
       browserKind: headless ? 'headless' : 'window',

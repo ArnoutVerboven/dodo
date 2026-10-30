@@ -1,4 +1,4 @@
-import { type ImageUpload, vaultRefs } from '@dodo/core';
+import { hasSecretRefs, type ImageUpload } from '@dodo/core';
 import { z } from 'zod';
 import { connectMcp } from './mcp.js';
 import { define, type PolicyClaim, type ToolContext, type ToolDef } from './tools.js';
@@ -208,7 +208,7 @@ export async function resolveVault(
       : Array.isArray(args.fields)
         ? (args.fields as Array<Record<string, unknown>>).map((f) => String(f?.value ?? ''))
         : [];
-  if (!texts.some((t) => vaultRefs(t).length)) return { args, injected: false };
+  if (!texts.some(hasSecretRefs)) return { args, injected: false };
   if (!ctx.secrets) return { error: 'The vault is not available in this run.' };
   if (!host) return { error: 'Open the login page first; vault values are typed per site.' };
   try {
@@ -221,7 +221,7 @@ export async function resolveVault(
     }
     const fields = await Promise.all(
       (args.fields as Array<Record<string, unknown>>).map(async (f) =>
-        typeof f?.value === 'string' && vaultRefs(f.value).length
+        typeof f?.value === 'string' && hasSecretRefs(f.value)
           ? { ...f, value: await secrets.resolve(f.value, host) }
           : f,
       ),

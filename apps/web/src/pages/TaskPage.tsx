@@ -60,6 +60,7 @@ import {
   addFileArtifact,
   addLinkArtifact,
   answerInput,
+  answerSecretInput,
   compactTask,
   deleteArtifact,
   deleteTask,
@@ -857,6 +858,7 @@ function InputRequestView({
   const req = message.input;
   const [reopened, setReopened] = useState(false);
   const [text, setText] = useState('');
+  const [secretError, setSecretError] = useState<string>();
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
   // A vault entry is approved per task: the server ignores project and global rules for it.
   const isVault = req?.suggestedRule?.startsWith('Vault(') ?? false;
@@ -868,6 +870,13 @@ function InputRequestView({
   const [showRule, setShowRule] = useState(false);
   if (!req) return null;
   if (req.answer) {
+    if (req.secret) {
+      return (
+        <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
+          Answered with a code (hidden; it went straight to the browser).
+        </p>
+      );
+    }
     return (
       <p className="mt-2 rounded-md bg-muted px-3 py-2 text-sm">
         Answered: <b>{req.answer.value}</b>
@@ -907,6 +916,14 @@ function InputRequestView({
     answerInput(taskId, message.id, req, value, alwaysAllow);
   const sendText = () => {
     if (!text.trim()) return;
+    if (req.secret) {
+      setSecretError(undefined);
+      answerSecretInput(taskId, message.id, text.trim()).then(
+        () => setText(''),
+        (err: Error) => setSecretError(err.message || 'Could not send the code'),
+      );
+      return;
+    }
     void answer(req.kind === 'approval' ? `deny: ${text.trim()}` : text.trim());
   };
   return (
@@ -1031,7 +1048,21 @@ function InputRequestView({
         <div className="flex gap-2">
           <Input
             className="h-8"
-            placeholder={req.kind === 'approval' ? 'Deny and tell the agent why…' : 'Your answer…'}
+            placeholder={
+              req.kind === 'approval'
+                ? 'Deny and tell the agent why…'
+                : req.secret
+                  ? 'The code (goes straight to the browser)'
+                  : 'Your answer…'
+            }
+            {...(req.secret
+              ? {
+                  type: 'password',
+                  autoComplete: 'one-time-code',
+                  inputMode: 'text' as const,
+                  spellCheck: false,
+                }
+              : {})}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -1045,6 +1076,12 @@ function InputRequestView({
             Send
           </Button>
         </div>
+      )}
+      {req.secret && (
+        <p className="text-xs text-muted-foreground">
+          {secretError ??
+            'The agent never sees this code: it is typed into the page for you and kept out of the thread.'}
+        </p>
       )}
     </div>
   );

@@ -107,6 +107,16 @@ export async function deleteBrowserState(
   await deps.storage.bucket().file(browserStatePath(taskId)).delete({ ignoreNotFound: true });
 }
 
+/** The task was just closed (done, cancelled) or deleted. */
+export function taskClosing(
+  before: { status?: string } | undefined,
+  after: { status?: string } | undefined,
+): boolean {
+  const closed = (s: string | undefined) => s === 'done' || s === 'cancelled';
+  const gone = !after && !!before;
+  return gone || (closed(after?.status) && !closed(before?.status));
+}
+
 /** A task that is closed or gone loses its logins. */
 export async function onTaskClosed(
   deps: Pick<BrowserStateDeps, 'storage' | 'log'>,
@@ -114,9 +124,7 @@ export async function onTaskClosed(
   before: { status?: string } | undefined,
   after: { status?: string } | undefined,
 ): Promise<void> {
-  const closed = (s: string | undefined) => s === 'done' || s === 'cancelled';
-  const gone = !after && !!before;
-  if (!gone && !(closed(after?.status) && !closed(before?.status))) return;
+  if (!taskClosing(before, after)) return;
   await deleteBrowserState(deps, taskId).catch((err) =>
     deps.log?.('browser state delete failed', { taskId, err: String(err) }),
   );

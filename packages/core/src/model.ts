@@ -170,6 +170,11 @@ export const InputRequest = z.object({
   options: z.array(z.string()).optional(),
   /** For approvals: the rule that "Always allow" would add, e.g. `Bash(git push:*)`. */
   suggestedRule: z.string().optional(),
+  /**
+   * A text question whose answer is a secret (an MFA code): the answer is kept server-side and
+   * `answer.value` is only its reference, `{{answer:<messageId>}}`.
+   */
+  secret: z.boolean().optional(),
   costEstimate: MicroEur.optional(),
   /** For a budget ask: what approving adds to the task's budget. */
   topUp: MicroEur.optional(),

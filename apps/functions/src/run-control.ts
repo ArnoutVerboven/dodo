@@ -311,6 +311,7 @@ export async function requestInput(
         prompt: req.prompt,
         options: req.options,
         suggestedRule: req.suggestedRule,
+        secret: req.secret && req.kind === 'text' ? true : undefined,
         costEstimate: req.costEstimate,
         image: image && { storagePath: image.storagePath, mimeType: image.mimeType },
       }),
@@ -359,6 +360,7 @@ export async function requestInput(
       kind: req.kind,
       options: req.options,
       suggestedRule: req.suggestedRule,
+      secret: req.secret && req.kind === 'text' ? true : undefined,
     }),
     image: image && { data: image.data, mimeType: image.mimeType },
   });

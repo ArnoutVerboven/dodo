@@ -311,6 +311,14 @@ export async function answerInput(
   });
 }
 
+/**
+ * Answers a secret question (an MFA code) through the control plane: the value is stored
+ * apart and the thread only gets a reference, so it never shows up there or to the model.
+ */
+export async function answerSecretInput(taskId: string, messageId: string, value: string) {
+  await httpsCallable(functions, 'answerSecret')({ taskId, messageId, value });
+}
+
 /** Takes back an "Always allow" answer: the rule leaves the task, project or global settings. */
 export async function removeAllowRule(
   where: { scope: 'global' } | { scope: 'project' | 'task'; id: string },

@@ -139,6 +139,8 @@ export const RequestInputRequest = z.object({
   prompt: z.string().min(1),
   options: z.array(z.string()).optional(),
   suggestedRule: z.string().optional(),
+  /** The answer is a secret (an MFA code): it reaches the browser, never the model. */
+  secret: z.boolean().optional(),
   costEstimate: MicroEur.optional(),
   /** A screenshot to show with the question (in the app and as a Telegram photo). */
   image: ImageUpload.optional(),

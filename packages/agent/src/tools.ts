@@ -40,6 +40,8 @@ export type ToolOutcome =
         prompt: string;
         options?: string[];
         suggestedRule?: string;
+        /** The answer is a secret (an MFA code): the model gets only its reference. */
+        secret?: boolean;
         /** Shown with the question in the app and sent as a photo on Telegram. */
         image?: ImageUpload;
       };
@@ -154,6 +156,12 @@ export const taskTools = [
       options: z.array(z.string().min(1)).min(2).max(6).optional(),
       /** For approvals: the permission rule "Always allow" would add, e.g. Bash(git push:*). */
       suggestedRule: z.string().optional(),
+      secret: z
+        .boolean()
+        .optional()
+        .describe(
+          'With kind text: the answer is a one-time code for the browser (SMS, email or authenticator code). You get {{answer:<id>}} back instead of the value; type it with browser_type.',
+        ),
       screenshot: z
         .boolean()
         .optional()
@@ -184,7 +192,14 @@ export const taskTools = [
       }
       return {
         result: { ok: true, note, ...(image ? { screenshot: 'attached' } : {}) },
-        askUser: { ...question, ...(image ? { image } : {}) },
+        askUser: {
+          ...question,
+          // Only a text answer can be a code; a secret choice or approval means nothing.
+          ...(question.secret && question.kind === 'text'
+            ? { secret: true }
+            : { secret: undefined }),
+          ...(image ? { image } : {}),
+        },
       };
     },
   }),
