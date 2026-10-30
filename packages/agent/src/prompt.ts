@@ -7,6 +7,8 @@ export interface PromptFeatures {
   holdMinutes?: number;
   /** No browser now, but request_browser can get one. */
   canRequestBrowser?: boolean;
+  /** A remote run that request_device can move to the user's Mac. */
+  canRequestDevice?: boolean;
   github?: string;
 }
 
@@ -61,7 +63,7 @@ export function systemPrompt(
       : 'The run ends when you ask the user something; the next run starts on a blank page with the logins restored (open the site again), so finish a login in one go where you can.';
     lines.push(
       '',
-      `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.`,
+      `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone or mail, an approval in their banking or itsme app, a QR code, a choice), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} ${features.canRequestDevice ? "A site that only works in the user's own browser (an itsme login, a passkey, a device-bound login) is not for this browser: the itsme app rejects this browser's QR codes and requests, so do not ask the user to scan one here. Call request_device the moment such a page appears; the run continues on their Mac in a real Chrome window." : "A site that only works in the user's own browser (passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked."}`,
       PHONE_APP_LOGIN,
     );
   }

@@ -8,7 +8,7 @@ import {
   type Task,
 } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
-import { routeDevice } from './routing.js';
+import { routeDevice, routeToMac } from './routing.js';
 import { stripUndefined } from './runtime.js';
 
 /**
@@ -45,6 +45,8 @@ export interface EnqueueOptions {
    * keeps its browser) or true for a step-up. Only `auto` looks at it; an explicit setting wins.
    */
   browser?: boolean;
+  /** The run goes to the user's Mac whatever the device setting says (request_device). */
+  device?: 'mac';
 }
 
 /** What the run's browser flag is, given the setting and what is already known. */
@@ -110,7 +112,9 @@ export async function enqueueRun(
       (d) => ({ id: d.id, ...d.data() }) as Device,
     );
     const ai = resolve(task, project, settings);
-    const route = routeDevice(ai.device, ai.folder, devices, now);
+    const route =
+      (opts.device === 'mac' ? routeToMac(devices) : undefined) ??
+      routeDevice(ai.device, ai.folder, devices, now);
     const routing = [route.reason, decided.browser ? 'with a browser' : undefined]
       .filter(Boolean)
       .join(', ');

@@ -46,7 +46,8 @@ export type ToolOutcome =
     }
   | { result: Record<string, unknown>; finish: { outcome: 'done' | 'review' | 'blocked' } }
   /** Ends the run so it restarts with a browser, same session (request_browser). */
-  | { result: Record<string, unknown>; needsBrowser: true };
+  | { result: Record<string, unknown>; needsBrowser: true }
+  | { result: Record<string, unknown>; needsDevice: true };
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
@@ -81,6 +82,29 @@ export const requestBrowserTool = define({
         note: `Restarting with a browser (${reason}). The browser_* tools are available from your next step; continue the task there.`,
       },
       needsBrowser: true,
+    };
+  },
+});
+
+/**
+ * Offered to a remote run with a browser: some logins only work from the user's own machine
+ * (itsme refuses the cloud browser's session, passkeys live on the Mac). The run ends and a
+ * new one on the Mac continues the session in its Chrome window.
+ */
+export const requestDeviceTool = define({
+  name: 'request_device',
+  description:
+    "Move this task to the user's Mac when a site needs the user's own browser: an itsme login (the itsme app rejects QR codes and requests from this cloud browser), a passkey, or a login bound to their device. The run restarts on the Mac with its Chrome window and your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline. Not for sites that merely need a password or a code.",
+  schema: z.object({
+    reason: z.string().min(1).max(500).describe('What needs the Mac, in one line.'),
+  }),
+  async execute({ reason }) {
+    return {
+      result: {
+        ok: true,
+        note: `Moving to the user's Mac (${reason}). The next step runs there in a Chrome window on a blank page: open the site again and continue the task.`,
+      },
+      needsDevice: true,
     };
   },
 });
