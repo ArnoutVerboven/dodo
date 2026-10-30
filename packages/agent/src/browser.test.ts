@@ -1,3 +1,4 @@
+import type { EmailCodeRequest, EmailCodeResponse } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
 import {
   type BrowserClient,
@@ -106,6 +107,7 @@ describe('browserTools', () => {
       secrets: {
         resolve: async () => '',
         redact: (t: string) => t.replace('secret-value', '<redacted>'),
+        hold: () => '',
       },
     };
     const nav = tools[0] as NonNullable<(typeof tools)[0]>;
@@ -218,5 +220,130 @@ describe('browserTools', () => {
       },
     };
     expect(await takeScreenshot(failing)).toBeUndefined();
+  });
+
+  describe('get_email_code', () => {
+    const setup = (answers: EmailCodeResponse[]) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      const asked: Array<Omit<EmailCodeRequest, 'runId'>> = [];
+      let clock = 1_000_000;
+      const client: BrowserClient = {
+        async listTools() {
+          return ['browser_navigate', 'browser_click', 'browser_type'].map((name) => ({
+            name,
+            inputSchema: { type: 'object' },
+          }));
+        },
+        async callTool(name, args) {
+          calls.push([name, args]);
+          const url =
+            name === 'browser_navigate' ? args.url : 'https://account.booking.com/sign-in';
+          return {
+            text: `- Page URL: ${url}\nfield shows ${String(args.text ?? '')}`,
+            isError: false,
+          };
+        },
+        async close() {},
+      };
+      const secrets = createSecretResolver(async () => {
+        throw new Error('no vault here');
+      });
+      const ctx = { store: {} as TaskStore, secrets };
+      const tools = browserTools(client, {
+        emailCode: async (req) => {
+          asked.push(req);
+          return answers.shift() ?? { found: false };
+        },
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      });
+      const run = async (name: string, args: Record<string, unknown>) => {
+        const t = (await tools).find((x) => x.name === name);
+        if (!t) throw new Error(`no ${name}`);
+        clock += 1000;
+        return {
+          out: await t.execute(t.schema.parse(args), ctx),
+          policy: t.policy?.(t.schema.parse(args), ctx),
+        };
+      };
+      return { calls, asked, run, secrets, now: () => clock };
+    };
+
+    const mail = (id: string, code: string, at: number): EmailCodeResponse => ({
+      found: true,
+      id,
+      code,
+      from: 'Booking.com <noreply@booking.com>',
+      subject: 'Your verification code',
+      receivedAt: at,
+    });
+
+    it('waits for the mail, types the code into the field and never shows it to the model', async () => {
+      const t = setup([{ found: false }, { found: false }, mail('m1', '482913', 1_010_000)]);
+      await t.run('browser_navigate', { url: 'https://account.booking.com/sign-in' });
+      await t.run('browser_click', { element: 'Continue with email', ref: 'e4' });
+      const { out, policy } = await t.run('get_email_code', { element: 'Code', ref: 'e7' });
+      expect(policy).toEqual({ tool: 'EmailCode', key: 'booking.com', category: 'sandbox' });
+      expect(t.calls.at(-1)).toEqual([
+        'browser_type',
+        { element: 'Code', ref: 'e7', text: '482913', slowly: true },
+      ]);
+      expect(out.result).toMatchObject({ ok: true, typed: '{{answer:mail-m1}}' });
+      expect(JSON.stringify(out)).not.toContain('482913');
+      // Mail from before the click that sent the code (minus a minute of slack) does not count.
+      expect(t.asked[0]).toMatchObject({ host: 'account.booking.com', since: 1_002_000 - 60_000 });
+      expect(t.asked).toHaveLength(3);
+      // The page, a later snapshot or the trace never get the code back.
+      expect(t.secrets.redact('code 482913 entered')).toBe('code {{answer:mail-m1}} entered');
+    });
+
+    it('returns a reference typed only on that site, and skips a code already used', async () => {
+      const t = setup([mail('m1', '111111', 1_000_000), mail('m2', '222222', 1_050_000)]);
+      await t.run('browser_navigate', { url: 'https://account.booking.com/sign-in' });
+      const first = await t.run('get_email_code', {});
+      expect(first.out.result).toMatchObject({ reference: '{{answer:mail-m1}}' });
+      expect(await t.secrets.resolve('{{answer:mail-m1}}', 'secure.booking.com')).toBe('111111');
+      await expect(t.secrets.resolve('{{answer:mail-m1}}', 'evil.test')).rejects.toThrow(
+        'can only be typed there',
+      );
+      await t.run('get_email_code', {});
+      expect(t.asked[1]?.exclude).toEqual(['m1']);
+    });
+
+    it('gives up after wait_seconds, reports Gmail errors, and asks before another sender', async () => {
+      const t = setup([]);
+      await t.run('browser_navigate', { url: 'https://login.live.com/' });
+      const late = await t.run('get_email_code', { wait_seconds: 20 });
+      expect(late.out.result).toEqual({
+        error: expect.stringContaining('No mail with a code from live.com'),
+      });
+      expect(t.asked.length).toBeGreaterThanOrEqual(4);
+      const other = await t.run('get_email_code', { sender: 'microsoft.com', wait_seconds: 0 });
+      expect(other.policy).toEqual({
+        tool: 'EmailCode',
+        key: 'microsoft.com>live.com',
+        category: 'outbound',
+      });
+      const broken = setup([{ found: false, error: 'Gmail is not connected' }]);
+      await broken.run('browser_navigate', { url: 'https://account.booking.com/' });
+      expect((await broken.run('get_email_code', {})).out.result).toEqual({
+        error: 'Gmail is not connected',
+      });
+    });
+
+    it('is not offered without an email-code lookup', async () => {
+      const t = await browserTools({
+        async listTools() {
+          return [{ name: 'browser_type', inputSchema: {} }];
+        },
+        async callTool() {
+          return { text: '', isError: false };
+        },
+        async close() {},
+      });
+      expect(t.map((x) => x.name)).toEqual(['browser_type']);
+    });
   });
 });

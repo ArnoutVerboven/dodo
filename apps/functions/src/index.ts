@@ -6,6 +6,7 @@ import {
   DeviceEgressRequest,
   DeviceRegisterRequest,
   DeviceReleaseRequest,
+  EmailCodeRequest,
   FinishRequest,
   GenerateRequest,
   GitHubTokenRequest,
@@ -44,6 +45,7 @@ import { claimOwnership as claim } from './claim-ownership.js';
 import { compactTask } from './compact.js';
 import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } from './devices.js';
 import { dispatch, type Executor } from './dispatcher.js';
+import { emailCodeForRun } from './email-code.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
 import {
   completeGitHubConnect,
@@ -61,6 +63,7 @@ import {
   completeGoogleConnect,
   disconnectGoogle,
   FirestoreTokenStore,
+  gmailFor,
   type JobsShared,
   onReplyAnswered,
   runJob,
@@ -883,6 +886,22 @@ export const githubOpenPr = onCall(
     const deps = githubDeps();
     const run = await loadRunForCaller(deps.db, c, data.runId);
     return githubCall(() => openPullRequest(deps, run, data));
+  },
+);
+
+/**
+ * A run's browser tool fetches a sign-in code a site just emailed the user. Runs as the Jobs
+ * account, the only one that can read the Gmail token; the code goes to that run only.
+ */
+export const runEmailCode = onCall(
+  { serviceAccount: JOBS_SA, maxInstances: 2 },
+  async (request) => {
+    const req = parseOr<EmailCodeRequest>(EmailCodeRequest, request.data);
+    const c = caller(request.auth);
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const shared = jobsShared();
+    const run = await loadRunForCaller(shared.db, c, req.runId);
+    return emailCodeForRun({ gmail: () => gmailFor(shared), log: logger.info }, run, req);
   },
 );
 
