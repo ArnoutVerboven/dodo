@@ -761,7 +761,6 @@ function MessageView({
   inputLatest: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const Icon = m.author === 'user' ? User : Bot;
   const toggle = run ? () => setOpen((v) => !v) : undefined;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: a shortcut for the steps button in the header
@@ -775,14 +774,13 @@ function MessageView({
         open && 'bg-accent/40',
       )}
     >
-      <div
-        className={cn(
-          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted transition-colors',
-          m.author === 'user' ? 'group-hover:bg-primary/10' : 'group-hover:bg-blue-500/15',
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </div>
+      {m.author === 'user' ? (
+        <UserAvatar size="md" title="You" />
+      ) : (
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted transition-colors group-hover:bg-blue-500/15">
+          <Bot className="h-4 w-4" />
+        </div>
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
@@ -1333,25 +1331,35 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-/** Your Google profile picture, or a person icon when there is none. */
-function UserAvatar() {
+/**
+ * Your Google profile picture, or a person icon when there is none: small next to an answer,
+ * medium beside your messages in the thread.
+ */
+function UserAvatar({
+  size = 'sm',
+  title = 'Your answer',
+}: {
+  size?: 'sm' | 'md';
+  title?: string;
+}) {
   const { user } = useAuth();
   const [broken, setBroken] = useState(false);
+  const box = size === 'md' ? 'mt-0.5 h-7 w-7' : 'mt-px h-5 w-5';
   return user?.photoURL && !broken ? (
     <img
       src={user.photoURL}
       alt="You"
-      title="Your answer"
+      title={title}
       referrerPolicy="no-referrer"
       onError={() => setBroken(true)}
-      className="mt-px h-5 w-5 shrink-0 rounded-full"
+      className={cn(box, 'shrink-0 rounded-full')}
     />
   ) : (
     <span
-      title="Your answer"
-      className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted"
+      title={title}
+      className={cn(box, 'flex shrink-0 items-center justify-center rounded-full bg-muted')}
     >
-      <User className="h-3 w-3" />
+      <User className={size === 'md' ? 'h-4 w-4' : 'h-3 w-3'} />
     </span>
   );
 }
