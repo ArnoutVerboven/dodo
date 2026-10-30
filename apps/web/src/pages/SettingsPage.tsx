@@ -7,6 +7,7 @@ import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
 import { GitHubSettings } from '@/components/GitHubSettings';
 import { GoogleSettings } from '@/components/GoogleSettings';
+import { NotionSettings } from '@/components/NotionSettings';
 import { PersonalInfoSettings } from '@/components/PersonalInfoSettings';
 import { PromptsSettings } from '@/components/PromptsSettings';
 import { PushSettings } from '@/components/PushSettings';
@@ -220,6 +221,7 @@ export function SettingsPage() {
           {section === 'integrations' && (
             <>
               <GoogleSettings />
+              <NotionSettings />
               <GitHubSettings />
               <Card>
                 <CardHeader title="Telegram notifications" />

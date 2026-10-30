@@ -8,6 +8,7 @@ import { BROWSER_TOOLS, emailCodeTool } from './browser.js';
 import { execTools } from './exec-tools.js';
 import { githubTools } from './github-tools.js';
 import { googleTools } from './google-tools.js';
+import { notionTools } from './notion-tools.js';
 import { webSearchTool } from './search-tools.js';
 import {
   requestBrowserTool,
@@ -61,6 +62,7 @@ export function builtinCatalog(): BuiltinTool[] {
       }),
       'google',
     ],
+    [notionTools(async () => ({})), 'notion'],
     [github, 'github'],
     [
       [

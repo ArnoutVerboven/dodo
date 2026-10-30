@@ -17,12 +17,14 @@ import {
   GitHubTokenResponse,
   type GoogleOp,
   HeartbeatResponse,
+  type NotionOp,
   PersonalInfo,
   Project,
   paths,
   type RequestInputRequest,
   type RunEvent,
   type RunGoogleAccess,
+  type RunNotionAccess,
   type RunToolAccess,
   SearchResponse,
   type StatusLine,
@@ -165,6 +167,7 @@ export class CallableControlPlane implements ControlPlane {
       };
       tools?: RunToolAccess;
       google?: RunGoogleAccess;
+      notion?: RunNotionAccess;
     }>('runStart', { runId: this.runId });
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {
@@ -185,6 +188,17 @@ export class CallableControlPlane implements ControlPlane {
       return (r.data ?? {}) as Record<string, unknown>;
     } catch (err) {
       throw new Error((err as Error).message || `Google ${call.op} failed`);
+    }
+  }
+  /** A Notion call: the control plane runs it with the integration token. */
+  async notion(call: NotionOp): Promise<Record<string, unknown>> {
+    try {
+      const r = await httpsCallable(this.fns, 'notionTool', { timeout: 120_000 })(
+        JSON.parse(JSON.stringify({ runId: this.runId, call })),
+      );
+      return (r.data ?? {}) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error((err as Error).message || `Notion ${call.op} failed`);
     }
   }
   async heartbeat() {

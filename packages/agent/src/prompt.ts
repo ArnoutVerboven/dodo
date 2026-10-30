@@ -8,6 +8,7 @@ import {
   agentBrowserHeadless,
   agentGoogle,
   agentHeadlessHold,
+  agentNotion,
   agentProject,
   agentRepository,
   EMAIL_CODE_LOGIN,
@@ -30,6 +31,8 @@ export interface PromptFeatures {
   github?: string;
   /** The run has Google tools; the Drive folder saved files go to. */
   google?: string;
+  /** The run has Notion tools; the workspace they reach. */
+  notion?: { workspace?: string };
 }
 
 export function systemPrompt(
@@ -52,6 +55,7 @@ export function systemPrompt(
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github) lines.push('', agentRepository(features.github));
   if (features.google) lines.push('', agentGoogle(features.google));
+  if (features.notion) lines.push('', agentNotion(features.notion.workspace));
   if (project) {
     lines.push('', agentProject(project.name, project.description, project.instructions));
   }

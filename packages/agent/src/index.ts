@@ -7,6 +7,7 @@ export * from './google-tools.js';
 export * from './local-model.js';
 export * from './loop.js';
 export * from './mcp.js';
+export * from './notion-tools.js';
 export * from './prompt.js';
 export * from './search-tools.js';
 export * from './secrets.js';

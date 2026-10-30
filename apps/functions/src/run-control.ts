@@ -10,6 +10,7 @@ import {
   type Run,
   type RunEndReason,
   type RunGoogleAccess,
+  type RunNotionAccess,
   type RunToolAccess,
   type TaskStatus,
 } from '@dodo/core';
@@ -18,6 +19,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
 import { googleAccessForRun } from './google-tools.js';
 import { toolAccessForRun } from './mcp.js';
+import { notionAccessForRun } from './notion.js';
 import {
   HEARTBEAT_MS,
   LEASE_MS,
@@ -82,6 +84,8 @@ export interface StartResponse {
   tools?: RunToolAccess;
   /** Google is connected (Settings › Integrations): the run gets the Google tools it has scopes for. */
   google?: RunGoogleAccess;
+  /** Notion is connected (Settings › Integrations): the run gets the Notion tools. */
+  notion?: RunNotionAccess;
 }
 
 /** The permission rules a run is judged by: global, then project, then task, in that order. */
@@ -137,6 +141,10 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     deps.log?.('google access failed', { runId: run.id, err: String(err) });
     return undefined;
   });
+  const notion = await notionAccessForRun(deps.db).catch((err) => {
+    deps.log?.('notion access failed', { runId: run.id, err: String(err) });
+    return undefined;
+  });
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,
@@ -161,6 +169,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     policy,
     ...(tools ? { tools } : {}),
     ...(google ? { google } : {}),
+    ...(notion ? { notion } : {}),
   };
 }
 
