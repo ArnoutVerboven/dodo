@@ -91,9 +91,12 @@ export async function enqueueRun(
     : undefined;
   const firstSettings = ((await db.doc(paths.settings()).get()).data() ??
     {}) as Partial<GlobalSettings>;
-  const ask = deps.needsBrowser;
+  const firstAi = resolve(first, firstProject, firstSettings);
+  // The browser question is a Gemini call: a local-model task never makes one (the agent can
+  // still ask for a browser mid-task).
+  const ask = isLocalModel(resolveModel(firstAi.model)) ? undefined : deps.needsBrowser;
   const decided = await decideBrowser(
-    resolve(first, firstProject, firstSettings).browser,
+    firstAi.browser,
     opts,
     ask ? () => ask({ ...first, id: taskId }) : undefined,
     deps.log,
