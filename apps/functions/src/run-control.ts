@@ -475,11 +475,6 @@ async function pairedMacs(deps: RunControlDeps): Promise<string[]> {
  */
 export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishRequest, 'runId'>) {
   const now = (deps.now ?? Date.now)();
-  // A run reaped without a session (worker died) keeps whatever session it started from.
-  const sessionPath = req.session.length
-    ? await saveSession(deps, run.id, req.session)
-    : run.sessionPath;
-  const tracePath = await archiveTrace(deps, run.id);
   const state: Run['state'] =
     req.reason === 'finished' ||
     req.reason === 'max_steps' ||
@@ -493,6 +488,27 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
           : req.reason === 'budget_exhausted'
             ? 'budget_exhausted'
             : 'failed';
+
+  // One end per run: the worker's own finish, the reaper and deviceRelease can race. Whoever
+  // moves the run out of a live state first wins; the others change nothing.
+  const won = await claimEnd(deps, run, state, req.reason, now);
+  if (!won) {
+    deps.log?.('finish skipped: the run already ended', { runId: run.id, reason: req.reason });
+    return;
+  }
+  // The run has ended now, so nothing below may stop the task from being released: a session
+  // or trace that cannot be stored is logged, not thrown.
+  // A run reaped without a session (worker died) keeps whatever session it started from.
+  const sessionPath = req.session.length
+    ? await saveSession(deps, run.id, req.session).catch((err) => {
+        deps.log?.('session save failed', { runId: run.id, err: String(err) });
+        return run.sessionPath;
+      })
+    : run.sessionPath;
+  const tracePath = await archiveTrace(deps, run.id).catch((err) => {
+    deps.log?.('trace archive failed', { runId: run.id, err: String(err) });
+    return undefined;
+  });
 
   const batch = deps.db.batch();
   batch.update(
@@ -663,6 +679,30 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   await deps.notify?.({ kind, title: headline, body: req.error ?? summary, taskId: run.taskId });
 }
 
+/** States a run can still be ended from; anything else has already ended. */
+const LIVE_STATES: ReadonlyArray<Run['state']> = ['queued', 'dispatching', 'claimed', 'running'];
+
+/**
+ * Move the run to its end state in a transaction, only if it is still live and still the same
+ * lease generation. False when someone else ended it (or a newer worker holds it).
+ */
+async function claimEnd(
+  deps: RunControlDeps,
+  run: Run,
+  state: Run['state'],
+  reason: RunEndReason,
+  now: number,
+): Promise<boolean> {
+  const ref = deps.db.doc(paths.run(run.id));
+  return deps.db.runTransaction(async (t) => {
+    const current = (await t.get(ref)).data() as Partial<Run> | undefined;
+    if (!current?.state || !LIVE_STATES.includes(current.state)) return false;
+    if ((current.generation ?? 0) !== (run.generation ?? 0)) return false;
+    t.update(ref, { state, endReason: reason, endedAt: now, updatedAt: now });
+    return true;
+  });
+}
+
 /**
  * What the gateway said when it refused: `budget_exhausted(<kind>): <why>` (see gateway.ts).
  * A worker from before that message, or a heartbeat refusal, gives no error: the task's budget.
@@ -800,12 +840,30 @@ async function archiveTrace(deps: RunControlDeps, runId: string): Promise<string
   return path;
 }
 
+/** A queued or dispatching remote run that has not started by now never will. */
+export const START_GRACE_MS = 5 * 60_000;
+
 /**
- * Lease sweep: a worker that died (OOM, crash, cancelled execution) never calls finish. Runs
- * whose lease expired a while ago are ended as `lease_lost`, which releases the task and
- * settles the open infra reservation. Runs stuck in `claimed` (never started) are included.
+ * Why a run counts as dead, or undefined while it may still be alive:
+ * - running or claimed: the lease expired a while ago (the worker died without finishing);
+ * - queued or dispatching for Cloud Run: no worker started (the dispatch was lost);
+ * - queued for a Mac: never; it waits for that Mac's daemon, however long it is offline.
  */
-/** Reap one run if its lease expired; returns whether it was reaped. Used before enqueueing. */
+export function staleReason(run: Run, now: number, graceMs = 2 * LEASE_MS): string | undefined {
+  if (run.state === 'claimed' || run.state === 'running') {
+    const deadline = run.lease?.expiresAt ?? run.updatedAt;
+    return deadline + graceMs <= now ? 'The worker stopped responding.' : undefined;
+  }
+  if (run.state === 'queued' || run.state === 'dispatching') {
+    if (run.state === 'queued' && run.device !== 'gcp') return undefined;
+    return run.updatedAt + START_GRACE_MS <= now
+      ? 'The worker never started. Comment to try again.'
+      : undefined;
+  }
+  return undefined;
+}
+
+/** Reap one run if it is dead (see `staleReason`); returns whether it was reaped. */
 export async function reapIfStale(
   deps: RunControlDeps,
   runId: string,
@@ -815,17 +873,16 @@ export async function reapIfStale(
   const snap = await deps.db.doc(paths.run(runId)).get();
   if (!snap.exists) return false;
   const run = { id: snap.id, ...snap.data() } as Run;
-  if (!['claimed', 'running', 'dispatching', 'queued'].includes(run.state)) return false;
-  const deadline = run.lease?.expiresAt ?? run.updatedAt;
-  if (deadline + graceMs > now) return false;
-  await finish(deps, run, {
-    reason: 'lease_lost',
-    error: 'The worker stopped responding.',
-    session: [],
-  });
+  const why = staleReason(run, now, graceMs);
+  if (!why) return false;
+  await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
   return true;
 }
 
+/**
+ * Lease sweep (every 5 minutes): ends every run that is dead by `staleReason`, which releases
+ * its task and settles its open infra reservation.
+ */
 export async function reapStaleRuns(
   deps: RunControlDeps,
   graceMs = 2 * LEASE_MS,
@@ -833,19 +890,20 @@ export async function reapStaleRuns(
   const now = (deps.now ?? Date.now)();
   const live = await deps.db
     .collection(paths.runs())
-    .where('state', 'in', ['claimed', 'running'])
+    .where('state', 'in', ['queued', 'dispatching', 'claimed', 'running'])
     .get();
   const reaped: string[] = [];
   for (const d of live.docs) {
     const run = { id: d.id, ...d.data() } as Run;
-    const deadline = run.lease?.expiresAt ?? run.updatedAt;
-    if (deadline + graceMs > now) continue;
-    await finish(deps, run, {
-      reason: 'lease_lost',
-      error: 'The worker stopped responding.',
-      session: [],
-    });
-    reaped.push(run.id);
+    const why = staleReason(run, now, graceMs);
+    if (!why) continue;
+    try {
+      await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
+      reaped.push(run.id);
+    } catch (err) {
+      // One broken run must not keep the sweep from the others.
+      deps.log?.('reap failed', { runId: run.id, err: String(err) });
+    }
   }
   return reaped;
 }

@@ -579,10 +579,7 @@ export const onMessageWritten = onDocumentWritten(
     const before = event.data?.before.exists ? event.data.before.data() : undefined;
     const after = event.data?.after.exists ? event.data.after.data() : undefined;
     if (!after) return;
-    const deps = {
-      ...triggerDeps(db),
-      reap: (runId: string) => reapIfStale(controlDeps(), runId),
-    };
+    const deps = triggerDeps(db);
     if (!before) {
       await onUserMessage(
         deps,
@@ -605,6 +602,7 @@ export const onMessageWritten = onDocumentWritten(
 const triggerDeps = (db: Firestore) => ({
   db,
   log: logger.info,
+  reap: (runId: string) => reapIfStale(controlDeps(), runId),
   needsBrowser: (task: Parameters<typeof needsBrowser>[1]) =>
     needsBrowser(
       { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
@@ -638,8 +636,10 @@ class LocalExecutor implements Executor {
   }
 }
 
+// retry: dispatch is idempotent (queued → dispatching in a transaction), so a delivery that
+// failed (contention, a crash before the executor started) is safe to repeat.
 export const onRunCreated = onDocumentCreated(
-  { document: 'runs/{runId}', serviceAccount: GATEWAY_SA },
+  { document: 'runs/{runId}', serviceAccount: GATEWAY_SA, retry: true },
   async (event) => {
     const deps = controlDeps();
     const result = await dispatch(

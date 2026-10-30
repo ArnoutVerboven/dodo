@@ -5,7 +5,7 @@ import type { Auth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
 import { afterAll, describe, expect, it } from 'vitest';
-import { reapStaleRuns } from './run-control.js';
+import { finish, reapStaleRuns } from './run-control.js';
 import { costGateFor, LEASE_MS } from './runtime.js';
 
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST;
@@ -25,7 +25,7 @@ describe.skipIf(!enabled)('reapStaleRuns', () => {
     if (app) await deleteApp(app);
   });
 
-  async function seed(leaseExpiresAt: number) {
+  async function seed(leaseExpiresAt: number, patch: Record<string, unknown> = {}) {
     const d = db as NonNullable<typeof db>;
     const taskId = `t-${randomUUID()}`;
     const runId = `r-${randomUUID()}`;
@@ -53,6 +53,7 @@ describe.skipIf(!enabled)('reapStaleRuns', () => {
       lease: { expiresAt: leaseExpiresAt },
       createdAt: 1,
       updatedAt: 1,
+      ...patch,
     });
     return { taskId, runId };
   }
@@ -80,5 +81,42 @@ describe.skipIf(!enabled)('reapStaleRuns', () => {
 
     const liveRun = (await d.doc(paths.run(live.runId)).get()).data();
     expect(liveRun?.state).toBe('running');
+  });
+
+  it('leaves a run queued for an offline Mac waiting', async () => {
+    const d = db as NonNullable<typeof db>;
+    const now = Date.now();
+    const queued = await seed(now - 3 * LEASE_MS, { state: 'queued', device: 'mac:studio' });
+    const reaped = await reapStaleRuns({
+      db: d,
+      auth,
+      storage,
+      costGate: costGateFor(d),
+      now: () => now,
+    });
+    expect(reaped).not.toContain(queued.runId);
+    expect((await d.doc(paths.run(queued.runId)).get()).get('state')).toBe('queued');
+  });
+
+  it('ends a run once: a second finish (the reaper after the worker) changes nothing', async () => {
+    const d = db as NonNullable<typeof db>;
+    const now = Date.now();
+    const { taskId, runId } = await seed(now + LEASE_MS);
+    const deps = { db: d, auth, storage, costGate: costGateFor(d), now: () => now };
+    const run = { id: runId, ...(await d.doc(paths.run(runId)).get()).data() } as Parameters<
+      typeof finish
+    >[1];
+    await finish(deps, run, { reason: 'finished', outcome: 'review', session: [] });
+    await finish(deps, run, { reason: 'lease_lost', error: 'late reaper', session: [] });
+    const after = (await d.doc(paths.run(runId)).get()).data();
+    expect(after?.state).toBe('succeeded');
+    expect(after?.endReason).toBe('finished');
+    const task = (await d.doc(paths.task(taskId)).get()).data();
+    expect(task?.status).toBe('review');
+    const failures = await d
+      .collection(paths.messages(taskId))
+      .where('author', '==', 'system')
+      .get();
+    expect(failures.size).toBe(0);
   });
 });
