@@ -46,7 +46,10 @@ export const AiConfig = z.object({
   enabled: z.boolean().default(false),
   model: ModelChoice.optional(),
   device: DeviceChoice.optional(),
+  /** Older single-repo field; read as a one-repo `repos`. */
   repo: z.string().optional(),
+  /** GitHub repos (`owner/name`) the run checks out and may open pull requests on. */
+  repos: z.array(z.string()).optional(),
   folder: z.string().optional(),
   /**
    * Browser tools for the run: `none`; `auto` (a small model decides from the task, and the
@@ -282,6 +285,8 @@ export const Device = z.object({
   version: z.string().optional(),
   /** Folders the agent may work in on this Mac, as the daemon reports them. */
   folders: z.array(z.string()).default([]),
+  /** The local model this Mac serves (`dodo model set`), by name; absent without one. */
+  localModel: z.string().optional(),
   lastSeen: Timestamp.optional(),
   currentRunId: z.string().optional(),
   createdAt: Timestamp,

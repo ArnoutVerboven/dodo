@@ -1,4 +1,5 @@
-import type { AiConfig, TaskPriority } from '@dodo/core';
+import { type AiConfig, resolveAiConfig, type TaskPriority } from '@dodo/core';
+import { Folder, Minus } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AiConfigFields } from '@/components/AiConfigFields';
@@ -6,8 +7,9 @@ import { PushToTalkButton } from '@/components/PushToTalk';
 import { PRIORITIES } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
-import { Input, Label, Select, Textarea } from '@/components/ui/input';
-import { createTask, useProjects } from '@/lib/data';
+import { Dropdown } from '@/components/ui/dropdown';
+import { Input, Label, Textarea } from '@/components/ui/input';
+import { createTask, useProjects, useSettings } from '@/lib/data';
 
 export function parseTags(raw: string): string[] {
   return [
@@ -37,6 +39,7 @@ export function NewTaskDialog({ open, onClose }: { open: boolean; onClose: () =>
 function NewTaskForm({ onDone }: { onDone: () => void }) {
   const navigate = useNavigate();
   const { data: projects } = useProjects();
+  const { data: settings } = useSettings();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
@@ -92,27 +95,28 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
         />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label>
+        <div>
           <Label>Project</Label>
-          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">No project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
+          <Dropdown
+            ariaLabel="Project"
+            value={projectId}
+            options={[
+              { value: '', label: 'No project', icon: Minus, tone: 'text-muted-foreground' },
+              ...projects.map((p) => ({ value: p.id, label: p.name, icon: Folder })),
+            ]}
+            searchable={projects.length > 8}
+            onChange={setProjectId}
+          />
+        </div>
+        <div>
           <Label>Priority</Label>
-          <Select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
-            {PRIORITIES.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </Select>
-        </label>
+          <Dropdown
+            ariaLabel="Priority"
+            value={priority}
+            options={PRIORITIES}
+            onChange={(v) => setPriority(v as TaskPriority)}
+          />
+        </div>
         <label>
           <Label>Due date</Label>
           <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
@@ -142,7 +146,16 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
         </div>
         {showAi && (
           <div className="mt-3">
-            <AiConfigFields value={ai} onChange={setAi} showEnabled={false} />
+            <AiConfigFields
+              value={ai}
+              onChange={setAi}
+              showEnabled={false}
+              inherited={resolveAiConfig(
+                { ai: { enabled: false } },
+                projects.find((p) => p.id === projectId),
+                settings,
+              )}
+            />
           </div>
         )}
       </div>

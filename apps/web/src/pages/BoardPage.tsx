@@ -1,12 +1,13 @@
 import type { Task, TaskStatus } from '@dodo/core';
-import { Bot, Columns3, List, Plus, Search } from 'lucide-react';
+import { Bot, Columns3, Folder, List, Plus, Search, Tag } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { NewTaskDialog } from '@/components/NewTaskDialog';
 import { SourceIcon } from '@/components/SourceIcon';
 import { DueDate, PriorityLabel, StatusBadge, statusMeta, Tags } from '@/components/task-meta';
 import { Button } from '@/components/ui/button';
-import { Input, Select } from '@/components/ui/input';
+import { Dropdown } from '@/components/ui/dropdown';
+import { Input } from '@/components/ui/input';
 import { setTaskStatus, useBudgets, useProjects, useTasks } from '@/lib/data';
 import { cn, formatEur, isTyping, timeAgo } from '@/lib/utils';
 
@@ -119,32 +120,30 @@ export function BoardPage() {
           />
         </div>
         {projects.length > 0 && (
-          <Select
-            className={cn('w-auto', !projectId && 'text-muted-foreground')}
-            aria-label="Filter by project"
+          <Dropdown
+            ariaLabel="Filter by project"
+            className={cn('w-auto max-w-56', !projectId && 'text-muted-foreground')}
             value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-          >
-            <option value="">All projects</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
+            options={[
+              { value: '', label: 'All projects' },
+              ...projects.map((p) => ({ value: p.id, label: p.name, icon: Folder })),
+            ]}
+            searchable={projects.length > 8}
+            onChange={setProjectId}
+          />
         )}
         {allTags.length > 0 && (
-          <Select
-            className={cn('w-auto', !tag && 'text-muted-foreground')}
-            aria-label="Filter by tag"
+          <Dropdown
+            ariaLabel="Filter by tag"
+            className={cn('w-auto max-w-56', !tag && 'text-muted-foreground')}
             value={tag}
-            onChange={(e) => setTag(e.target.value)}
-          >
-            <option value="">All tags</option>
-            {allTags.map((t) => (
-              <option key={t}>{t}</option>
-            ))}
-          </Select>
+            options={[
+              { value: '', label: 'All tags' },
+              ...allTags.map((t) => ({ value: t, label: t, icon: Tag })),
+            ]}
+            searchable={allTags.length > 8}
+            onChange={setTag}
+          />
         )}
         {view === 'list' && (
           <Button

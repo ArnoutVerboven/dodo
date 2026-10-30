@@ -205,7 +205,12 @@ export function SettingsPage() {
               <Card>
                 <CardHeader title="Default AI settings" />
                 <CardBody>
-                  <AiConfigFields value={defaults} onChange={setDefaults} showEnabled={false} />
+                  <AiConfigFields
+                    value={defaults}
+                    onChange={setDefaults}
+                    showEnabled={false}
+                    inherited={{ budget: settings.defaultTaskBudget }}
+                  />
                 </CardBody>
               </Card>
               <div className="flex items-center justify-end gap-3">

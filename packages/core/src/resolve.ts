@@ -1,3 +1,4 @@
+import { repoList } from './github.js';
 import type { AiConfig, GlobalSettings, Project, Task } from './model.js';
 
 export type ResolvedAiConfig = Required<Pick<AiConfig, 'model' | 'device' | 'budget'>> &
@@ -13,6 +14,12 @@ export function resolveAiConfig(
   settings: Pick<GlobalSettings, 'defaults' | 'defaultTaskBudget'>,
 ): ResolvedAiConfig {
   const layers = [settings.defaults, project?.defaults ?? {}, task.ai];
+  // Repos are one setting: a layer that names any (old `repo` or `repos`) replaces the rest.
+  let repos: string[] | undefined;
+  for (const layer of layers) {
+    const named = repoList(layer as AiConfig);
+    if (named.length) repos = named;
+  }
   const pick = <K extends keyof AiConfig>(key: K): AiConfig[K] | undefined => {
     let value: AiConfig[K] | undefined;
     for (const layer of layers) {
@@ -26,7 +33,7 @@ export function resolveAiConfig(
     model: pick('model') ?? 'auto',
     device: pick('device') ?? 'auto',
     budget: pick('budget') ?? settings.defaultTaskBudget,
-    repo: pick('repo')?.trim() || undefined,
+    repos,
     folder: pick('folder'),
     browser: pick('browser'),
     tools: pick('tools'),

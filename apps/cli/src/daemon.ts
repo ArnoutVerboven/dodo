@@ -13,7 +13,15 @@ import {
   deviceChoice,
   paths,
 } from '@dodo/core';
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import {
+  collection,
+  deleteField,
+  doc,
+  onSnapshot,
+  query,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { type Clients, connect, currentUser, SIGNED_OUT } from './auth.js';
 import {
@@ -162,6 +170,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         protocol: DEVICE_PROTOCOL,
         folders: config.folders,
         browser: browser.state === 'ready',
+        localModel: localModelName(config.localModel) ?? deleteField(),
         updatedAt: Date.now(),
       }).catch((err: { code?: string }) => {
         if (String(err.code).endsWith('permission-denied'))
@@ -435,4 +444,13 @@ async function execute(
       done(null);
     });
   });
+}
+
+/** The local model's name for the task form: the one asked for, else the one the command loads. */
+export function localModelName(local: CliConfig['localModel']): string | undefined {
+  if (!local) return undefined;
+  const cmd = local.command ?? [];
+  const i = cmd.indexOf('--model');
+  const raw = local.model ?? (i >= 0 ? cmd[i + 1] : undefined);
+  return raw?.split('/').filter(Boolean).at(-1) || undefined;
 }

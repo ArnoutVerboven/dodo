@@ -931,7 +931,7 @@ export const githubToken = onCall(
     if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
     const deps = githubDeps();
     const run = await loadRunForCaller(deps.db, c, req.runId);
-    return githubCall(() => runGitHubToken(deps, run, req.access));
+    return githubCall(() => runGitHubToken(deps, run, req.access, req.repo));
   },
 );
 

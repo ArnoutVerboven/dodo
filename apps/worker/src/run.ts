@@ -33,7 +33,8 @@ import {
   isLocalModel,
   Project,
   type RunToolAccess,
-  repoFor,
+  repoDir,
+  reposFor,
   Task,
   toolAllowed,
 } from '@dodo/core';
@@ -137,16 +138,22 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
   await mkdir(workdir, { recursive: true });
   const policy = new PolicyEngine(started.policy);
-  const repo = repoFor(task, project);
-  const github = repo
-    ? await control.githubToken('read').catch((err: Error) => {
-        console.log(`github token unavailable: ${err.message}`);
+  // Each repo is checked out with its own read token: one repo in the task folder itself,
+  // several in subfolders named after them.
+  const repos = reposFor(task, project);
+  const checkouts = await Promise.all(
+    repos.map(async (repo) => {
+      const dir = repoDir(repo, repos);
+      const github = await control.githubToken('read', repo).catch((err: Error) => {
+        console.log(`github token unavailable for ${repo}: ${err.message}`);
         return undefined;
-      })
-    : undefined;
-  const checkoutNote = repo
-    ? await checkout(workdir, repo, github, (m) => console.log(m))
-    : undefined;
+      });
+      const target = path.join(workdir, dir);
+      await mkdir(target, { recursive: true });
+      const note = await checkout(target, repo, github, (m) => console.log(m));
+      return { repo, dir, github, note };
+    }),
+  );
   // The browser only when the run wants one: the daemon's server on your Chrome, or headless
   // Chromium started here in the browser worker image.
   let headless: HeadlessBrowser | undefined;
@@ -178,9 +185,11 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const mcp = await connectMcpServers(started.tools, env);
   const notes = [
     ...mcp.notes,
-    repo
-      ? `Repository ${repo} is ${checkoutNote ? `not available: ${checkoutNote}` : 'checked out in the task folder; use bash, read_file and write_file on it'}.`
-      : undefined,
+    ...checkouts.map(({ repo, dir, note }) =>
+      note
+        ? `Repository ${repo} is not available: ${note}.`
+        : `Repository ${repo} is checked out in ${dir === '.' ? 'the task folder' : `${dir}/ in the task folder`}; use bash, read_file and write_file on it.`,
+    ),
     started.google && !started.google.scopes.includes(GOOGLE_SCOPE.drive)
       ? 'Google Drive is not connected (the Google connection lacks Drive access), so files cannot be saved to Drive.'
       : undefined,
@@ -191,26 +200,26 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const taskForRun = notes.length
     ? { ...task, description: `${task.description}\n\n(${notes.join(' ')})` }
     : task;
-  const githubAccess: GitHubAccess | undefined =
-    repo && !checkoutNote
-      ? {
-          repo,
-          defaultBranch: github?.defaultBranch,
-          writeToken: async () => {
-            const t = await control.githubToken('write');
-            if (!t.token) throw new Error(t.note ?? `No write access to ${repo}`);
-            return t.token;
-          },
-          openPullRequest: (req) => control.githubOpenPr(req),
-        }
-      : undefined;
+  const githubAccess: GitHubAccess[] = checkouts
+    .filter((c) => !c.note)
+    .map(({ repo, dir, github }) => ({
+      repo,
+      dir,
+      defaultBranch: github?.defaultBranch,
+      writeToken: async () => {
+        const t = await control.githubToken('write', repo);
+        if (!t.token) throw new Error(t.note ?? `No write access to ${repo}`);
+        return t.token;
+      },
+      openPullRequest: (req) => control.githubOpenPr({ ...req, repo }),
+    }));
   const builtins = [
     ...taskTools,
     ...execTools,
     webSearchTool((query) => control.search(query)),
     ...(started.google ? googleTools((call) => control.google(call), started.google) : []),
     ...(started.notion ? notionTools((call) => control.notion(call), started.notion) : []),
-    ...(githubAccess ? githubTools(githubAccess) : []),
+    ...(githubAccess.length ? githubTools(githubAccess) : []),
     ...(browser ? await browserTools(browser, { emailCode: (req) => control.emailCode(req) }) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
     ...(!browser && started.browserSetting === 'auto' ? [requestBrowserTool] : []),

@@ -1,4 +1,4 @@
-import type { AiConfig, Project } from '@dodo/core';
+import { type AiConfig, type Project, repoList, resolveAiConfig } from '@dodo/core';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { AiConfigFields } from '@/components/AiConfigFields';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Label, Textarea } from '@/components/ui/input';
-import { deleteProject, saveProject, useProjects, useTasks } from '@/lib/data';
+import { deleteProject, saveProject, useProjects, useSettings, useTasks } from '@/lib/data';
 import { formatEur } from '@/lib/utils';
 
 export function ProjectsPage() {
@@ -54,7 +54,12 @@ export function ProjectsPage() {
                     {p.monthlyBudget !== undefined && ` · ${formatEur(p.monthlyBudget)}/month cap`}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {[p.defaults.model, p.defaults.device, p.defaults.repo, p.defaults.folder]
+                    {[
+                      p.defaults.model,
+                      p.defaults.device,
+                      ...repoList(p.defaults),
+                      p.defaults.folder,
+                    ]
                       .filter(Boolean)
                       .join(' · ') || 'Uses global defaults'}
                   </p>
@@ -76,6 +81,7 @@ export function ProjectsPage() {
 }
 
 function ProjectForm({ initial, onDone }: { initial: Partial<Project>; onDone: () => void }) {
+  const { data: settings } = useSettings();
   const [name, setName] = useState(initial.name ?? '');
   const [description, setDescription] = useState(initial.description ?? '');
   const [instructions, setInstructions] = useState(initial.instructions ?? '');
@@ -117,7 +123,12 @@ function ProjectForm({ initial, onDone }: { initial: Partial<Project>; onDone: (
       </label>
       <div>
         <Label>Task defaults</Label>
-        <AiConfigFields value={defaults} onChange={setDefaults} showEnabled={false} />
+        <AiConfigFields
+          value={defaults}
+          onChange={setDefaults}
+          showEnabled={false}
+          inherited={resolveAiConfig({ ai: { enabled: false } }, undefined, settings)}
+        />
       </div>
       <label className="block">
         <Label>Monthly budget cap for the project (EUR, empty = none)</Label>

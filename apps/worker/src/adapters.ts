@@ -266,11 +266,12 @@ export class CallableControlPlane implements ControlPlane {
     return { state, lastUrl };
   }
   /** A token for the run's own repo (docs/GITHUB.md); refusals come back as plain Errors. */
-  async githubToken(access: 'read' | 'write'): Promise<GitHubTokenResponse> {
+  async githubToken(access: 'read' | 'write', repo?: string): Promise<GitHubTokenResponse> {
     try {
       const r = await httpsCallable(this.fns, 'githubToken', { timeout: 30_000 })({
         runId: this.runId,
         access,
+        ...(repo ? { repo } : {}),
       });
       return GitHubTokenResponse.parse(r.data);
     } catch (err) {
@@ -278,6 +279,7 @@ export class CallableControlPlane implements ControlPlane {
     }
   }
   async githubOpenPr(req: {
+    repo?: string;
     head: string;
     base?: string;
     title: string;

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { BranchName } from '@dodo/core';
 import { z } from 'zod';
 import { inheritedEnv } from './exec-tools.js';
@@ -13,6 +14,8 @@ import { define, type ToolDef } from './tools.js';
  */
 export interface GitHubAccess {
   repo: string;
+  /** Where the checkout is, relative to the task folder; the folder itself when absent. */
+  dir?: string;
   defaultBranch?: string;
   /** Where to push; GitHub unless a test points it elsewhere. */
   remoteUrl?: string;
@@ -84,40 +87,69 @@ async function push(
   return { ok: true };
 }
 
-export function githubTools(access: GitHubAccess): ToolDef[] {
+/**
+ * The tools for the run's repos. With one repo they work on it; with several, `repo` says which
+ * (each is checked out in its own subfolder of the task folder).
+ */
+export function githubTools(accessOrList: GitHubAccess | GitHubAccess[]): ToolDef[] {
+  const list = Array.isArray(accessOrList) ? accessOrList : [accessOrList];
+  const first = list[0];
+  if (!first) return [];
+  const names = list.map((a) => a.repo) as [string, ...string[]];
+  const multi = list.length > 1;
+  const pick = (args: object) => {
+    const repo = (args as { repo?: string }).repo?.toLowerCase();
+    return list.find((a) => a.repo.toLowerCase() === repo) ?? first;
+  };
+  const cwd = (access: GitHubAccess, workdir: string | undefined) =>
+    path.join(workdir ?? process.cwd(), access.dir ?? '.');
+  const on = multi ? `one of ${names.join(', ')} (repo)` : first.repo;
+  // One repo: no argument, so the tool reads as before.
+  const repoArg = multi ? { repo: z.enum(names).describe('Which repository') } : {};
   const branchArg = BranchName.describe('Branch name, e.g. dodo/fix-login');
   return [
     define({
       name: 'push_branch',
-      description: `Push the current commit (HEAD) of the checkout to a branch on ${access.repo}. Commit first with bash (git checkout -b, git add, git commit). Never the default branch. Needs your approval unless allowed; plain git push has no credentials.`,
-      schema: z.object({ branch: branchArg }),
-      policy: () => ({ tool: 'GitHub', key: `push:${access.repo}`, category: 'outbound' }),
-      async execute({ branch }, ctx) {
-        const r = await push(access, ctx.workdir ?? process.cwd(), branch);
+      description: `Push the current commit (HEAD) of the checkout to a branch on ${on}. Commit first with bash (git checkout -b, git add, git commit). Never the default branch. Needs your approval unless allowed; plain git push has no credentials.`,
+      schema: z.object({ ...repoArg, branch: branchArg }),
+      policy: (args) => ({
+        tool: 'GitHub',
+        key: `push:${pick(args).repo}`,
+        category: 'outbound',
+      }),
+      async execute(args, ctx) {
+        const { branch } = args;
+        const access = pick(args);
+        const r = await push(access, cwd(access, ctx.workdir), branch);
         if ('error' in r) return { result: r };
         return { result: { ok: true, pushed: `${access.repo}@${branch}` } };
       },
     }),
     define({
       name: 'open_pull_request',
-      description: `Push the current commit (HEAD) to a branch on ${access.repo} and open a pull request for it (or return the one already open for that branch). Commit your changes first. Needs your approval unless allowed.`,
+      description: `Push the current commit (HEAD) to a branch on ${on} and open a pull request for it (or return the one already open for that branch). Commit your changes first. Needs your approval unless allowed.`,
       schema: z.object({
+        ...repoArg,
         branch: branchArg,
         title: z.string().min(1).max(256),
         body: z.string().max(60_000).default(''),
         base: BranchName.optional().describe('Target branch; the default branch if omitted'),
         draft: z.boolean().default(false),
       }),
-      policy: () => ({ tool: 'GitHub', key: `pr:${access.repo}`, category: 'outbound' }),
-      async execute({ branch, title, body, base, draft }, ctx) {
-        const pushed = await push(access, ctx.workdir ?? process.cwd(), branch);
+      policy: (args) => ({ tool: 'GitHub', key: `pr:${pick(args).repo}`, category: 'outbound' }),
+      async execute(args, ctx) {
+        const { branch, title, body, base, draft } = args;
+        const access = pick(args);
+        const pushed = await push(access, cwd(access, ctx.workdir), branch);
         if ('error' in pushed) return { result: pushed };
         try {
           const pr = await access.openPullRequest({ head: branch, base, title, body, draft });
           if (!pr.existing)
             await ctx.store.addArtifact({
               kind: 'link',
-              name: `PR #${pr.number}: ${title}`,
+              name: multi
+                ? `${access.repo} PR #${pr.number}: ${title}`
+                : `PR #${pr.number}: ${title}`,
               url: pr.url,
             });
           return { result: { ok: true, ...pr } };

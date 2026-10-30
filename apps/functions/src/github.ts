@@ -8,7 +8,7 @@ import {
   isApproved,
   paths,
   type Run,
-  repoFor,
+  reposFor,
 } from '@dodo/core';
 import { matches, parseRule } from '@dodo/policy';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -373,16 +373,25 @@ export async function disconnectGitHub(deps: GitHubDeps) {
 
 /* ------------------------------- run access ------------------------------ */
 
+/** The run's repo a request names (the first when it names none); never one outside the run's. */
+function runRepo(repos: string[], wanted: string | undefined): string {
+  if (!repos.length) throw new GitHubError('failed-precondition', 'This task has no repo');
+  if (!wanted) return repos[0] as string;
+  const hit = repos.find((r) => r.toLowerCase() === wanted.trim().toLowerCase());
+  if (!hit) throw new GitHubError('permission-denied', `${wanted} is not one of this task's repos`);
+  return hit;
+}
+
 async function runContext(db: Firestore, run: Run) {
   const [task, project, settings] = await Promise.all([
     db.doc(paths.task(run.taskId)).get(),
     run.projectId ? db.doc(paths.project(run.projectId)).get() : undefined,
     db.doc(paths.settings()).get(),
   ]);
-  const ai = (task.get('ai') ?? {}) as { repo?: string };
-  const defaults = (project?.get('defaults') ?? {}) as { repo?: string };
+  const ai = (task.get('ai') ?? {}) as { repo?: string; repos?: string[] };
+  const defaults = (project?.get('defaults') ?? {}) as { repo?: string; repos?: string[] };
   return {
-    repo: repoFor({ ai }, project?.exists ? { defaults } : undefined),
+    repos: reposFor({ ai }, project?.exists ? { defaults } : undefined),
     task,
     project,
     settings,
@@ -434,9 +443,9 @@ export async function runGitHubToken(
   deps: GitHubDeps,
   run: Run,
   access: 'read' | 'write',
+  wanted?: string,
 ): Promise<GitHubTokenResponse> {
-  const { repo } = await runContext(deps.db, run);
-  if (!repo) throw new GitHubError('failed-precondition', 'This task has no repo');
+  const repo = runRepo((await runContext(deps.db, run)).repos, wanted);
   const conn = await connection(deps);
   const secret = await appSecret(deps);
   const meta = conn.repos.find((r) => r.fullName.toLowerCase() === repo.toLowerCase());
@@ -504,8 +513,7 @@ export async function openPullRequest(
   if (!parsed.success)
     throw new GitHubError('invalid-argument', parsed.error.issues[0]?.message ?? 'Invalid request');
   const req = parsed.data;
-  const { repo } = await runContext(deps.db, run);
-  if (!repo) throw new GitHubError('failed-precondition', 'This task has no repo');
+  const repo = runRepo((await runContext(deps.db, run)).repos, req.repo);
   if (!(await githubGranted(deps.db, run, repo, 'pr')))
     throw new GitHubError(
       'permission-denied',
