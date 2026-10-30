@@ -13,6 +13,7 @@ import {
   type GitHubAccess,
   githubTools,
   inheritedEnv,
+  LocalModelControlPlane,
   type McpClient,
   mcpTools,
   requestBrowserTool,
@@ -25,6 +26,7 @@ import {
 import {
   CORE_TOOLS,
   type GitHubTokenResponse,
+  isLocalModel,
   Project,
   type RunToolAccess,
   repoFor,
@@ -108,6 +110,22 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       .catch(() => {});
     throw err;
   }
+  // The local model answers from this Mac's own server; a run without one cannot go on.
+  if (isLocalModel(started.model) && !env.localModel) {
+    const error =
+      'This task uses the local model, which runs only on a Mac with one set up (`dodo model set`). Set it up there, or pick a Gemini model.';
+    await control.finish({ reason: 'error', error, session: started.session }).catch(() => {});
+    console.log(error);
+    return 'error';
+  }
+  const model =
+    isLocalModel(started.model) && env.localModel
+      ? new LocalModelControlPlane(control, {
+          url: env.localModel.url,
+          // `local:<name>` asks for that model; plain `local` for whatever the Mac is set to.
+          model: started.model.includes(':') ? started.model.slice(6) : env.localModel.model,
+        })
+      : control;
   const task = Task.parse(started.task);
   const project = started.project ? Project.parse(started.project) : undefined;
   const store = new FirestoreTaskStore(clients.db, task.id, env.runId, project?.id);
@@ -205,7 +223,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       answer: started.answer,
     },
     {
-      control,
+      control: model,
       store,
       trace,
       tools,
@@ -330,6 +348,12 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       ? (JSON.parse(process.env.DODO_MCP_URLS) as Record<string, string>)
       : undefined,
     // The entrypoint's hard timeout (index.ts) fires 20 s before DODO_TIMEOUT_S.
+    localModel: process.env.DODO_LOCAL_MODEL_URL
+      ? {
+          url: process.env.DODO_LOCAL_MODEL_URL,
+          model: process.env.DODO_LOCAL_MODEL || undefined,
+        }
+      : undefined,
     deadline: process.env.DODO_TIMEOUT_S
       ? Date.now() + (Number(process.env.DODO_TIMEOUT_S) - 20) * 1000
       : undefined,

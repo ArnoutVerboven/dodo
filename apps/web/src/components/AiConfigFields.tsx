@@ -1,4 +1,4 @@
-import type { AiConfig } from '@dodo/core';
+import { type AiConfig, isLocalModel } from '@dodo/core';
 import { Input, Label, Select } from '@/components/ui/input';
 import { useDevices, useGitHub, useToolsets } from '@/lib/data';
 import { MODEL_OPTIONS } from '@/lib/options';
@@ -53,7 +53,16 @@ export function AiConfigFields({
               {m.label}
             </option>
           ))}
+          {value.model?.startsWith('local:') && (
+            <option value={value.model}>Local model ({value.model.slice(6)})</option>
+          )}
         </Select>
+        {isLocalModel(value.model) && (
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Runs on your Mac (the one picked below, else the one seen last), with the model set up
+            there by <code>dodo model set</code>. No budget is used.
+          </span>
+        )}
       </label>
       <label>
         <Label>Device</Label>

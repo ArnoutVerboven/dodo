@@ -1,6 +1,6 @@
 import type { Device } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
-import { routeDevice, routeToMac } from './routing.js';
+import { routeDevice, routeLocalModel, routeToMac } from './routing.js';
 import { decideBrowser } from './triggers.js';
 
 const now = 1_000_000;
@@ -109,5 +109,27 @@ describe('routeToMac', () => {
 
   it('is undefined without a paired Mac', () => {
     expect(routeToMac([mac('d3', 'Old', now, 'pending')])).toBeUndefined();
+  });
+});
+
+describe('routeLocalModel', () => {
+  const devices = [mac('d1', 'Air', now - 3_600_000), mac('d2', 'Studio', now - 7_200_000)];
+  it('sends auto and remote to the Mac seen most recently', () => {
+    expect(routeLocalModel('auto', devices)).toEqual({
+      device: 'mac:d1',
+      reason: 'Air, local model',
+    });
+    expect(routeLocalModel('gcp', devices)?.device).toBe('mac:d1');
+  });
+
+  it('keeps the Mac the task names', () => {
+    expect(routeLocalModel('mac:d2', devices)).toEqual({
+      device: 'mac:d2',
+      reason: 'Studio, local model',
+    });
+  });
+
+  it('is undefined without a paired Mac', () => {
+    expect(routeLocalModel('auto', [])).toBeUndefined();
   });
 });

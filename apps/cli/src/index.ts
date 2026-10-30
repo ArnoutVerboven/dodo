@@ -31,6 +31,12 @@ import { credentialStore } from './credentials.js';
 import { runDaemon, workerEntry } from './daemon.js';
 import { agentInstalled, installAgent, restartAgent, uninstallAgent } from './launchd.js';
 import {
+  checkLocalModel,
+  DEFAULT_LOCAL_MODEL_URL,
+  isLoopback,
+  normaliseBaseUrl,
+} from './local-model.js';
+import {
   connectLocal,
   type LocalMcpConfig,
   refreshServer,
@@ -64,6 +70,12 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo browser connect <token>
                          the extension's token, so Chrome never asks to allow the agent
   dodo browser use window|extension
+  dodo model             the local model tasks can use (Model: Local model, your Mac)
+  dodo model set [url] [--model <name>]
+                         where its OpenAI-compatible server listens on this Mac (default
+                         ${DEFAULT_LOCAL_MODEL_URL}, mlx_lm.server); checks it and restarts the daemon
+  dodo model test        ask it to call a tool, to see that the agent can work with it
+  dodo model off         no local model on this Mac
   dodo status            this Mac as the server sees it
   dodo doctor            check node, pairing, sign-in, the worker build, the sandbox and Chrome
   dodo logout            forget the pairing on this Mac (revoke it in Settings too)
@@ -350,6 +362,55 @@ async function browser(action: string | undefined, token: string | undefined) {
   }
 }
 
+async function model(action: string | undefined, url: string | undefined, flags: Flags) {
+  const config = requireConfig();
+  if (action === 'set') {
+    const base = normaliseBaseUrl(url ?? DEFAULT_LOCAL_MODEL_URL);
+    if (!isLoopback(base))
+      throw new Error(
+        `The local model must run on this Mac (localhost), not ${new URL(base).host}: the worker's sandbox reaches only this machine.`,
+      );
+    config.localModel = { url: base, ...(str(flags.model) ? { model: str(flags.model) } : {}) };
+    writeConfig(config);
+    console.log(`Local model: ${config.localModel.model ?? "the server's default"} at ${base}`);
+    if (agentInstalled()) {
+      restartAgent();
+      console.log('Restarted the background daemon so runs pick it up.');
+    } else console.log('Restart `dodo daemon` if it is running, so runs pick it up.');
+  } else if (action === 'off') {
+    config.localModel = undefined;
+    writeConfig(config);
+    console.log('No local model on this Mac any more.');
+    if (agentInstalled()) restartAgent();
+    return;
+  } else if (action !== undefined && action !== 'test') {
+    throw new Error('Usage: dodo model [set [url] [--model <name>]|test|off]');
+  }
+  if (!config.localModel) {
+    console.log(
+      `No local model set up. Start a server (see docs/LOCAL_MODEL.md), then: dodo model set ${DEFAULT_LOCAL_MODEL_URL}`,
+    );
+    return;
+  }
+  if (action !== 'test' && action !== 'set') {
+    console.log(
+      `Local model: ${config.localModel.model ?? "the server's default"} at ${config.localModel.url}`,
+    );
+  }
+  console.log('Checking it (the first call loads the model, which can take a minute)…');
+  const r = await checkLocalModel(config.localModel);
+  if (r.models.length) console.log(`  the server lists: ${r.models.join(', ')}`);
+  if (!r.ok) {
+    console.log(`  not working: ${r.problem}`);
+    return;
+  }
+  console.log(
+    r.toolCalls
+      ? `  ok: it called a tool (${r.seconds}s). Pick "Local model (your Mac)" as a task's model.`
+      : `  it answered in ${r.seconds}s but did not call the tool: the agent needs a model and server with tool calling.`,
+  );
+}
+
 /** Open a page in the user's default browser (macOS only; elsewhere the URL is printed). */
 function openInBrowser(url: string) {
   if (process.platform !== 'darwin') return;
@@ -411,6 +472,19 @@ async function doctor(): Promise<boolean> {
         : `${chrome.problems.join('; ')} (optional: tasks that use a browser)`
     }`,
   );
+  // Optional too: only tasks set to the local model need it.
+  if (config.localModel) {
+    const r = await checkLocalModel(config.localModel);
+    console.log(
+      `${r.ok && r.toolCalls ? 'ok  ' : 'info'} local model at ${config.localModel.url}: ${
+        r.ok
+          ? r.toolCalls
+            ? `answers with tool calls (${r.seconds}s)`
+            : 'answers, but without tool calls'
+          : r.problem
+      }`,
+    );
+  } else console.log('info local model: none (optional: dodo model set)');
   // Informational: setup installs it, so its absence is not a failure.
   if (process.platform === 'darwin')
     console.log(
@@ -498,6 +572,9 @@ async function main(full: string[]): Promise<number> {
       return 0;
     case 'mcp':
       await mcp(sub, third, argv, rest);
+      return 0;
+    case 'model':
+      await model(sub, third, flags);
       return 0;
     case 'doctor':
       await doctor();

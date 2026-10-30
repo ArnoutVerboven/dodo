@@ -17,6 +17,11 @@ export interface CliConfig {
   browser?: { mode?: 'window' | 'extension'; token?: string };
   /** MCP servers this Mac runs for the agent (`dodo mcp add`); env values never leave the Mac. */
   mcp?: LocalMcpConfig[];
+  /**
+   * The local model (`dodo model set`): an OpenAI-compatible server on this Mac that tasks set
+   * to the local model talk to. `model` is the name to ask it for, when it serves several.
+   */
+  localModel?: { url: string; model?: string };
 }
 
 export const VERSION = '0.1.0';

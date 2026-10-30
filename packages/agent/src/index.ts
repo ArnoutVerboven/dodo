@@ -3,6 +3,7 @@ export * from './catalog.js';
 export * from './control-plane.js';
 export * from './exec-tools.js';
 export * from './github-tools.js';
+export * from './local-model.js';
 export * from './loop.js';
 export * from './mcp.js';
 export * from './prompt.js';

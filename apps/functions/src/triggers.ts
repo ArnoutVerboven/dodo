@@ -1,6 +1,7 @@
 import {
   type Device,
   type GlobalSettings,
+  isLocalModel,
   type Project,
   paths,
   type Run,
@@ -8,7 +9,7 @@ import {
   type Task,
 } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
-import { routeDevice, routeToMac } from './routing.js';
+import { routeDevice, routeLocalModel, routeToMac } from './routing.js';
 import { stripUndefined } from './runtime.js';
 
 /**
@@ -112,8 +113,10 @@ export async function enqueueRun(
       (d) => ({ id: d.id, ...d.data() }) as Device,
     );
     const ai = resolve(task, project, settings);
+    const model = resolveModel(ai.model);
     const route =
       (opts.device === 'mac' ? routeToMac(devices) : undefined) ??
+      (isLocalModel(model) ? routeLocalModel(ai.device, devices) : undefined) ??
       routeDevice(ai.device, ai.folder, devices, now);
     const routing = [route.reason, decided.browser ? 'with a browser' : undefined]
       .filter(Boolean)
@@ -123,7 +126,7 @@ export async function enqueueRun(
       taskId,
       projectId: task.projectId,
       device: route.device,
-      model: resolveModel(ai.model),
+      model,
       browser: decided.browser,
       routing,
       state: 'queued',

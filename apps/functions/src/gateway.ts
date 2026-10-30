@@ -10,7 +10,14 @@ import {
   tokenCost,
   UnknownModelError,
 } from '@dodo/budget';
-import { eur, type GenerateRequest, type GenerateResponse, type MicroEur, paths } from '@dodo/core';
+import {
+  eur,
+  type GenerateRequest,
+  type GenerateResponse,
+  isLocalModel,
+  type MicroEur,
+  paths,
+} from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { ModelProvider } from './model-provider.js';
@@ -106,6 +113,13 @@ export async function generateWithBudget(
   req: Omit<GenerateRequest, 'runId'>,
 ): Promise<GenerateResponse> {
   const now = deps.now ?? Date.now;
+  if (isLocalModel(req.model)) {
+    // The worker on the Mac calls its own server; reaching the gateway means it has none.
+    throw new HttpsError(
+      'invalid-argument',
+      'The local model runs only on a Mac with one set up (`dodo model set`).',
+    );
+  }
   let price: ReturnType<typeof modelPrice>;
   try {
     price = modelPrice(req.model);

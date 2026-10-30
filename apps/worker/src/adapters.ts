@@ -65,6 +65,8 @@ export interface WorkerEnv {
   mcpUrls?: Record<string, string>;
   /** When the worker is killed (epoch ms), from DODO_TIMEOUT_S; a hold for an answer ends before it. */
   deadline?: number;
+  /** Mac: the local model's OpenAI-compatible server (`dodo model`), for runs on the local model. */
+  localModel?: { url: string; model?: string };
 }
 
 export interface Clients {

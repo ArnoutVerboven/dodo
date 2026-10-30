@@ -1,4 +1,4 @@
-import { MICRO_PER_EUR, type MicroEur } from '@dodo/core';
+import { isLocalModel, LOCAL_CONTEXT_WINDOW, MICRO_PER_EUR, type MicroEur } from '@dodo/core';
 
 /**
  * Prices used for budget reservations. Deliberately conservative:
@@ -75,8 +75,12 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   },
 };
 
-/** The model's context window; 1M tokens for a model not in the table (every Gemini today). */
+/**
+ * The model's context window; 1M tokens for a model not in the table (every Gemini today). The
+ * local model is never priced (it runs on your Mac, outside the gateway) but has a smaller one.
+ */
 export function contextWindow(model: string): number {
+  if (isLocalModel(model)) return LOCAL_CONTEXT_WINDOW;
   return MODEL_PRICES[model]?.contextWindow ?? 1_048_576;
 }
 

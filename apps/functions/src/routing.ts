@@ -56,13 +56,26 @@ export function routeDevice(
  * The Mac a run moves to when the agent asks for one (request_device): the approved Mac seen
  * most recently, online or not; the run waits for it. Undefined when none is paired.
  */
-export function routeToMac(devices: Device[]): DeviceRoute | undefined {
+export function routeToMac(
+  devices: Device[],
+  why: (name: string) => string = (name) => `moved to ${name} by the agent`,
+): DeviceRoute | undefined {
   const mac = devices
     .filter((d) => d.state === 'approved')
     .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
-  return mac
-    ? { device: deviceChoice(mac.id), reason: `moved to ${mac.name} by the agent` }
-    : undefined;
+  return mac ? { device: deviceChoice(mac.id), reason: why(mac.name) } : undefined;
+}
+
+/**
+ * The local model runs only on a Mac: the Mac the task names, else the approved one seen most
+ * recently (the run waits for it). Undefined when none is paired; the run then goes wherever
+ * the usual routing says and ends with a message saying why.
+ */
+export function routeLocalModel(choice: DeviceChoice, devices: Device[]): DeviceRoute | undefined {
+  if (choice.startsWith('mac:')) {
+    return { device: choice, reason: `${nameOf(devices, choice)}, local model` };
+  }
+  return routeToMac(devices, (name) => `${name}, local model`);
 }
 
 function nameOf(devices: Device[], choice: string): string {
