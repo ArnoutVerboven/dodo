@@ -154,7 +154,9 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   });
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
-    startedAt: now,
+    // A repeated start (the worker retried) keeps the first start time: steering comments
+    // are those posted after it.
+    startedAt: run.startedAt ?? now,
     lease: { owner: runUid(run.id), expiresAt: now + LEASE_MS },
     updatedAt: now,
     localToken: FieldValue.delete(),

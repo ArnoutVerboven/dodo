@@ -1,6 +1,6 @@
 import { HEADLESS_RESTARTED } from '@dodo/core';
 import { describe, expect, it } from 'vitest';
-import { GatewayBudgetError, GatewayRateLimitError } from './control-plane.js';
+import { GatewayBudgetError, GatewayRateLimitError, LeaseLostError } from './control-plane.js';
 import { HOLD_DEADLINE_MARGIN_MS, holdTime, runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { requestBrowserTool, requestDeviceTool, taskTools, toDeclarations } from './tools.js';
@@ -298,6 +298,50 @@ describe('runAgent', () => {
     expect(result.reason).toBe('interrupted');
     expect(control.requests).toHaveLength(0);
     expect(control.finishes[0]?.reason).toBe('interrupted');
+  });
+
+  it('survives a failed heartbeat while the lease is still safe', async () => {
+    const { control, run } = setup([{ calls: [{ name: 'finish', args: { outcome: 'done' } }] }]);
+    control.heartbeatErrors = [new Error('UNAVAILABLE: network blip')];
+    const result = await run();
+    // The first beat failed, the step's call went on; finish is the model's, not an error.
+    expect(result.reason).toBe('finished');
+    expect(control.finishes[0]?.outcome).toBe('done');
+  });
+
+  it('gives up when heartbeats keep failing past the tolerance', async () => {
+    const { control, run } = setup([{ calls: [{ name: 'finish', args: { outcome: 'done' } }] }]);
+    control.heartbeatErrors = [new Error('UNAVAILABLE')];
+    const result = await run({}, { heartbeatToleranceMs: 0 });
+    expect(result.reason).toBe('error');
+    expect(control.requests).toHaveLength(0);
+  });
+
+  it('ends at once on a lost lease, whatever the tolerance', async () => {
+    const { control, run } = setup([{ calls: [{ name: 'finish', args: { outcome: 'done' } }] }]);
+    control.heartbeatErrors = [new LeaseLostError('lease_lost')];
+    const result = await run({}, { heartbeatToleranceMs: 60_000 });
+    expect(result.reason).toBe('lease_lost');
+    expect(control.requests).toHaveLength(0);
+  });
+
+  it('never runs two heartbeats at once', async () => {
+    const { control, run } = setup([
+      { calls: [{ name: 'set_status', args: { text: 'a' } }] },
+      { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+    ]);
+    let live = 0;
+    let most = 0;
+    const plain = control.heartbeat.bind(control);
+    control.heartbeat = async () => {
+      live++;
+      most = Math.max(most, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live--;
+      return plain();
+    };
+    await run({}, { heartbeatMs: 1 });
+    expect(most).toBe(1);
   });
 
   it('stops when the gateway refuses for budget, and passes on which cap it was', async () => {

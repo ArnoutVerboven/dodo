@@ -328,9 +328,12 @@ export const runStart = onCall(
   async (request) => {
     const { runId } = parseOr<{ runId: string }>(HeartbeatRequest, request.data);
     const deps = controlDeps();
+    // `running` too: the worker retries start after a network error, and a start that already
+    // went through must answer again rather than end the run.
     const run = await loadRunForCaller(deps.db, caller(request.auth), runId, [
       'claimed',
       'dispatching',
+      'running',
     ]);
     return start(deps, run);
   },

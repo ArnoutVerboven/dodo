@@ -69,6 +69,39 @@ const TRANSCRIBE_SYSTEM =
 const SEARCH_SYSTEM =
   'You are a web search tool for another agent. Search the web and answer the query with the facts the sources give: concise, specific (names, numbers, dates, prices, addresses), and say when sources disagree or nothing relevant was found. No preamble, no follow-up questions.';
 
+/**
+ * A Vertex failure that another try may fix: rate limited (429), overloaded or briefly down
+ * (500, 502, 503, 504), or the connection dropped. Such a call produced no output, so it
+ * cost nothing and is safe to repeat.
+ */
+export function isTransientVertexError(err: unknown): boolean {
+  const e = err as { status?: number; code?: number | string; message?: string };
+  const status = typeof e.status === 'number' ? e.status : typeof e.code === 'number' ? e.code : 0;
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+  return /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|UNAVAILABLE|RESOURCE_EXHAUSTED/i.test(
+    e.message ?? '',
+  );
+}
+
+export const VERTEX_RETRY_DELAYS_MS = [2_000, 5_000];
+
+/** Try a Vertex call again (with jitter) while it fails transiently. */
+export async function retryVertex<T>(
+  fn: () => Promise<T>,
+  delays: number[] = VERTEX_RETRY_DELAYS_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const delay = delays[attempt];
+      if (delay === undefined || !isTransientVertexError(err)) throw err;
+      await sleep(delay + Math.floor(Math.random() * delay * 0.3));
+    }
+  }
+}
+
 export class VertexProvider implements ModelProvider, SearchProvider, TranscribeProvider {
   private readonly ai: GoogleGenAI;
   constructor(project: string, location: string) {
@@ -76,7 +109,9 @@ export class VertexProvider implements ModelProvider, SearchProvider, Transcribe
   }
 
   async countTokens(req: Pick<ModelRequest, 'model' | 'contents' | 'systemInstruction' | 'tools'>) {
-    const r = await this.ai.models.countTokens({ model: req.model, contents: req.contents });
+    const r = await retryVertex(() =>
+      this.ai.models.countTokens({ model: req.model, contents: req.contents }),
+    );
     // countTokens ignores system instruction and tools; add a conservative estimate for them.
     const extra = Math.ceil(
       ((req.systemInstruction?.length ?? 0) + JSON.stringify(req.tools ?? []).length) / 3,
@@ -85,18 +120,20 @@ export class VertexProvider implements ModelProvider, SearchProvider, Transcribe
   }
 
   async generate(req: ModelRequest): Promise<ModelResult> {
-    const r = await this.ai.models.generateContent({
-      model: req.model,
-      contents: req.contents,
-      config: {
-        systemInstruction: req.systemInstruction,
-        tools: req.tools?.length ? [{ functionDeclarations: req.tools }] : undefined,
-        maxOutputTokens: req.maxOutputTokens,
-        temperature: req.temperature,
-        thinkingConfig:
-          req.thinkingBudget !== undefined ? { thinkingBudget: req.thinkingBudget } : undefined,
-      },
-    });
+    const r = await retryVertex(() =>
+      this.ai.models.generateContent({
+        model: req.model,
+        contents: req.contents,
+        config: {
+          systemInstruction: req.systemInstruction,
+          tools: req.tools?.length ? [{ functionDeclarations: req.tools }] : undefined,
+          maxOutputTokens: req.maxOutputTokens,
+          temperature: req.temperature,
+          thinkingConfig:
+            req.thinkingBudget !== undefined ? { thinkingBudget: req.thinkingBudget } : undefined,
+        },
+      }),
+    );
     const candidate = r.candidates?.[0];
     const parts = (candidate?.content?.parts ?? []).map((p) => ({ ...p })) as Content['parts'];
     const u = r.usageMetadata;
@@ -153,18 +190,20 @@ export class VertexProvider implements ModelProvider, SearchProvider, Transcribe
   }
 
   async search(req: SearchRequest): Promise<SearchResult> {
-    const r = await this.ai.models.generateContent({
-      model: req.model,
-      contents: [{ role: 'user', parts: [{ text: req.query }] }],
-      config: {
-        systemInstruction: SEARCH_SYSTEM,
-        tools: [{ googleSearch: {} }],
-        maxOutputTokens: req.maxOutputTokens,
-        temperature: 0.2,
-        // Thinking would come out of the same small output allowance; a lookup needs none.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
+    const r = await retryVertex(() =>
+      this.ai.models.generateContent({
+        model: req.model,
+        contents: [{ role: 'user', parts: [{ text: req.query }] }],
+        config: {
+          systemInstruction: SEARCH_SYSTEM,
+          tools: [{ googleSearch: {} }],
+          maxOutputTokens: req.maxOutputTokens,
+          temperature: 0.2,
+          // Thinking would come out of the same small output allowance; a lookup needs none.
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      }),
+    );
     const candidate = r.candidates?.[0];
     const answer = (candidate?.content?.parts ?? [])
       .filter((p) => p.text && !p.thought)

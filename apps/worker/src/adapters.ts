@@ -132,12 +132,49 @@ function translate(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/**
+ * A callable failure worth another try: the call may not have reached the function (network,
+ * cold start, overload). A refusal (budget, lease, halt, bad request) is never retried.
+ */
+export function isTransient(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  const code = e.code ?? '';
+  if (code.endsWith('unavailable')) return !/halted/.test(e.message ?? '');
+  return code.endsWith('deadline-exceeded') || code.endsWith('internal');
+}
+
+/** Backoff between tries of an idempotent call: about 10 s in all before giving up. */
+export const RETRY_DELAYS_MS = [1_000, 3_000, 6_000];
+
+/** Run `fn`, trying again after each delay while it fails with a transient error. */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  delays: number[] = RETRY_DELAYS_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const delay = delays[attempt];
+      if (delay === undefined || !isTransient(err)) throw err;
+      // Jitter, so a worker that lost its network does not come back in lockstep.
+      await sleep(delay + Math.floor(Math.random() * delay * 0.3));
+    }
+  }
+}
+
 export class CallableControlPlane implements ControlPlane {
   constructor(
     private readonly fns: Functions,
     private readonly runId: string,
   ) {}
-  private async call<T>(name: string, data: unknown): Promise<T> {
+  /**
+   * `retry` only for calls that are safe to repeat: start, heartbeat and finish are (the
+   * server checks the run's state), a model call is not (it may already have been charged).
+   */
+  private async call<T>(name: string, data: unknown, retry = false): Promise<T> {
+    if (retry) return withRetry(() => this.call<T>(name, data, false));
     try {
       // The callable encoder turns undefined into null; drop those keys first.
       const r = await httpsCallable(this.fns, name, { timeout: 300_000 })(
@@ -168,7 +205,7 @@ export class CallableControlPlane implements ControlPlane {
       tools?: RunToolAccess;
       google?: RunGoogleAccess;
       notion?: RunNotionAccess;
-    }>('runStart', { runId: this.runId });
+    }>('runStart', { runId: this.runId }, true);
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {
     return GenerateResponse.parse(
@@ -202,13 +239,13 @@ export class CallableControlPlane implements ControlPlane {
     }
   }
   async heartbeat() {
-    return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }));
+    return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }, true));
   }
   async requestInput(req: Omit<RequestInputRequest, 'runId'>) {
     return this.call<{ messageId?: string }>('runRequestInput', { runId: this.runId, ...req });
   }
   async finish(req: Omit<FinishRequest, 'runId'>) {
-    await this.call('runFinish', { runId: this.runId, ...req });
+    await this.call('runFinish', { runId: this.runId, ...req }, true);
   }
   /**
    * One vault value for the site a tool types it into. A refusal (not approved for this task,
