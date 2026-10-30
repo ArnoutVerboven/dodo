@@ -9,7 +9,7 @@ import {
   type Task,
 } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
-import { routeDevice, routeLocalModel, routeToMac } from './routing.js';
+import { looksLikeBrowserWork, routeDevice, routeLocalModel, routeToMac } from './routing.js';
 import { stripUndefined } from './runtime.js';
 
 /**
@@ -48,6 +48,8 @@ export interface EnqueueOptions {
   browser?: boolean;
   /** The run goes to the user's Mac whatever the device setting says (request_device). */
   device?: 'mac';
+  /** The user's reply that started this run, for a browser decision on a continued task. */
+  hint?: string;
 }
 
 /** What the run's browser flag is, given the setting and what is already known. */
@@ -59,8 +61,14 @@ export async function decideBrowser(
 ): Promise<{ browser: boolean; reason?: string }> {
   if (setting === 'chrome') return { browser: true };
   if (setting === undefined || setting === 'none') return { browser: false };
-  if (opts.browser !== undefined) return { browser: opts.browser };
-  if (opts.trigger !== 'new' || !ask) return { browser: false };
+  if (opts.browser === true) return { browser: true };
+  // A reply on a task that ran without a browser may now be about a website ("log in to it").
+  if (opts.browser === false || opts.trigger !== 'new') {
+    return opts.trigger === 'comment' && opts.hint && looksLikeBrowserWork(opts.hint)
+      ? { browser: true, reason: 'the reply is about a website' }
+      : { browser: false };
+  }
+  if (!ask) return { browser: false };
   try {
     const browser = await ask();
     return { browser, reason: browser ? 'the task needs a browser' : undefined };
@@ -92,15 +100,15 @@ export async function enqueueRun(
   const firstSettings = ((await db.doc(paths.settings()).get()).data() ??
     {}) as Partial<GlobalSettings>;
   const firstAi = resolve(first, firstProject, firstSettings);
-  // The browser question is a Gemini call: a local-model task never makes one (the agent can
-  // still ask for a browser mid-task).
-  const ask = isLocalModel(resolveModel(firstAi.model)) ? undefined : deps.needsBrowser;
-  const decided = await decideBrowser(
-    firstAi.browser,
-    opts,
-    ask ? () => ask({ ...first, id: taskId }) : undefined,
-    deps.log,
-  );
+  // The browser question is a Gemini call: a local-model task never makes one, and decides
+  // from the words in the task instead (the agent can still ask for a browser mid-task).
+  const ask: (() => Promise<boolean>) | undefined = isLocalModel(resolveModel(firstAi.model))
+    ? async () => looksLikeBrowserWork(`${first.title}\n${first.description}`)
+    : deps.needsBrowser
+      ? () =>
+          (deps.needsBrowser as NonNullable<TriggerDeps['needsBrowser']>)({ ...first, id: taskId })
+      : undefined;
+  const decided = await decideBrowser(firstAi.browser, opts, ask, deps.log);
 
   return db.runTransaction(async (t) => {
     const taskSnap = await t.get(db.doc(paths.task(taskId)));
@@ -207,7 +215,7 @@ export async function onTaskChanged(
 export async function onUserMessage(
   deps: TriggerDeps,
   taskId: string,
-  message: { author: string; input?: unknown },
+  message: { author: string; input?: unknown; body?: string },
 ) {
   if (message.author !== 'user' || message.input) return;
   const task = (await deps.db.doc(paths.task(taskId)).get()).data() as Task | undefined;
@@ -220,6 +228,7 @@ export async function onUserMessage(
     trigger: sessionPath ? 'comment' : 'new',
     sessionPath,
     browser,
+    hint: typeof message.body === 'string' ? message.body.slice(0, 2000) : undefined,
   });
   if (id) deps.log?.('run enqueued (comment)', { taskId, runId: id });
 }

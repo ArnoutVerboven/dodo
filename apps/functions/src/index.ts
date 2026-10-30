@@ -560,7 +560,11 @@ export const onMessageWritten = onDocumentWritten(
       reap: (runId: string) => reapIfStale(controlDeps(), runId),
     };
     if (!before) {
-      await onUserMessage(deps, event.params.taskId, after as { author: string; input?: unknown });
+      await onUserMessage(
+        deps,
+        event.params.taskId,
+        after as { author: string; input?: unknown; body?: string },
+      );
     } else {
       await onInputAnswered(
         deps,

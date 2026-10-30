@@ -80,7 +80,7 @@ export const PHONE_APP_LOGIN =
 
 /** Browser section for a run without a browser that may ask for one. */
 export const AGENT_REQUEST_BROWSER =
-  'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation.';
+  'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation. Logging in to a site, also by an emailed code, is browser work: call request_browser for it rather than telling the user it cannot be done.';
 
 /** Repository section, when the task has a GitHub checkout (one repo, or several in subfolders). */
 export const agentRepository = (repo: string | string[], dirs?: string[]) => {
