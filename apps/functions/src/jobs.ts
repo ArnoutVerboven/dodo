@@ -18,6 +18,7 @@ import {
   missingScopes,
   type Notifier,
   type OAuthClient,
+  OPTIONAL_GOOGLE_SCOPES,
   revokeToken,
   runGmailJob,
   type TaskSink,
@@ -280,7 +281,9 @@ export async function completeGoogleConnect(
   shared: JobsShared,
   q: { code?: string; state?: string; error?: string },
 ): Promise<string> {
-  const back = (result: string) => `${shared.appUrl()}/jobs?google=${encodeURIComponent(result)}`;
+  // The Google card lives in Settings › Integrations (Jobs and the agent's Google tools share it).
+  const back = (result: string) =>
+    `${shared.appUrl()}/settings?section=integrations&google=${encodeURIComponent(result)}`;
   if (!q.state) return back('invalid_state');
   const ref = shared.db.doc(jobPaths.oauthState(q.state));
   // Single use: the state is deleted in the same transaction that reads it.
@@ -299,12 +302,14 @@ export async function completeGoogleConnect(
     const tokens = await exchangeCode(shared.fetch ?? fetch, client, q.code);
     await shared.tokens.put(tokens.refreshToken);
     const missing = missingScopes(tokens.scopes);
+    // Drive is for the agent only: without it the Jobs still work, and the card says what is off.
+    const required = missing.filter((s) => !OPTIONAL_GOOGLE_SCOPES.includes(s));
     await store.setConnector('google', {
-      status: missing.length ? 'missing_scopes' : 'connected',
+      status: required.length ? 'missing_scopes' : 'connected',
       email: tokens.email,
       scopes: tokens.scopes,
       missingScopes: missing,
-      error: missing.length
+      error: required.length
         ? 'Some permissions were not granted. Connect again and tick every box.'
         : undefined,
       connectedAt: Date.now(),

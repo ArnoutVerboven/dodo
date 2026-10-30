@@ -3,6 +3,7 @@ export * from './email-code.js';
 export * from './events.js';
 export * from './gmail-job.js';
 export * from './google.js';
+export * from './google-workspace.js';
 export * from './mail.js';
 export * from './model.js';
 export * from './ports.js';

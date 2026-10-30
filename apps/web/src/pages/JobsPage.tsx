@@ -6,38 +6,19 @@ import {
 } from '@dodo/jobs/model';
 import { ChevronRight, FlaskConical, Loader2, Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link } from 'react-router';
 import { SourceIcon } from '@/components/SourceIcon';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Input, Label, Select, Textarea } from '@/components/ui/input';
 import { useBudgets, useProjects } from '@/lib/data';
-import {
-  connectGoogle,
-  disconnectGoogle,
-  runJobNow,
-  saveJob,
-  useConnector,
-  useJob,
-  useJobRuns,
-} from '@/lib/jobs';
+import { runJobNow, saveJob, useConnector, useJob, useJobRuns } from '@/lib/jobs';
 import { cn, formatEur, timeAgo } from '@/lib/utils';
 
 const GMAIL_JOB = 'gmail-followup';
 
-const CONNECT_RESULT: Record<string, string> = {
-  connected: 'Google is connected.',
-  missing_scopes: 'Some permissions were not granted. Connect again and tick every box.',
-  cancelled: 'Connecting Google was cancelled.',
-  invalid_state: 'That sign-in link expired. Try again.',
-  not_configured: 'Google is not set up for this deployment yet.',
-  error: 'Connecting Google failed. Try again.',
-};
-
 /** The Jobs tab: pipelines that watch your mail and put tasks on the board (docs/JOBS.md). */
 export function JobsPage() {
-  const [params, setParams] = useSearchParams();
-  const result = params.get('google');
   return (
     <div className="max-w-3xl space-y-4">
       <div>
@@ -47,14 +28,6 @@ export function JobsPage() {
           your approval. Nothing is sent without your Yes.
         </p>
       </div>
-      {result && (
-        <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
-          <span>{CONNECT_RESULT[result] ?? result}</span>
-          <Button size="sm" variant="ghost" onClick={() => setParams({})}>
-            Dismiss
-          </Button>
-        </div>
-      )}
       <GoogleCard />
       <GmailJobCard />
       <Card className="opacity-70">
@@ -69,67 +42,38 @@ export function JobsPage() {
   );
 }
 
+/** The Google account itself is managed in Settings › Integrations (shared with the agent). */
 function GoogleCard() {
   const { data: connector, loading } = useConnector('google');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    setError(undefined);
-    try {
-      await fn();
-    } catch (err) {
-      setError((err as Error).message);
-      setBusy(false);
-    }
-    setBusy(false);
-  };
+  if (loading) return null;
   const connected = connector?.status === 'connected';
   return (
     <Card>
       <CardHeader
         title="Google account"
         action={
-          !loading && (
-            <div className="flex gap-1">
-              {connected && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => act(disconnectGoogle)}
-                >
-                  Disconnect
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant={connected ? 'outline' : 'default'}
-                disabled={busy}
-                onClick={() => act(connectGoogle)}
-              >
-                {connector && connector.status !== 'disconnected' ? 'Reconnect' : 'Connect Google'}
-              </Button>
-            </div>
-          )
+          <Link to="/settings?section=integrations">
+            <Button size="sm" variant={connected ? 'outline' : 'default'}>
+              {connected ? 'Manage' : 'Connect in Settings'}
+            </Button>
+          </Link>
         }
       />
-      <CardBody className="space-y-1 text-sm">
+      <CardBody className="text-sm">
         {connected ? (
           <p className="flex items-center gap-2">
             <SourceIcon source={{ kind: 'gmail' }} />
             Connected as <b>{connector.email ?? 'your account'}</b>
             <span className="text-xs text-muted-foreground">
-              · Gmail (read, drafts) and Calendar (free/busy, events you approve)
+              · Jobs read the inbox, write drafts and read your free/busy time
             </span>
           </p>
         ) : (
           <p className="text-muted-foreground">
             {connector?.error ??
-              'Connect the Google account whose inbox the jobs should watch. Jobs read the inbox, write drafts and read your free/busy time; they never archive, label or delete mail.'}
+              'Connect the Google account whose inbox the jobs should watch, in Settings › Integrations. Jobs never archive, label or delete mail.'}
           </p>
         )}
-        {error && <p className="text-danger">{error}</p>}
       </CardBody>
     </Card>
   );

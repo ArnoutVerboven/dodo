@@ -95,7 +95,7 @@ items. The cancel / done / next-step handling, cards, counts and run entries com
 
 ### Gmail and Google Calendar (OAuth, built first)
 
-One Google OAuth client for both. "Connect Google" in the Jobs tab runs the standard web flow; the callback function stores the refresh token in Secret Manager (`dodo-google-token`, readable only by the `dodo-jobs` account) and shows the connected address in the tab.
+One Google OAuth client for both, shared with the agent's Google tools (below). "Connect Google" in Settings › Integrations runs the standard web flow; the callback function stores the refresh token in Secret Manager (`dodo-google-token`, readable only by the `dodo-jobs` account) and shows the connected address in the tab.
 
 | Scope               | Why                                                          |
 | ------------------- | ------------------------------------------------------------ |
@@ -103,9 +103,25 @@ One Google OAuth client for both. "Connect Google" in the Jobs tab runs the stan
 | `gmail.compose`     | create, update and send drafts (replies only after approval) |
 | `calendar.readonly` | free/busy and time zone, to propose slots                    |
 | `calendar.events`   | add an event you approved on the task (nobody is invited)    |
+| `drive`             | the agent's Drive tools (optional: Jobs work without it)     |
 | `openid email`      | show which account is connected                              |
 
-No `gmail.modify`: jobs never archive, label or delete mail. The app stays unverified for personal use; publishing the consent screen "In production" avoids the 7-day refresh-token expiry of testing mode.
+No `gmail.modify` and no `gmail.send`: nothing archives, labels or deletes mail, and the agent cannot send mail. The app stays unverified for personal use; publishing the consent screen "In production" avoids the 7-day refresh-token expiry of testing mode.
+
+### Google tools for the task agent
+
+The same connection gives every task run Gmail, Calendar and Drive tools (Tools › Built-in › **Google**, switchable and pickable in toolsets). The worker never holds the token: each call goes to the `googleTool` callable, which runs as `dodo-jobs` (the only account that can read the token), checks the run's identity and does the one operation.
+
+| Tool                                           | What                                                                                                                      | Policy                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `gmail_search`, `gmail_read_thread`            | Gmail search syntax; full text of a thread                                                                                | read: free (asks in the untrusted profile)          |
+| `calendar_list_events`                         | events on the primary calendar                                                                                            | read                                                |
+| `calendar_create_event`                        | an event on the primary calendar, nobody invited, no email                                                                | asks: `Calendar(create:<title>)`                    |
+| `drive_search`, `drive_read`, `drive_download` | find files; Docs/Slides as text, Sheets as CSV; copy a file into the task folder                                          | read: `Drive(search:…)`, `Drive(read:<id>)`         |
+| `drive_save_file`                              | a new file in the Drive folder from Settings (default `dodo`, created on first use), attached to the task as a Drive link | free, like adding a task file: `Drive(save:<name>)` |
+| `drive_update_file`                            | new content for an existing file (Drive keeps the old version)                                                            | asks: `Drive(edit:<file id>)`                       |
+
+The control plane checks a calendar event or file edit against an allow rule or your answered approval on the task before it runs it, as it does for GitHub pushes. A tool the connection has no scope for is left out of the run. Files move through the callable, so one file is at most 7 MB.
 
 ### WhatsApp (skipped for now, decided 2026-10-27)
 
@@ -127,10 +143,10 @@ The Jobs tab holds per-job settings (threshold, lookback, interval, caps, monthl
 
 ## 6. Setup (once)
 
-1. Google Cloud console › Google Auth Platform: the consent screen already exists (Google sign-in). Under **Data access** add the scopes `gmail.readonly`, `gmail.compose`, `calendar.readonly`, `calendar.events`. Under **Audience**, **Publish app** (to "In production"): unverified is fine for your own account and avoids refresh tokens that expire after 7 days in testing mode.
+1. Google Cloud console › Google Auth Platform: the consent screen already exists (Google sign-in). Under **Data access** add the scopes `gmail.readonly`, `gmail.compose`, `calendar.readonly`, `calendar.events` and `drive`. Under **Audience**, **Publish app** (to "In production"): unverified is fine for your own account and avoids refresh tokens that expire after 7 days in testing mode.
 2. **Clients**: create an OAuth client of type _Web application_ (or reuse the existing web client) with the redirect URI `https://europe-west1-dodo-512722.cloudfunctions.net/jobsGoogleCallback`.
 3. GitHub › repository secrets: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, then re-run the Deploy workflow.
-4. dodo › Jobs › **Connect Google**; on the "Google hasn't verified this app" screen choose Advanced › Go to dodo, and tick every box.
+4. dodo › Settings › Integrations › **Connect Google** (or **Reconnect** to add Drive to an existing connection); on the "Google hasn't verified this app" screen choose Advanced › Go to dodo, and tick every box.
 5. Try **Dry run**, then switch the job on.
 
 ## 7. More jobs worth having

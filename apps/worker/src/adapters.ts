@@ -15,12 +15,14 @@ import {
   type GenerateRequest,
   GenerateResponse,
   GitHubTokenResponse,
+  type GoogleOp,
   HeartbeatResponse,
   PersonalInfo,
   Project,
   paths,
   type RequestInputRequest,
   type RunEvent,
+  type RunGoogleAccess,
   type RunToolAccess,
   SearchResponse,
   type StatusLine,
@@ -162,6 +164,7 @@ export class CallableControlPlane implements ControlPlane {
         allowedHosts: string[];
       };
       tools?: RunToolAccess;
+      google?: RunGoogleAccess;
     }>('runStart', { runId: this.runId });
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {
@@ -172,6 +175,17 @@ export class CallableControlPlane implements ControlPlane {
   /** web_search: the control plane runs it and charges the task; budget refusals end the run. */
   async search(query: string) {
     return SearchResponse.parse(await this.call('gatewaySearch', { runId: this.runId, query }));
+  }
+  /** A Gmail, Calendar or Drive call: the control plane runs it with the Google token. */
+  async google(call: GoogleOp): Promise<Record<string, unknown>> {
+    try {
+      const r = await httpsCallable(this.fns, 'googleTool', { timeout: 180_000 })(
+        JSON.parse(JSON.stringify({ runId: this.runId, call })),
+      );
+      return (r.data ?? {}) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error((err as Error).message || `Google ${call.op} failed`);
+    }
   }
   async heartbeat() {
     return HeartbeatResponse.parse(await this.call('runHeartbeat', { runId: this.runId }));

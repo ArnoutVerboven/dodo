@@ -6,6 +6,7 @@ import { AiConfigFields } from '@/components/AiConfigFields';
 import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
 import { GitHubSettings } from '@/components/GitHubSettings';
+import { GoogleSettings } from '@/components/GoogleSettings';
 import { PersonalInfoSettings } from '@/components/PersonalInfoSettings';
 import { PromptsSettings } from '@/components/PromptsSettings';
 import { PushSettings } from '@/components/PushSettings';
@@ -34,9 +35,10 @@ type Section = (typeof SECTIONS)[number]['key'];
 export function SettingsPage() {
   const { data: settings, loading } = useSettings();
   const [params, setParams] = useSearchParams();
-  // The GitHub App install comes back with ?github=; its card is under Integrations.
+  // The GitHub App install and Google's consent screen come back with ?github= / ?google=;
+  // their cards are under Integrations.
   const section = (SECTIONS.find((s) => s.key === params.get('section'))?.key ??
-    (params.has('github') ? 'integrations' : 'general')) as Section;
+    (params.has('github') || params.has('google') ? 'integrations' : 'general')) as Section;
   const [defaults, setDefaults] = useState<Partial<AiConfig>>(settings.defaults);
   const [total, setTotal] = useState(toEur(settings.totalBudget));
   const [monthly, setMonthly] = useState(toEur(settings.monthlyBudget));
@@ -217,6 +219,7 @@ export function SettingsPage() {
 
           {section === 'integrations' && (
             <>
+              <GoogleSettings />
               <GitHubSettings />
               <Card>
                 <CardHeader title="Telegram notifications" />

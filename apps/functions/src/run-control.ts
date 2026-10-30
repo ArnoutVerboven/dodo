@@ -9,12 +9,14 @@ import {
   type RequestInputRequest,
   type Run,
   type RunEndReason,
+  type RunGoogleAccess,
   type RunToolAccess,
   type TaskStatus,
 } from '@dodo/core';
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
+import { googleAccessForRun } from './google-tools.js';
 import { toolAccessForRun } from './mcp.js';
 import {
   HEARTBEAT_MS,
@@ -78,6 +80,8 @@ export interface StartResponse {
   };
   /** Tools view: which built-ins and MCP servers this run gets. Absent: every built-in. */
   tools?: RunToolAccess;
+  /** Google is connected (Settings › Integrations): the run gets the Google tools it has scopes for. */
+  google?: RunGoogleAccess;
 }
 
 /** The permission rules a run is judged by: global, then project, then task, in that order. */
@@ -129,6 +133,10 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     deps.log?.('tool access failed', { runId: run.id, err: String(err) });
     return undefined;
   });
+  const google = await googleAccessForRun(deps.db).catch((err) => {
+    deps.log?.('google access failed', { runId: run.id, err: String(err) });
+    return undefined;
+  });
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
     startedAt: now,
@@ -152,6 +160,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     browserSetting: browserSettingOf(task, project),
     policy,
     ...(tools ? { tools } : {}),
+    ...(google ? { google } : {}),
   };
 }
 

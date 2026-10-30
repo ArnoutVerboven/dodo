@@ -196,7 +196,7 @@ const clip = (s: string) =>
     ? `${s.slice(0, MAX_OUTPUT)}\n…[truncated ${s.length - MAX_OUTPUT} chars]`
     : s;
 
-function inside(workdir: string, p: string): string {
+export function inside(workdir: string, p: string): string {
   const resolved = path.resolve(workdir, p);
   if (resolved !== workdir && !resolved.startsWith(`${workdir}${path.sep}`)) {
     throw new Error(`Path ${p} is outside the task folder`);
