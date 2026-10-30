@@ -184,6 +184,7 @@ export async function browserTools(
       const host = hostOf(url);
       if (name === 'browser_navigate' || host !== currentHost) tainted = false;
       currentHost = host;
+      ctx.secrets?.setPage?.(host);
     }
     let text = res.text.length > MAX_RESULT ? `${res.text.slice(0, MAX_RESULT)}\n…(cut)` : res.text;
     if (ctx.secrets) text = ctx.secrets.redact(text);
@@ -223,6 +224,7 @@ export async function browserTools(
             if ('error' in page) return { result: { error: page.error } };
             if (page.host !== currentHost) tainted = false;
             currentHost = page.host;
+            ctx.secrets?.setPage?.(page.host);
             const resolved = await resolveVault(name, args, page, ctx);
             if ('error' in resolved) return { result: { error: resolved.error } };
             injected = resolved.injected;

@@ -5,6 +5,7 @@ import {
   compactThreshold,
   formatTokens,
   formatTokenUsage,
+  isTaskOnlyRule,
   type Run,
   resolveAiConfig,
   type Task,
@@ -911,8 +912,9 @@ function InputRequestView({
   const [text, setText] = useState('');
   const [secretError, setSecretError] = useState<string>();
   const [rule, setRule] = useState(req?.suggestedRule ?? '');
-  // A vault entry is approved per task: the server ignores project and global rules for it.
-  const isVault = req?.suggestedRule?.startsWith('Vault(') ?? false;
+  // A vault entry and the Google session are approved per task: the server ignores project
+  // and global rules for them.
+  const isVault = isTaskOnlyRule(req?.suggestedRule);
   const { data: task } = useTask(taskId);
   // Without a project the server stores a "project" rule on the task, so offer task instead.
   const hasProject = !!task?.projectId;

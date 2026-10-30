@@ -1,4 +1,4 @@
-import { answerRef, answerRefs, sameSite, vaultRefs } from '@dodo/core';
+import { answerRef, answerRefs, sameSite, siteOf, vaultRefs } from '@dodo/core';
 
 /**
  * Vault values inside a run (ARCHITECTURE §9.2). The model only ever writes references like
@@ -21,7 +21,14 @@ export interface SecretResolver {
    * typed only on `site` (any of its subdomains) and redacted from now on. Returns the reference.
    */
   hold(id: string, value: string, site: string): string;
+  /** The browser tools tell it which page is open, so a code asked for now is bound to it. */
+  setPage?(host: string): void;
+  /** The site of the page that is open (for a secret question), if any. */
+  pageSite?(): string | undefined;
 }
+
+/** A secret answer as the control plane hands it out: with the site it was asked on. */
+export type FetchedAnswer = string | { value: string; site?: string };
 
 export { vaultRefs as findVaultRefs } from '@dodo/core';
 
@@ -52,8 +59,9 @@ export function escapedForms(value: string): string[] {
 export function createSecretResolver(
   fetchValue: (entryId: string, field: string, host: string) => Promise<string>,
   /** A secret answer to ask_user (`{{answer:<messageId>}}`); absent: such refs are refused. */
-  fetchAnswer?: (messageId: string) => Promise<string>,
+  fetchAnswer?: (messageId: string) => Promise<FetchedAnswer>,
 ): SecretResolver {
+  let page = '';
   /** value (and its escaped forms) → reference, longest first when redacting. */
   const seen = new Map<string, string>();
   const remember = (value: string, ref: string) => {
@@ -81,11 +89,21 @@ export function createSecretResolver(
           continue;
         }
         if (!fetchAnswer) throw new Error('Secret answers are not available in this run.');
-        const value = await fetchAnswer(r.messageId);
+        const fetched = await fetchAnswer(r.messageId);
+        const { value, site } = typeof fetched === 'string' ? { value: fetched } : fetched;
+        // A code you gave for one site is typed there only (any of its subdomains).
+        if (site && !sameSite(host, site))
+          throw new Error(`That code is for ${site} and can only be typed there, not on ${host}.`);
         remember(value, r.ref);
         out = out.split(r.ref).join(value);
       }
       return out;
+    },
+    setPage(host) {
+      page = host;
+    },
+    pageSite() {
+      return page ? siteOf(page) : undefined;
     },
     hold(id, value, site) {
       const ref = answerRef(id);

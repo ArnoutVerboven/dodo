@@ -1,4 +1,3 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   DEFAULT_DRIVE_FOLDER,
@@ -10,6 +9,7 @@ import {
   type RunGoogleAccess,
 } from '@dodo/core';
 import { z } from 'zod';
+import { readAsAgent, writeAsAgent } from './agent-user.js';
 import { inside } from './exec-tools.js';
 import { define, type ToolContext, type ToolDef } from './tools.js';
 
@@ -86,11 +86,19 @@ async function content(
   if (args.text !== undefined) return { data: Buffer.from(args.text, 'utf8').toString('base64') };
   if (!args.path) return { error: 'Give path (a file in the task folder) or text' };
   const file = inside(ctx.workdir ?? process.cwd(), args.path);
-  const info = await stat(file).catch(() => undefined);
-  if (!info?.isFile()) return { error: `No file ${args.path} in the task folder` };
-  if (info.size > GOOGLE_FILE_MAX_BYTES)
-    return { error: `${args.path} is ${info.size} bytes; files up to ${GOOGLE_FILE_MAX_BYTES}` };
-  return { data: (await readFile(file)).toString('base64'), name: path.basename(file) };
+  let bytes: Buffer;
+  try {
+    // With the agent's own rights: a symlink in the task folder reaches no further than it may.
+    bytes = await readAsAgent(file, GOOGLE_FILE_MAX_BYTES);
+  } catch (err) {
+    const msg = (err as Error).message;
+    return {
+      error: /over \d+ bytes/.test(msg)
+        ? `${args.path} is over ${GOOGLE_FILE_MAX_BYTES} bytes`
+        : `No file ${args.path} in the task folder`,
+    };
+  }
+  return { data: bytes.toString('base64'), name: path.basename(file) };
 }
 
 const FileRef = z
@@ -226,9 +234,8 @@ export function googleTools(call: GoogleCall, access: RunGoogleAccess): ToolDef[
         const r = await call({ op: 'drive_download', fileId: file });
         const name = String(r.name ?? 'download').replace(/[/\\]/g, '_');
         const target = inside(ctx.workdir ?? process.cwd(), p ?? name);
-        await mkdir(path.dirname(target), { recursive: true });
         const bytes = Buffer.from(String(r.data ?? ''), 'base64');
-        await writeFile(target, bytes);
+        await writeAsAgent(target, bytes);
         const root = ctx.workdir ?? process.cwd();
         return {
           result: {

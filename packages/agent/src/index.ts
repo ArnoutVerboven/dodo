@@ -1,3 +1,4 @@
+export * from './agent-user.js';
 export * from './browser.js';
 export * from './catalog.js';
 export * from './control-plane.js';

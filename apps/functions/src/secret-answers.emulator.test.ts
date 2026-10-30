@@ -66,6 +66,17 @@ describe.skipIf(!enabled)('secret answers', () => {
     expect((await d.doc(secretAnswerPath(messageId)).get()).exists).toBe(false);
   });
 
+  it('remembers the site the code was asked on and hands it out with the value', async () => {
+    const d = db as NonNullable<typeof db>;
+    const deps = { db: d, key: async () => key };
+    const q = await seed({ kind: 'text', prompt: 'SMS code?', secret: true, site: 'kbc.be' });
+    await saveSecretAnswer(deps, { ...q, value: '991122' });
+    expect(await resolveSecretAnswer(deps, { id: 'r1', taskId: q.taskId }, q.messageId)).toEqual({
+      value: '991122',
+      site: 'kbc.be',
+    });
+  });
+
   it('refuses a question that is not secret, and deletes a task’s codes when it closes', async () => {
     const d = db as NonNullable<typeof db>;
     const deps = { db: d, key: async () => key };

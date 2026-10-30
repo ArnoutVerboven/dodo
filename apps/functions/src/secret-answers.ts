@@ -38,6 +38,8 @@ interface StoredAnswer {
   /** base64 of iv ‖ tag ‖ ciphertext. */
   cipher: string;
   createdAt: number;
+  /** The site the browser was on when the question was asked: the code is typed only there. */
+  site?: string;
 }
 
 /**
@@ -57,7 +59,7 @@ export async function saveSecretAnswer(
   await deps.db.runTransaction(async (t) => {
     const msg = await t.get(msgRef);
     const input = msg.get('input') as
-      | { kind?: string; secret?: boolean; answer?: unknown }
+      | { kind?: string; secret?: boolean; answer?: unknown; site?: unknown }
       | undefined;
     if (!msg.exists || !input) throw new SecretAnswerError('not-found', 'No such question');
     if (!input.secret) throw new SecretAnswerError('failed-precondition', 'Not a secret question');
@@ -66,6 +68,7 @@ export async function saveSecretAnswer(
       taskId: req.taskId,
       cipher,
       createdAt: now,
+      ...(typeof input.site === 'string' && input.site ? { site: input.site } : {}),
     } satisfies StoredAnswer);
     t.update(msgRef, {
       'input.answer': { value: ref, answeredAt: now, ...(req.via ? { via: req.via } : {}) },
@@ -81,7 +84,7 @@ export async function resolveSecretAnswer(
   deps: SecretAnswerDeps,
   run: Pick<Run, 'id' | 'taskId'>,
   messageId: string,
-): Promise<{ value: string }> {
+): Promise<{ value: string; site?: string }> {
   const snap = await deps.db.doc(secretAnswerPath(messageId)).get();
   const stored = snap.data() as StoredAnswer | undefined;
   if (!stored || stored.taskId !== run.taskId) {
@@ -97,7 +100,7 @@ export async function resolveSecretAnswer(
   }
   const value = decrypt(await deps.key(), Buffer.from(stored.cipher, 'base64'));
   deps.log?.('secret answer used', { taskId: run.taskId, messageId, runId: run.id });
-  return { value };
+  return stored.site ? { value, site: stored.site } : { value };
 }
 
 /** Every secret answer of a task, when it is done, cancelled or deleted. */

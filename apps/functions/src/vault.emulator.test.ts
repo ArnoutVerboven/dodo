@@ -8,6 +8,7 @@ import {
   deleteVaultEntry,
   resolveVaultValue,
   saveVaultEntry,
+  taskGranted,
   type VaultDeps,
   type VaultValues,
 } from './vault.js';
@@ -158,6 +159,44 @@ describe.skipIf(!enabled)('vault (emulator)', () => {
       await expect(checkedVaultCard(db, bad)).rejects.toThrow('request_vault_access');
     const other = { ...card, suggestedRule: 'Bash(git push:*)', prompt: 'Push?' };
     await expect(checkedVaultCard(db, other)).resolves.toBe(other);
+  });
+
+  it('grants the Google session per task, from a checked approval card only', async () => {
+    const { taskId, run } = await setup();
+    if (!db) throw new Error('no db');
+    const rule = 'GoogleSession(use)';
+    const granted = () => taskGranted(db as NonNullable<typeof db>, run, rule, 'GoogleSession');
+    expect(await granted()).toBe(false);
+    const card = await checkedVaultCard(db, {
+      kind: 'approval',
+      session: [],
+      suggestedRule: rule,
+      prompt: 'Continue?',
+    });
+    expect(card.prompt).toMatch(/^Let this task use your saved Google sign-in\? .*Continue\?$/);
+    await expect(
+      checkedVaultCard(db, {
+        kind: 'approval',
+        session: [],
+        suggestedRule: 'GoogleSession(*)',
+        prompt: 'x',
+      }),
+    ).rejects.toThrow('use_google_session');
+    await db.collection(`tasks/${taskId}/messages`).add({
+      author: 'agent',
+      body: card.prompt,
+      input: {
+        kind: 'approval',
+        prompt: card.prompt,
+        suggestedRule: rule,
+        answer: { value: 'yes' },
+      },
+    });
+    expect(await granted()).toBe(true);
+    // Another task still asks.
+    expect(await taskGranted(db, { ...run, taskId: randomUUID() }, rule, 'GoogleSession')).toBe(
+      false,
+    );
   });
 
   it('deletes values together with the entry', async () => {

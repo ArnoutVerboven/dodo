@@ -10,6 +10,7 @@ import {
   FinishRequest,
   GenerateRequest,
   GitHubTokenRequest,
+  GOOGLE_SESSION_RULE,
   GoogleToolRequest,
   googleOnlyState,
   HeartbeatRequest,
@@ -123,6 +124,7 @@ import {
   resolveVaultValue,
   saveVaultEntry,
   secretManagerStore,
+  taskGranted,
   type VaultDeps,
   VaultError,
 } from './vault.js';
@@ -424,6 +426,16 @@ export const runBrowserState = onCall(
     // Only a run with the remote browser has a use for the Google cookies.
     if ((req.action === 'google-get' || req.action === 'google-put') && !run.browser) {
       throw new HttpsError('permission-denied', 'Only a run with the remote browser');
+    }
+    // And only on a task you approved for it (asked once per task, use_google_session).
+    if (
+      (req.action === 'google-get' || req.action === 'google-put') &&
+      !(await taskGranted(getFirestore(), run, GOOGLE_SESSION_RULE, 'GoogleSession'))
+    ) {
+      throw new HttpsError(
+        'permission-denied',
+        `This task is not approved to use your Google sign-in; ask for ${GOOGLE_SESSION_RULE} first`,
+      );
     }
     if (req.action === 'google-get') {
       const stored = await loadBrowserState(deps, SHARED_GOOGLE_STATE);

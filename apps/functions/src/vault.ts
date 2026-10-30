@@ -95,7 +95,20 @@ export async function deleteVaultEntry(deps: VaultDeps, id: string): Promise<voi
  * not count, on purpose: a credential is approved per task. A deny rule anywhere wins.
  */
 export async function vaultGranted(db: Firestore, run: Run, entryId: string): Promise<boolean> {
-  const rule = vaultRule(entryId);
+  return taskGranted(db, run, vaultRule(entryId), 'Vault');
+}
+
+/**
+ * Whether a per-task rule (`Vault(id)`, `GoogleSession(use)`) is granted to the run's task:
+ * an allow rule on the task itself or an approval card for it answered yes there. `family`
+ * is the bare tool name a deny rule may use to refuse all of them.
+ */
+export async function taskGranted(
+  db: Pick<Firestore, 'doc' | 'collection'>,
+  run: Pick<Run, 'taskId' | 'projectId'>,
+  rule: string,
+  family: string,
+): Promise<boolean> {
   const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]) : []);
   const [task, project, settings] = await Promise.all([
     db.doc(paths.task(run.taskId)).get(),
@@ -104,7 +117,7 @@ export async function vaultGranted(db: Firestore, run: Run, entryId: string): Pr
   ]);
   const denied = [task.get('denyRules'), project?.get('denyRules'), settings.get('denyRules')]
     .flatMap(list)
-    .some((r) => r === rule || r === 'Vault');
+    .some((r) => r === rule || r === family);
   if (denied) return false;
   if (list(task.get('allowRules')).includes(rule)) return true;
   const approvals = await db
