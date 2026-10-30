@@ -41,7 +41,8 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { ArtifactPreview, canPreview, downloadArtifact } from '@/components/ArtifactPreview';
-import { parseTags } from '@/components/NewTaskDialog';
+import { appendText, parseTags } from '@/components/NewTaskDialog';
+import { PushToTalkButton } from '@/components/PushToTalk';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import { SourceLink } from '@/components/SourceIcon';
 import {
@@ -646,6 +647,7 @@ function Thread({ taskId }: { taskId: string }) {
                 }
               }}
             />
+            <PushToTalkButton compact onText={(text) => setBody((b) => appendText(b, text))} />
             <Button
               type="submit"
               size="icon"
@@ -657,7 +659,7 @@ function Thread({ taskId }: { taskId: string }) {
             </Button>
           </div>
           <p className="mt-1 px-1 text-xs text-muted-foreground">
-            Enter to send · Shift+Enter for a new line
+            Enter to send · Shift+Enter for a new line · hold the mic to dictate
           </p>
         </form>
       </CardBody>

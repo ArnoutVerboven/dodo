@@ -44,10 +44,32 @@ export interface SearchProvider {
   search(req: SearchRequest): Promise<SearchResult>;
 }
 
+/** Push-to-talk: one Gemini call with the voice note as audio input, returning its words. */
+export interface TranscribeRequest {
+  model: string;
+  /** Base64 audio. */
+  audio: string;
+  mimeType: string;
+  language?: string;
+  maxOutputTokens: number;
+}
+
+export interface TranscribeResult {
+  text: string;
+  usage: Usage;
+}
+
+export interface TranscribeProvider {
+  transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
+}
+
+const TRANSCRIBE_SYSTEM =
+  'You transcribe voice notes that someone dictates into a task app: a new task or a reply to an agent. Write down what they say, in the language they speak, with punctuation and paragraphs where they pause. Leave out filler words (uh, um, euh) and false starts, but do not summarise, translate, answer or add anything. If there is no speech, return an empty response.';
+
 const SEARCH_SYSTEM =
   'You are a web search tool for another agent. Search the web and answer the query with the facts the sources give: concise, specific (names, numbers, dates, prices, addresses), and say when sources disagree or nothing relevant was found. No preamble, no follow-up questions.';
 
-export class VertexProvider implements ModelProvider, SearchProvider {
+export class VertexProvider implements ModelProvider, SearchProvider, TranscribeProvider {
   private readonly ai: GoogleGenAI;
   constructor(project: string, location: string) {
     this.ai = new GoogleGenAI({ vertexai: true, project, location });
@@ -81,6 +103,46 @@ export class VertexProvider implements ModelProvider, SearchProvider {
     return {
       content: { role: 'model', parts: parts.length ? parts : [{ text: '' }] },
       finishReason: candidate?.finishReason ? String(candidate.finishReason) : undefined,
+      usage: {
+        inputTokens: u?.promptTokenCount ?? 0,
+        outputTokens: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0),
+        thinkingTokens: u?.thoughtsTokenCount ?? 0,
+        cachedInputTokens: u?.cachedContentTokenCount ?? 0,
+      },
+    };
+  }
+
+  async transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
+    // Gemini wants the bare type: `audio/webm;codecs=opus` → `audio/webm`.
+    const mimeType = req.mimeType.split(';')[0]?.trim() || 'audio/webm';
+    const hint = req.language ? ` The speaker's device language is ${req.language}.` : '';
+    const r = await this.ai.models.generateContent({
+      model: req.model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: req.audio } },
+            { text: `Transcribe this voice note.${hint}` },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: TRANSCRIBE_SYSTEM,
+        maxOutputTokens: req.maxOutputTokens,
+        temperature: 0,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+    const candidate = r.candidates?.[0];
+    const text = (candidate?.content?.parts ?? [])
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join('')
+      .trim();
+    const u = r.usageMetadata;
+    return {
+      text,
       usage: {
         inputTokens: u?.promptTokenCount ?? 0,
         outputTokens: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0),
@@ -135,7 +197,15 @@ export class VertexProvider implements ModelProvider, SearchProvider {
  * Deterministic stand-in for the emulator and tests: no network, no cost. It follows a tiny
  * script so an end-to-end run exercises every tool: status → summary → message → finish.
  */
-export class FakeProvider implements ModelProvider, SearchProvider {
+export class FakeProvider implements ModelProvider, SearchProvider, TranscribeProvider {
+  /** Whatever was said: one minute of audio's worth of tokens, a fixed sentence back. */
+  async transcribe(_req: TranscribeRequest): Promise<TranscribeResult> {
+    return {
+      text: 'Fake transcript of your voice note.',
+      usage: { inputTokens: 1920, outputTokens: 10, thinkingTokens: 0, cachedInputTokens: 0 },
+    };
+  }
+
   /** A canned answer with two sources; "nothing" in the query finds none (no query billed). */
   async search(req: SearchRequest): Promise<SearchResult> {
     const none = /nothing/i.test(req.query);
