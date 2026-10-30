@@ -39,11 +39,15 @@ export function PushToTalkButton({
         title={hint}
         disabled={ptt.state === 'transcribing'}
         className={cn(
-          'inline-flex shrink-0 touch-none select-none items-center justify-center gap-1.5 rounded-md border text-xs transition [-webkit-touch-callout:none] [-webkit-user-select:none] disabled:opacity-60',
-          compact ? 'h-8 w-8' : 'h-8 px-2.5',
+          'inline-flex shrink-0 touch-none select-none items-center justify-center gap-1.5 rounded-md text-xs transition [-webkit-touch-callout:none] [-webkit-user-select:none] disabled:opacity-60',
+          // Compact sits inside a reply box, so it has no border of its own.
+          compact ? 'h-8 w-8' : 'h-8 border px-2.5',
           recording
             ? 'animate-pulse border-danger bg-danger text-white'
-            : 'bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
+            : cn(
+                'text-muted-foreground hover:bg-accent hover:text-foreground',
+                !compact && 'bg-card',
+              ),
         )}
       >
         {busy ? (

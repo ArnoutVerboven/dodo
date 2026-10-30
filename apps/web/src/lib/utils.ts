@@ -9,6 +9,11 @@ export function formatEur(micro: number, digits = 2): string {
   return new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', minimumFractionDigits: digits, maximumFractionDigits: Math.max(digits, 4) }).format(micro / 1_000_000);
 }
 
+/** Euros rounded to the cent: "€0.01". */
+export function formatEurCents(micro: number): string {
+  return new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(micro / 1_000_000);
+}
+
 export function timeAgo(ms: number): string {
   const s = Math.round((Date.now() - ms) / 1000);
   if (s < 60) return 'just now';
