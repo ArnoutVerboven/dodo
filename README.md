@@ -68,7 +68,7 @@ Optional: to put the agent inside your everyday Chrome instead, with the logins 
 
 **A local model.** Set **Model** to the local model (listed by its name, with a laptop mark for local only) and the task runs on your Mac against a model you serve there (`mlx_lm.server`, LM Studio, Ollama, llama.cpp), with no budget used: `pnpm mac setup` picks up an MLX model already in your Hugging Face cache (and installs mlx-lm if needed); the daemon starts it only when a request comes in and stops it when idle. See [docs/LOCAL_MODEL.md](docs/LOCAL_MODEL.md).
 
-**Staying current.** The daemon runs the agent from this checkout, so it keeps it up to date by itself: while idle it checks `origin/main` every 15 minutes and, when the checkout is a clean `main` that is only behind, pulls, installs, builds and restarts (launchd brings it back). A branch, local changes or local commits are left alone and the log says why. Turn it off with `"autoUpdate": false` in `~/.dodo/config.json`.
+**Staying current.** The daemon runs the agent from this checkout, so it keeps it up to date by itself: while idle it checks `origin/main` every 15 minutes and, when the checkout is a clean `main` that is only behind, pulls, installs, builds and restarts (launchd brings it back). A branch, local changes or local commits are left alone and the log says why. To update right away: `pnpm mac update`. Turn the automatic updates off with `"autoUpdate": false` in `~/.dodo/config.json`.
 
 Revoke a Mac in Settings; `pnpm dodo logout` forgets the pairing on the Mac itself. The device sign-in lives in the macOS Keychain; the daemon never holds model or cloud keys.
 
