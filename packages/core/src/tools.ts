@@ -26,6 +26,7 @@ export const BuiltinGroup = z.enum([
   'exec',
   'web',
   'google',
+  'notion',
   'github',
   'browser',
 ]);
@@ -33,7 +34,7 @@ export type BuiltinGroup = z.infer<typeof BuiltinGroup>;
 
 /**
  * What a group needs before a run gets it, beyond being turned on. Toolsets choose among the
- * `task`, `vault`, `exec`, `web` and `google` groups; `github` and `browser` follow the task's Repo and Browser
+ * `task`, `vault`, `exec`, `web`, `google` and `notion` groups; `github` and `browser` follow the task's Repo and Browser
  * settings, so a toolset does not take them away.
  */
 export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolsets: boolean }> = {
@@ -61,6 +62,11 @@ export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolset
   google: {
     label: 'Google',
     note: 'Only when Google is connected (Settings › Integrations). Gmail search and read, your calendar, and Drive; saved files go to your dodo folder. Creating events and changing existing files ask first.',
+    toolsets: true,
+  },
+  notion: {
+    label: 'Notion',
+    note: 'Only when Notion is connected (Settings › Integrations), and only the pages and databases you shared with the integration. Search and reading are free; new pages, changes and moving to trash ask first.',
     toolsets: true,
   },
   github: {

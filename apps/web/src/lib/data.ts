@@ -8,6 +8,7 @@ import {
   McpServer,
   type McpServerSaveRequest,
   type NewTask,
+  NotionConnection,
   PersonalInfo,
   Project,
   paths,
@@ -440,6 +441,15 @@ export async function saveVaultEntry(entry: VaultSaveRequest) {
 
 export async function deleteVaultEntry(id: string) {
   await httpsCallable(functions, 'vaultDelete')({ id });
+}
+
+/* ------------------------------ Notion ------------------------------ */
+
+export const useNotion = () => useLiveDoc(paths.notion(), NotionConnection);
+
+/** The token is checked with Notion and kept server-side; it never comes back. */
+export async function connectNotion(token: string | null) {
+  await httpsCallable(functions, 'notionConnect')({ token });
 }
 
 /* ------------------------------- Tools ------------------------------ */

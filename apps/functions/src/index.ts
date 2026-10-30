@@ -14,6 +14,8 @@ import {
   HeartbeatRequest,
   McpServerIdRequest,
   McpServerSaveRequest,
+  NotionConnectRequest,
+  NotionToolRequest,
   paths,
   RequestInputRequest,
   SearchRequest,
@@ -83,6 +85,7 @@ import {
   type TranscribeProvider,
   VertexProvider,
 } from './model-provider.js';
+import { connectNotion, runNotionTool } from './notion.js';
 import { notifyPush, type PushDeps } from './push.js';
 import { needsBrowser } from './routing.js';
 import {
@@ -821,6 +824,31 @@ export const mcpRefresh = onCall(
     ownerOnly(request.auth);
     const { id } = parseOr<{ id: string }>(McpServerIdRequest, request.data);
     return mcpCall(() => refreshMcpServer(mcpDeps(), id));
+  },
+);
+
+/* ----------------------------- Notion ---------------------------- */
+
+/** Settings › Integrations › Notion: check and keep an integration token, or forget it. */
+export const notionConnect = onCall(
+  { serviceAccount: GATEWAY_SA, maxInstances: 1, timeoutSeconds: 30 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const { token } = parseOr<NotionConnectRequest>(NotionConnectRequest, request.data);
+    return connectNotion(vaultDeps(), token);
+  },
+);
+
+/** The agent's Notion tools: one operation for a run, done here with the token. */
+export const notionTool = onCall(
+  { serviceAccount: GATEWAY_SA, memory: '512MiB', timeoutSeconds: 120, maxInstances: 5 },
+  async (request) => {
+    const req = parseOr<NotionToolRequest>(NotionToolRequest, request.data);
+    const c = caller(request.auth);
+    if (!c || c.claims.run !== req.runId) throw new HttpsError('permission-denied', 'Runs only');
+    const deps = vaultDeps();
+    const run = await loadRunForCaller(deps.db, c, req.runId);
+    return runNotionTool(deps, run, req.call);
   },
 );
 

@@ -27,6 +27,7 @@ import {
   type TraceSink,
 } from './control-plane.js';
 import { GOOGLE_TOOLS } from './google-tools.js';
+import { NOTION_TOOLS } from './notion-tools.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
 import { findTool, type ToolContext, type ToolDef, toDeclarations } from './tools.js';
@@ -62,6 +63,8 @@ export interface LoopOptions {
   heartbeatMs?: number;
   /** The Drive folder the Google tools save to, for the system prompt. */
   googleFolder?: string;
+  /** The Notion workspace the Notion tools reach, for the system prompt. */
+  notionWorkspace?: string;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -92,6 +95,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       : undefined,
     google: tools.some((t) => GOOGLE_TOOLS.includes(t.name as (typeof GOOGLE_TOOLS)[number]))
       ? (opts.googleFolder ?? DEFAULT_DRIVE_FOLDER)
+      : undefined,
+    notion: tools.some((t) => NOTION_TOOLS.includes(t.name as (typeof NOTION_TOOLS)[number]))
+      ? { workspace: opts.notionWorkspace }
       : undefined,
   });
   // Vault values never go back to the model, the trace or the task: cut them out of every

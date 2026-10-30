@@ -6,6 +6,7 @@ export * from './google.js';
 export * from './ingest.js';
 export * from './local-model.js';
 export * from './model.js';
+export * from './notion.js';
 export * from './paths.js';
 export * from './prompts.js';
 export * from './resolve.js';

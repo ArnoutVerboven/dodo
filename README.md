@@ -6,6 +6,7 @@ A personal, asynchronous AI task agent. Create a task on a board; an agent works
 - [Roadmap](docs/ROADMAP.md)
 - [One-time setup](docs/SETUP.md)
 - [GitHub](docs/GITHUB.md): the agent clones your repos, pushes branches and opens pull requests
+- [Notion](docs/NOTION.md): the agent searches, reads and (with your approval) adds to your Notion
 
 ## Layout
 

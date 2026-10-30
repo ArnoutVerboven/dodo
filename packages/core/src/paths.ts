@@ -8,6 +8,8 @@ export const paths = {
   vaultEntry: (id: string) => `vault/${id}`,
   /** GitHub App connection (safe to show); its keys are in Secret Manager. */
   github: () => 'github/app',
+  /** Notion connection (safe to show); the token is in Secret Manager. Server-written. */
+  notion: () => 'connectors/notion',
   tasks: () => 'tasks',
   task: (id: string) => `tasks/${id}`,
   messages: (taskId: string) => `tasks/${taskId}/messages`,

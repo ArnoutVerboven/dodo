@@ -17,6 +17,7 @@ import {
   LocalModelControlPlane,
   type McpClient,
   mcpTools,
+  notionTools,
   requestBrowserTool,
   requestDeviceTool,
   runAgent,
@@ -208,6 +209,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...execTools,
     webSearchTool((query) => control.search(query)),
     ...(started.google ? googleTools((call) => control.google(call), started.google) : []),
+    ...(started.notion ? notionTools((call) => control.notion(call), started.notion) : []),
     ...(githubAccess ? githubTools(githubAccess) : []),
     ...(browser ? await browserTools(browser, { emailCode: (req) => control.emailCode(req) }) : []),
     // Browser "auto" without one yet: the agent can step up when the task needs it.
@@ -249,6 +251,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       googleFolder: started.google?.folder,
+      notionWorkspace: started.notion?.workspace,
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
