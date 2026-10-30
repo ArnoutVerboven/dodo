@@ -60,7 +60,15 @@ describe.skipIf(!enabled)('compactTask', () => {
       title: 'Compact me',
       status: 'review',
       ai: { enabled: true },
-      context: { tokens: 300_000, max: 1_048_576 },
+      context: {
+        tokens: 300_000,
+        max: 1_048_576,
+        breakdown: [
+          { kind: 'system', label: 'System prompt', tokens: 5_000 },
+          { kind: 'tools', label: 'Browser', tokens: 3_000 },
+          { kind: 'conversation', label: 'Tool results', tokens: 292_000 },
+        ],
+      },
       createdAt: 1,
       updatedAt: 1,
       ...(runState === 'running' ? { activeRunId: runId } : {}),
@@ -118,6 +126,10 @@ describe.skipIf(!enabled)('compactTask', () => {
     expect(task?.activeRunId).toBeUndefined();
     expect(task?.context.compactedAt).toBeGreaterThan(0);
     expect(task?.context.tokens).toBeLessThan(300_000);
+    // The system prompt and tools stay; the conversation becomes the summary.
+    const parts = task?.context.breakdown as Array<{ label: string; tokens: number }>;
+    expect(parts.map((p) => p.label)).toEqual(['System prompt', 'Browser', 'Summary (compacted)']);
+    expect(task?.context.tokens).toBe(parts.reduce((s, p) => s + p.tokens, 0));
     const msgs = await d.collection(paths.messages(taskId)).get();
     expect(msgs.docs[0]?.get('body')).toContain('0.30M →');
   });

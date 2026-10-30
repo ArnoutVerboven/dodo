@@ -1,6 +1,7 @@
 import {
   type AiConfig,
   type Artifact,
+  type ContextPart,
   compactThreshold,
   formatTokens,
   formatTokenUsage,
@@ -18,13 +19,13 @@ import {
   ArrowRight,
   Bot,
   CalendarDays,
+  ChartPie,
   ChevronDown,
   ChevronRight,
   Download,
   FileText,
   Folder,
   HardDrive,
-  Info,
   Link2,
   Loader2,
   type LucideIcon,
@@ -1271,7 +1272,7 @@ function ContextUsage({ task }: { task: Task }) {
       <div className="mb-1 flex items-center justify-between text-xs">
         <span className="flex items-center gap-1 text-muted-foreground">
           Context
-          <InfoTip text={info} />
+          <ContextBreakdown parts={ctx.breakdown} total={ctx.tokens} note={info} />
         </span>
         <span
           title={`${ctx.tokens.toLocaleString()} / ${ctx.max.toLocaleString()} tokens${
@@ -1310,23 +1311,109 @@ function ContextUsage({ task }: { task: Task }) {
   );
 }
 
-/** An info icon whose note shows on hover, or on focus for keyboards and phones. */
-function InfoTip({ text }: { text: string }) {
+const SECTIONS: Array<{ kind: ContextPart['kind']; title: string }> = [
+  { kind: 'system', title: 'System prompt' },
+  { kind: 'tools', title: 'Tools' },
+  { kind: 'conversation', title: 'Conversation' },
+  { kind: 'reply', title: 'Reply' },
+];
+
+/**
+ * The breakdown icon next to Context: what the last step's context was made of (system
+ * prompt, tools per toolset or MCP server, conversation) and when it compacts. Opens on click
+ * or tap; Escape or a click elsewhere closes it.
+ */
+function ContextBreakdown({
+  parts,
+  total,
+  note,
+}: {
+  parts?: ContextPart[];
+  total: number;
+  note: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  const sum = parts?.reduce((s, p) => s + p.tokens, 0) || total;
   return (
-    <span className="group/tip relative inline-flex">
+    <span ref={ref} className="relative inline-flex">
       <button
         type="button"
-        aria-label={text}
-        className="rounded-full text-muted-foreground/70 outline-none hover:text-foreground focus-visible:text-foreground"
+        aria-label="Context breakdown"
+        aria-expanded={open}
+        title="What the context is made of"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'rounded-full outline-none hover:text-foreground focus-visible:text-foreground',
+          open ? 'text-foreground' : 'text-muted-foreground/70',
+        )}
       >
-        <Info className="h-3.5 w-3.5" />
+        <ChartPie className="h-3.5 w-3.5" />
       </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1.5 w-max max-w-48 rounded-md border bg-card px-2 py-1 text-xs text-foreground opacity-0 shadow-sm transition group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100"
-      >
-        {text}
-      </span>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Context breakdown"
+          className="absolute top-full left-0 z-20 mt-1.5 w-72 max-w-[calc(100vw-2rem)] space-y-2.5 rounded-md border bg-card p-3 text-xs text-foreground shadow-md"
+        >
+          {parts?.length ? (
+            SECTIONS.map(({ kind, title }) => {
+              const rows = parts.filter((p) => p.kind === kind).sort((a, b) => b.tokens - a.tokens);
+              if (!rows.length) return null;
+              const subtotal = rows.reduce((s, p) => s + p.tokens, 0);
+              return (
+                <div key={kind}>
+                  <div className="mb-1 flex justify-between font-medium">
+                    <span>{title}</span>
+                    <span className="tabular-nums">{formatTokens(subtotal)}</span>
+                  </div>
+                  {(rows.length > 1 || rows[0]?.label !== title) && (
+                    <ul className="space-y-1">
+                      {rows.map((p) => (
+                        <li key={p.label}>
+                          <div className="flex justify-between gap-2 text-muted-foreground">
+                            <span className="min-w-0 truncate">{p.label}</span>
+                            <span className="shrink-0 tabular-nums">{formatTokens(p.tokens)}</span>
+                          </div>
+                          <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-primary/60"
+                              style={{ width: `${Math.max(1, (p.tokens / sum) * 100)}%` }}
+                            />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <p className="text-muted-foreground">
+              The breakdown shows after the agent’s next step.
+            </p>
+          )}
+          <p className="border-t pt-2 text-muted-foreground">
+            All of it is sent with every step. The total is Gemini’s count at the last step; the
+            split is estimated from each part’s size. {note}
+          </p>
+        </div>
+      )}
     </span>
   );
 }
