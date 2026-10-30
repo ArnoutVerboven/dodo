@@ -3,7 +3,6 @@ import { Bot, MessageSquareText, Plug, ShieldCheck, SlidersHorizontal } from 'lu
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { AiConfigFields } from '@/components/AiConfigFields';
-import { AllowedActionsSettings } from '@/components/AllowedActionsSettings';
 import { ApiTokensSettings } from '@/components/ApiTokensSettings';
 import { DevicesSettings } from '@/components/DevicesSettings';
 import { GitHubSettings } from '@/components/GitHubSettings';
@@ -285,12 +284,14 @@ export function SettingsPage() {
           {section === 'security' && (
             <>
               <VaultSettings />
-              <AllowedActionsSettings />
               <Card>
                 <CardHeader title="Tools and permissions" />
                 <CardBody className="text-sm text-muted-foreground">
-                  MCP servers, built-in tools and toolsets are in{' '}
-                  <Link to="/tools" className="text-foreground underline underline-offset-2">
+                  MCP servers, built-in tools, toolsets and the actions you always allowed are in{' '}
+                  <Link
+                    to="/tools?tab=permissions"
+                    className="text-foreground underline underline-offset-2"
+                  >
                     Tools
                   </Link>
                   .
