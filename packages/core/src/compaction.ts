@@ -1,4 +1,7 @@
+import { COMPACT_INSTRUCTION, compactedTurn } from './prompts.js';
 import type { Content } from './run.js';
+
+export { COMPACT_SYSTEM, COMPACTED_HEADER } from './prompts.js';
 
 /**
  * Context compaction: when a task's conversation grows large, it is replaced by a summary
@@ -14,22 +17,6 @@ export const AUTO_COMPACT_SHARE = 0.8;
 export function compactThreshold(contextWindow: number): number {
   return Math.min(Math.floor(contextWindow * AUTO_COMPACT_SHARE), AUTO_COMPACT_TOKENS);
 }
-
-export const COMPACT_SYSTEM =
-  'You summarise an AI agent’s work on a task so it can continue from the summary alone. ' +
-  'Reply with the summary in Markdown and nothing else. Do not call tools.';
-
-const COMPACT_INSTRUCTION = `Below is the transcript of your work on this task so far. It is about to be replaced by your summary of it, so the summary must hold everything needed to continue without the transcript:
-
-1. The task and what the user wants, including every instruction, preference and answer the user gave (quote them where the wording matters).
-2. What has been done, what was found, and decisions made with their reasons.
-3. Current state: files, artifacts, links, ids, commands and values still needed (exact names and paths).
-4. Open questions, errors still unresolved, and the next steps.
-
-Be specific and complete, but leave out dead ends that no longer matter.`;
-
-/** Header of the user turn that replaces a compacted conversation; also how one is recognised. */
-export const COMPACTED_HEADER = 'This conversation was compacted to save context.';
 
 const PART_LIMIT = 3_000;
 const FIRST_LIMIT = 20_000;
@@ -108,7 +95,7 @@ export function compactedSession(summary: string): Content[] {
       role: 'user',
       parts: [
         {
-          text: `${COMPACTED_HEADER} Summary of everything so far:\n\n${summary}\n\nContinue the task from here.`,
+          text: compactedTurn(summary),
         },
       ],
     },
