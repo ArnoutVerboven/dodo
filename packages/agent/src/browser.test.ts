@@ -211,7 +211,7 @@ describe('browserTools', () => {
     });
     expect(calls[0]).toEqual([
       'browser_take_screenshot',
-      { type: 'png', element: 'QR code', ref: 'e3' },
+      { type: 'png', element: 'QR code', target: 'e3' },
     ]);
     const failing: BrowserClient = {
       ...client,
@@ -284,11 +284,11 @@ describe('browserTools', () => {
       const t = setup([{ found: false }, { found: false }, mail('m1', '482913', 1_010_000)]);
       await t.run('browser_navigate', { url: 'https://account.booking.com/sign-in' });
       await t.run('browser_click', { element: 'Continue with email', ref: 'e4' });
-      const { out, policy } = await t.run('get_email_code', { element: 'Code', ref: 'e7' });
+      const { out, policy } = await t.run('get_email_code', { element: 'Code', target: 'e7' });
       expect(policy).toEqual({ tool: 'EmailCode', key: 'booking.com', category: 'sandbox' });
       expect(t.calls.at(-1)).toEqual([
         'browser_type',
-        { element: 'Code', ref: 'e7', text: '482913', slowly: true },
+        { element: 'Code', target: 'e7', text: '482913', slowly: true },
       ]);
       expect(out.result).toMatchObject({ ok: true, typed: '{{answer:mail-m1}}' });
       expect(JSON.stringify(out)).not.toContain('482913');

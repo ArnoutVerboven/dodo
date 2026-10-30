@@ -56,7 +56,7 @@ export async function takeScreenshot(
 ): Promise<ImageUpload | undefined> {
   const res = await client.callTool('browser_take_screenshot', {
     type: 'png',
-    ...(target ? { element: target.element, ref: target.ref } : {}),
+    ...(target ? { element: target.element, target: target.ref } : {}),
   });
   if (res.isError) return undefined;
   return res.images?.find(
@@ -272,14 +272,14 @@ export function emailCodeTool(page: {
   return define({
     name: 'get_email_code',
     description:
-      "Get a one-time sign-in or verification code that the site you are on has just emailed to the user, straight from their mailbox, instead of asking them. Call it as soon as the page says it sent a code by email. It waits for the mail (up to wait_seconds), and with ref it types the code into that field itself; without ref it returns a reference to type with browser_type. You never see the code. A code already used in this run is skipped, so after 'resend code' call it again for the new one.",
+      "Get a one-time sign-in or verification code that the site you are on has just emailed to the user, straight from their mailbox, instead of asking them. Call it as soon as the page says it sent a code by email. It waits for the mail (up to wait_seconds), and with target it types the code into that field itself; without target it returns a reference to type with browser_type. You never see the code. A code already used in this run is skipped, so after 'resend code' call it again for the new one.",
     schema: z.object({
       element: z
         .string()
         .max(300)
         .optional()
         .describe('The code field, as a human-readable description (as for browser_type).'),
-      ref: z
+      target: z
         .string()
         .max(100)
         .optional()
@@ -301,7 +301,7 @@ export function emailCodeTool(page: {
         ? { tool: 'EmailCode', key: `${siteOf(sender)}>${siteOf(host)}`, category: 'outbound' }
         : { tool: 'EmailCode', key: siteOf(host), category: 'sandbox' };
     },
-    async execute({ element, ref, sender, wait_seconds }, ctx) {
+    async execute({ element, target, sender, wait_seconds }, ctx) {
       const host = page.host();
       if (!host) return { result: { error: 'Open the page that asks for the code first.' } };
       if (!ctx.secrets) return { result: { error: 'Codes cannot be typed in this run.' } };
@@ -319,7 +319,7 @@ export function emailCodeTool(page: {
             subject: r.subject,
             receivedSecondsAgo: Math.max(0, Math.round((now() - r.receivedAt) / 1000)),
           };
-          if (!ref) {
+          if (!target) {
             return {
               result: {
                 ok: true,
@@ -330,7 +330,7 @@ export function emailCodeTool(page: {
             };
           }
           const typed = await page.type(
-            { element: element ?? 'code field', ref, text: r.code, slowly: true },
+            { element: element ?? 'code field', target, text: r.code, slowly: true },
             ctx,
           );
           return {
