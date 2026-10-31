@@ -23,9 +23,11 @@ import {
   SearchRequest,
   SecretAnswerRequest,
   SHARED_GOOGLE_STATE,
+  StartRequest,
   TranscribeRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
+  WORKER_PROTOCOL,
 } from '@dodo/core';
 import { CloudBillingClient } from '@google-cloud/billing';
 import { ExecutionsClient, JobsClient } from '@google-cloud/run';
@@ -327,7 +329,18 @@ export const gatewaySearch = onCall(
 export const runStart = onCall(
   { serviceAccount: GATEWAY_SA, memory: '512MiB', maxInstances: 5 },
   async (request) => {
-    const { runId } = parseOr<{ runId: string }>(HeartbeatRequest, request.data);
+    const { runId, protocol } = parseOr<StartRequest>(StartRequest, request.data);
+    if (protocol !== undefined && protocol !== WORKER_PROTOCOL) {
+      logger.error('worker protocol mismatch', {
+        runId,
+        worker: protocol,
+        control: WORKER_PROTOCOL,
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        `update_needed: the worker speaks protocol ${protocol}, the control plane ${WORKER_PROTOCOL}; redeploy both`,
+      );
+    }
     const deps = controlDeps();
     // `running` too: the worker retries start after a network error, and a start that already
     // went through must answer again rather than end the run.

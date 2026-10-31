@@ -31,3 +31,17 @@ jobs:
         run: pnpm test:emulator
       - name: End-to-end on the emulators (fake model)
         run: pnpm test:e2e
+      - name: Deploy filters cover every workspace dependency
+        run: node scripts/check-deploy-filters.mjs
+
+  # Deploy only what passed: pushes to main, after the checks above.
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency: deploy
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

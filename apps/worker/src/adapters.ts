@@ -30,6 +30,7 @@ import {
   type StatusLine,
   Task,
   VaultEntry,
+  WORKER_PROTOCOL,
 } from '@dodo/core';
 import type { FirebaseApp } from 'firebase/app';
 import { type Auth, connectAuthEmulator, getAuth, signInWithCustomToken } from 'firebase/auth';
@@ -205,7 +206,7 @@ export class CallableControlPlane implements ControlPlane {
       tools?: RunToolAccess;
       google?: RunGoogleAccess;
       notion?: RunNotionAccess;
-    }>('runStart', { runId: this.runId }, true);
+    }>('runStart', { runId: this.runId, protocol: WORKER_PROTOCOL }, true);
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {
     return GenerateResponse.parse(

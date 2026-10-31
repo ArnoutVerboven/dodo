@@ -116,6 +116,19 @@ export const TranscribeResponse = z.object({
 export type TranscribeResponse = z.infer<typeof TranscribeResponse>;
 
 export const HeartbeatRequest = z.object({ runId: z.string() });
+
+/**
+ * Bumped when the worker and the control plane stop understanding each other (a changed
+ * request or response shape). The worker image and the functions deploy separately, so a run
+ * started by one version may meet the other: runStart refuses a mismatch with a clear reason.
+ */
+export const WORKER_PROTOCOL = 1;
+/** runStart: the run, and the protocol the worker speaks (absent from workers before it). */
+export const StartRequest = z.object({
+  runId: z.string(),
+  protocol: z.number().int().optional(),
+});
+export type StartRequest = z.infer<typeof StartRequest>;
 export const HeartbeatResponse = z.object({
   ok: z.boolean(),
   /** The run lost its lease or the run document changed state: the worker must stop. */
