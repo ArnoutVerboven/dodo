@@ -22,6 +22,7 @@ import {
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { googleAccessForRun } from './google-tools.js';
 import { toolAccessForRun } from './mcp.js';
 import { notionAccessForRun } from './notion.js';
@@ -135,7 +136,18 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   const project = run.projectId
     ? (await deps.db.doc(paths.project(run.projectId)).get()).data()
     : undefined;
-  const session = run.sessionPath ? await loadSession(deps, run.sessionPath).catch(() => []) : [];
+  // A resume that cannot get its conversation fails here (the worker ends the run with the
+  // reason) rather than starting over from nothing.
+  const session = run.sessionPath
+    ? await loadSession(deps, run.sessionPath).catch((err) => {
+        deps.log?.('session load failed', {
+          runId: run.id,
+          sessionPath: run.sessionPath,
+          err: String(err),
+        });
+        throw new HttpsError('data-loss', String((err as Error).message));
+      })
+    : [];
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const policy = mergePolicy(task, project, settings);
@@ -815,12 +827,51 @@ async function saveSession(
   return path;
 }
 
+export class SessionLoadError extends Error {}
+
+/**
+ * The stored conversation of a task. Never quietly empty: a resumed run that started from
+ * nothing would redo work and actions the user already approved. A transient Storage error is
+ * tried again; a missing or unreadable session throws `SessionLoadError`.
+ */
 export async function loadSession(
   deps: Pick<RunControlDeps, 'storage'>,
   path: string,
+  delays: number[] = [500, 2000],
 ): Promise<Content[]> {
-  const [buf] = await deps.storage.bucket().file(path).download();
-  return JSON.parse(buf.toString('utf8')) as Content[];
+  let buf: Buffer | undefined;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      [buf] = await deps.storage.bucket().file(path).download();
+      break;
+    } catch (err) {
+      const delay = delays[attempt];
+      const missing = (err as { code?: number }).code === 404;
+      if (missing || delay === undefined) {
+        throw new SessionLoadError(
+          `Could not load this task's conversation (${missing ? 'not found' : String(err).slice(0, 200)})`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  let session: unknown;
+  try {
+    session = JSON.parse(buf.toString('utf8'));
+  } catch {
+    throw new SessionLoadError("This task's stored conversation is corrupt (not JSON)");
+  }
+  const valid =
+    Array.isArray(session) &&
+    session.every(
+      (c) =>
+        !!c &&
+        typeof c === 'object' &&
+        (c.role === 'user' || c.role === 'model') &&
+        Array.isArray(c.parts),
+    );
+  if (!valid) throw new SessionLoadError("This task's stored conversation is corrupt");
+  return session as Content[];
 }
 
 /** Move the live trace out of Firestore into one JSON blob, so Firestore stays small. */

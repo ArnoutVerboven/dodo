@@ -66,7 +66,8 @@ export async function compactTask(deps: CompactDeps, taskId: string): Promise<Co
   const last = latest.docs[0]?.data() as Run | undefined;
   const sessionPath = last?.sessionPath;
   if (!last || !sessionPath) return { state: 'nothing' };
-  const session = await loadSession(deps, sessionPath).catch(() => []);
+  // An unreadable conversation is an error to show, not "nothing to compact".
+  const session = await loadSession(deps, sessionPath);
   if (session.length < 2) return { state: 'nothing' };
   const model = isLocalModel(last.model) ? LOCAL_COMPACTION_MODEL : last.model;
 

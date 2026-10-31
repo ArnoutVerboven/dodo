@@ -1,7 +1,14 @@
 import type { Run } from '@dodo/core';
+import type { Storage } from 'firebase-admin/storage';
 import { describe, expect, it } from 'vitest';
 import { scopeKind } from './gateway.js';
-import { exhaustedCap, START_GRACE_MS, staleReason } from './run-control.js';
+import {
+  exhaustedCap,
+  loadSession,
+  SessionLoadError,
+  START_GRACE_MS,
+  staleReason,
+} from './run-control.js';
 import { LEASE_MS } from './runtime.js';
 
 describe('exhaustedCap', () => {
@@ -78,5 +85,36 @@ describe('staleReason', () => {
     for (const state of ['succeeded', 'failed', 'waiting_input', 'interrupted'] as const) {
       expect(staleReason(run({ state, updatedAt: 1 }), now)).toBe(undefined);
     }
+  });
+});
+
+describe('loadSession', () => {
+  const storageWith = (download: () => Promise<[Buffer]>) =>
+    ({ bucket: () => ({ file: () => ({ download }) }) }) as unknown as Storage;
+  const ok = [{ role: 'user', parts: [{ text: 'hi' }] }];
+
+  it('tries again after a transient Storage error', async () => {
+    let calls = 0;
+    const storage = storageWith(async () => {
+      if (calls++ === 0) throw Object.assign(new Error('503 backend'), { code: 503 });
+      return [Buffer.from(JSON.stringify(ok))];
+    });
+    expect(await loadSession({ storage }, 'p', [0, 0])).toEqual(ok);
+    expect(calls).toBe(2);
+  });
+
+  it('throws instead of returning an empty conversation', async () => {
+    const missing = storageWith(async () => {
+      throw Object.assign(new Error('No such object'), { code: 404 });
+    });
+    await expect(loadSession({ storage: missing }, 'p', [0, 0])).rejects.toBeInstanceOf(
+      SessionLoadError,
+    );
+    const corrupt = storageWith(async () => [Buffer.from('{"not":"a session"}')]);
+    await expect(loadSession({ storage: corrupt }, 'p', [0])).rejects.toThrow(/corrupt/);
+    const down = storageWith(async () => {
+      throw new Error('ECONNRESET');
+    });
+    await expect(loadSession({ storage: down }, 'p', [0, 0])).rejects.toThrow(/Could not load/);
   });
 });
