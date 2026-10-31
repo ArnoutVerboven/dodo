@@ -62,6 +62,11 @@ export interface LoopOptions {
   maxSteps?: number;
   /** Heartbeat timer interval in ms; 0 disables the timer (heartbeats still happen per step). */
   heartbeatMs?: number;
+  /**
+   * How long heartbeats may keep failing (network, cold start) before the run gives up. Stays
+   * under the server's lease; a lost lease ends the run at once whatever this says.
+   */
+  heartbeatToleranceMs?: number;
   /** The Drive folder the Google tools save to, for the system prompt. */
   googleFolder?: string;
   /** The Notion workspace the Notion tools reach, for the system prompt. */
@@ -156,14 +161,32 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   let compactAsked = false;
   /** An answer the heartbeat delivered during a hold; kept until the hold takes it. */
   let heldAnswer: HeartbeatResponse['answer'];
-  const beat = async () => {
+  // One beat at a time: the timer and the step loop share the call in flight, so the server
+  // never sees two overlapping heartbeats for one run.
+  let inFlight: Promise<void> | undefined;
+  // A failed beat is only fatal once the lease is at risk: one network blip or cold start
+  // must not end the run. A lost lease is fatal at once.
+  const tolerance = opts.heartbeatToleranceMs ?? DEFAULT_HEARTBEAT_TOLERANCE_MS;
+  let lastBeatOk = Date.now();
+  const beatOnce = async () => {
     try {
       latestFlags = await control.heartbeat();
+      lastBeatOk = Date.now();
       if (latestFlags.compact) compactAsked = true;
       if (latestFlags.answer) heldAnswer = latestFlags.answer;
     } catch (err) {
-      heartbeatError = err as Error;
+      if (err instanceof LeaseLostError || Date.now() - lastBeatOk >= tolerance) {
+        heartbeatError = err as Error;
+      } else {
+        log('heartbeat failed; trying again', { err: String(err) });
+      }
     }
+  };
+  const beat = (): Promise<void> => {
+    inFlight ??= beatOnce().finally(() => {
+      inFlight = undefined;
+    });
+    return inFlight;
   };
   const timer = opts.heartbeatMs ? setInterval(beat, opts.heartbeatMs) : undefined;
   const seenMessages = new Set<string>();
@@ -577,6 +600,9 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   }
   return { reason: final.reason, steps, session };
 }
+
+/** The lease is 60 s (functions/src/runtime.ts): stop trusting failed beats well before it. */
+export const DEFAULT_HEARTBEAT_TOLERANCE_MS = 40_000;
 
 /** Every current Gemini model takes 1M input tokens. */
 const DEFAULT_CONTEXT_WINDOW = 1_048_576;

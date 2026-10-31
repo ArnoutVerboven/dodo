@@ -1,11 +1,14 @@
 name: Deploy
 
+# Pushes to main deploy only after CI passed: ci.yml calls this workflow as its last job.
+# A manual run (workflow_dispatch) redeploys everything.
 on:
-  push:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
-concurrency: deploy
+concurrency:
+  # Nested under ci.yml's own `deploy` group for pushes; a manual run waits for its own kind.
+  group: deploy-${{ github.event_name }}
 
 jobs:
   # Works out what changed since the last successful deploy, so each job below only
@@ -34,21 +37,23 @@ jobs:
           everything() { for t in worker functions hosting firestore storage; do echo "$t=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
           # A manual run redeploys everything (e.g. after changing repository variables).
           [ "${{ github.event_name }}" = workflow_dispatch ] && { echo "Manual run: deploying everything"; everything; }
-          BASE=$(gh run list -R "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main --status success \
-            --limit 1 --json headSha -q '.[0].headSha' || true)
+          # The last push to main whose CI (tests and deploy together) succeeded.
+          BASE=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
+            --status success --limit 1 --json headSha -q '.[0].headSha' || true)
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "No usable last successful deploy: deploying everything"; everything
           fi
           FILES=$(git diff --name-only "$BASE" HEAD)
           echo "Changed since last successful deploy ($BASE):"; echo "$FILES"
           hit() { echo "$FILES" | grep -qE "$1" && echo true || echo false; }
-          # Shared inputs: any change here redeploys everything.
-          ALL='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|packages/core/|\.github/workflows/deploy\.yml)'
+          # Shared inputs: any change here redeploys everything. The per-target lists below
+          # must cover each app's workspace dependencies (scripts/check-deploy-filters.mjs).
+          ALL='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|packages/core/|\.github/workflows/(deploy|ci)\.yml)'
           [ "$(hit "$ALL")" = true ] && { echo "Shared input changed: deploying everything"; everything; }
           FB='^firebase\.json$'
           {
             echo "worker=$(hit '^(apps/worker/|packages/(agent|policy)/|apps/web/\.env\.production$)')"
-            echo "functions=$(hit "^(apps/functions/|packages/(budget|policy|jobs)/)|$FB")"
+            echo "functions=$(hit "^(apps/functions/|packages/(agent|budget|policy|jobs)/)|$FB")"
             echo "hosting=$(hit "^(apps/web/|packages/jobs/)|$FB")"
             echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"
             echo "storage=$(hit "^(storage\.rules|infra/storage-cors\.json)$|$FB")"

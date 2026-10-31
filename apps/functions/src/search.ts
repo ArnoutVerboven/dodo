@@ -49,7 +49,9 @@ export async function searchWithBudget(
     const tightest = await tightestScope(deps.costGate, ctx.scopes);
     throw budgetExhausted(tightest.key, tightest.room, amount);
   }
-  await takeGovernor(deps, amount, now());
+  // The credit goes back to the hour it was taken from, even if the call crosses the hour.
+  const takenAt = now();
+  await takeGovernor(deps, amount, takenAt);
   let reservation: { id: string; amount: MicroEur };
   try {
     reservation = await deps.costGate.reserve({
@@ -63,7 +65,7 @@ export async function searchWithBudget(
       model: model.name,
     });
   } catch (err) {
-    await returnGovernor(deps, amount, now());
+    await returnGovernor(deps, amount, takenAt);
     if (err instanceof BudgetExceededError)
       throw budgetExhausted(err.scopeKey, err.available, err.requested);
     if (err instanceof HaltedError) throw new HttpsError('unavailable', 'halted');
@@ -98,6 +100,6 @@ export async function searchWithBudget(
     };
   } finally {
     await deps.costGate.settle(reservation.id, actual);
-    await returnGovernor(deps, reservation.amount - actual, now());
+    await returnGovernor(deps, reservation.amount - actual, takenAt);
   }
 }

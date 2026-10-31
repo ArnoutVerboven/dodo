@@ -23,9 +23,11 @@ import {
   SearchRequest,
   SecretAnswerRequest,
   SHARED_GOOGLE_STATE,
+  StartRequest,
   TranscribeRequest,
   VaultDeleteRequest,
   VaultResolveRequest,
+  WORKER_PROTOCOL,
 } from '@dodo/core';
 import { CloudBillingClient } from '@google-cloud/billing';
 import { ExecutionsClient, JobsClient } from '@google-cloud/run';
@@ -90,6 +92,7 @@ import {
 } from './model-provider.js';
 import { connectNotion, runNotionTool } from './notion.js';
 import { notifyPush, type PushDeps } from './push.js';
+import { sweepReservations } from './reservations.js';
 import { needsBrowser } from './routing.js';
 import {
   finish,
@@ -326,11 +329,25 @@ export const gatewaySearch = onCall(
 export const runStart = onCall(
   { serviceAccount: GATEWAY_SA, memory: '512MiB', maxInstances: 5 },
   async (request) => {
-    const { runId } = parseOr<{ runId: string }>(HeartbeatRequest, request.data);
+    const { runId, protocol } = parseOr<StartRequest>(StartRequest, request.data);
+    if (protocol !== undefined && protocol !== WORKER_PROTOCOL) {
+      logger.error('worker protocol mismatch', {
+        runId,
+        worker: protocol,
+        control: WORKER_PROTOCOL,
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        `update_needed: the worker speaks protocol ${protocol}, the control plane ${WORKER_PROTOCOL}; redeploy both`,
+      );
+    }
     const deps = controlDeps();
+    // `running` too: the worker retries start after a network error, and a start that already
+    // went through must answer again rather than end the run.
     const run = await loadRunForCaller(deps.db, caller(request.auth), runId, [
       'claimed',
       'dispatching',
+      'running',
     ]);
     return start(deps, run);
   },
@@ -575,10 +592,7 @@ export const onMessageWritten = onDocumentWritten(
     const before = event.data?.before.exists ? event.data.before.data() : undefined;
     const after = event.data?.after.exists ? event.data.after.data() : undefined;
     if (!after) return;
-    const deps = {
-      ...triggerDeps(db),
-      reap: (runId: string) => reapIfStale(controlDeps(), runId),
-    };
+    const deps = triggerDeps(db);
     if (!before) {
       await onUserMessage(
         deps,
@@ -601,6 +615,7 @@ export const onMessageWritten = onDocumentWritten(
 const triggerDeps = (db: Firestore) => ({
   db,
   log: logger.info,
+  reap: (runId: string) => reapIfStale(controlDeps(), runId),
   needsBrowser: (task: Parameters<typeof needsBrowser>[1]) =>
     needsBrowser(
       { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
@@ -634,8 +649,10 @@ class LocalExecutor implements Executor {
   }
 }
 
+// retry: dispatch is idempotent (queued → dispatching in a transaction), so a delivery that
+// failed (contention, a crash before the executor started) is safe to repeat.
 export const onRunCreated = onDocumentCreated(
-  { document: 'runs/{runId}', serviceAccount: GATEWAY_SA },
+  { document: 'runs/{runId}', serviceAccount: GATEWAY_SA, retry: true },
   async (event) => {
     const deps = controlDeps();
     const result = await dispatch(
@@ -1018,8 +1035,11 @@ export const reapRuns = onSchedule(
     retryCount: 0,
   },
   async () => {
-    const reaped = await reapStaleRuns(controlDeps());
+    const deps = controlDeps();
+    const reaped = await reapStaleRuns(deps);
     if (reaped.length) logger.info('reaped stale runs', { runs: reaped });
+    // Reservations a dead function left open would otherwise hold budget forever.
+    await sweepReservations(deps);
   },
 );
 

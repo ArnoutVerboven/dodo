@@ -51,6 +51,8 @@ describe.skipIf(!enabled)('a stopped run stays stopped', () => {
       sessionPath: paths.sessionBlob(runId),
       spent: 0,
       steps: 2,
+      // A live lease, so the reaper test sharing the emulator does not end it first.
+      lease: { owner: `run:${runId}`, expiresAt: Date.now() + 3_600_000 },
       createdAt: 1,
       updatedAt: 1,
     });

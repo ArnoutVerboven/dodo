@@ -24,6 +24,8 @@ export type ScriptedTurn =
 export class FakeControlPlane implements ControlPlane {
   requests: GenerateRequest[] = [];
   heartbeats = 0;
+  /** Thrown by the next heartbeats, in order (a network blip, a lost lease). */
+  heartbeatErrors: Error[] = [];
   flags: Partial<HeartbeatResponse> = {};
   /** Input tokens every scripted reply reports. */
   inputTokens = 100;
@@ -60,6 +62,8 @@ export class FakeControlPlane implements ControlPlane {
   }
   async heartbeat(): Promise<HeartbeatResponse> {
     this.heartbeats++;
+    const err = this.heartbeatErrors.shift();
+    if (err) throw err;
     const answer = this.inputRequests.length ? this.heldAnswers.shift() : undefined;
     return {
       ok: true,

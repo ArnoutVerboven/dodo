@@ -22,6 +22,7 @@ import {
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { googleAccessForRun } from './google-tools.js';
 import { toolAccessForRun } from './mcp.js';
 import { notionAccessForRun } from './notion.js';
@@ -135,7 +136,18 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   const project = run.projectId
     ? (await deps.db.doc(paths.project(run.projectId)).get()).data()
     : undefined;
-  const session = run.sessionPath ? await loadSession(deps, run.sessionPath).catch(() => []) : [];
+  // A resume that cannot get its conversation fails here (the worker ends the run with the
+  // reason) rather than starting over from nothing.
+  const session = run.sessionPath
+    ? await loadSession(deps, run.sessionPath).catch((err) => {
+        deps.log?.('session load failed', {
+          runId: run.id,
+          sessionPath: run.sessionPath,
+          err: String(err),
+        });
+        throw new HttpsError('data-loss', String((err as Error).message));
+      })
+    : [];
   const raw = (await deps.db.doc(paths.run(run.id)).get()).data() as Record<string, unknown>;
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const policy = mergePolicy(task, project, settings);
@@ -154,7 +166,9 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
   });
   await deps.db.doc(paths.run(run.id)).update({
     state: 'running',
-    startedAt: now,
+    // A repeated start (the worker retried) keeps the first start time: steering comments
+    // are those posted after it.
+    startedAt: run.startedAt ?? now,
     lease: { owner: runUid(run.id), expiresAt: now + LEASE_MS },
     updatedAt: now,
     localToken: FieldValue.delete(),
@@ -200,33 +214,15 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
   const settings = (await deps.db.doc(paths.settings()).get()).data() ?? {};
   const scopes = scopesForRun(run, now);
 
-  // Settle the previous infra slice at its full reserved amount and reserve the next one.
-  if (run.device === 'gcp') {
-    const shape = workerShape(run);
-    const slice = computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib);
-    const prev = (await ref.get()).get('infraReservation') as string | undefined;
-    if (prev) await deps.costGate.settle(prev, slice);
-    try {
-      const r = await deps.costGate.reserve({
-        scopes,
-        category: 'infra',
-        amount: slice,
-        description: 'Cloud Run worker time',
-        taskId: run.taskId,
-        projectId: run.projectId,
-        runId: run.id,
-      });
-      await ref.update({ infraReservation: r.id, spent: FieldValue.increment(prev ? slice : 0) });
-    } catch {
-      await ref.update({ infraReservation: FieldValue.delete() });
-      return {
-        ok: false,
-        reason: 'budget_exhausted',
-        remaining: 0,
-        pendingMessages: [],
-        compact: false,
-      };
-    }
+  // Charge the worker time since the last beat and hold the next slice.
+  if (run.device === 'gcp' && !(await meterInfra(deps, run, now))) {
+    return {
+      ok: false,
+      reason: 'budget_exhausted',
+      remaining: 0,
+      pendingMessages: [],
+      compact: false,
+    };
   }
 
   const fresh = (await ref.get()).data() as Run;
@@ -500,11 +496,6 @@ async function pairedMacs(deps: RunControlDeps): Promise<string[]> {
  */
 export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishRequest, 'runId'>) {
   const now = (deps.now ?? Date.now)();
-  // A run reaped without a session (worker died) keeps whatever session it started from.
-  const sessionPath = req.session.length
-    ? await saveSession(deps, run.id, req.session)
-    : run.sessionPath;
-  const tracePath = await archiveTrace(deps, run.id);
   const state: Run['state'] =
     req.reason === 'finished' ||
     req.reason === 'max_steps' ||
@@ -518,6 +509,27 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
           : req.reason === 'budget_exhausted'
             ? 'budget_exhausted'
             : 'failed';
+
+  // One end per run: the worker's own finish, the reaper and deviceRelease can race. Whoever
+  // moves the run out of a live state first wins; the others change nothing.
+  const won = await claimEnd(deps, run, state, req.reason, now);
+  if (!won) {
+    deps.log?.('finish skipped: the run already ended', { runId: run.id, reason: req.reason });
+    return;
+  }
+  // The run has ended now, so nothing below may stop the task from being released: a session
+  // or trace that cannot be stored is logged, not thrown.
+  // A run reaped without a session (worker died) keeps whatever session it started from.
+  const sessionPath = req.session.length
+    ? await saveSession(deps, run.id, req.session).catch((err) => {
+        deps.log?.('session save failed', { runId: run.id, err: String(err) });
+        return run.sessionPath;
+      })
+    : run.sessionPath;
+  const tracePath = await archiveTrace(deps, run.id).catch((err) => {
+    deps.log?.('trace archive failed', { runId: run.id, err: String(err) });
+    return undefined;
+  });
 
   const batch = deps.db.batch();
   batch.update(
@@ -662,13 +674,15 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   const headline =
     req.reason === 'finished'
       ? `${req.outcome === 'done' ? 'Done' : req.outcome === 'blocked' ? 'Blocked' : 'Ready for review'}: ${title}`
-      : req.reason === 'budget_exhausted'
-        ? `Budget used up: ${title}`
-        : req.reason === 'interrupted' || req.reason === 'halted'
-          ? `Stopped: ${title}`
-          : req.reason === 'needs_device'
-            ? `Needs your Mac: ${title}`
-            : `Run failed: ${title}`;
+      : req.reason === 'max_steps'
+        ? `Ready for review (step limit reached): ${title}`
+        : req.reason === 'budget_exhausted'
+          ? `Budget used up: ${title}`
+          : req.reason === 'interrupted' || req.reason === 'halted'
+            ? `Stopped: ${title}`
+            : req.reason === 'needs_device'
+              ? `Needs your Mac: ${title}`
+              : `Run failed: ${title}`;
   const summary =
     ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
   const kind: NotificationKind =
@@ -678,14 +692,41 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         : req.outcome === 'blocked'
           ? 'blocked'
           : 'review'
-      : req.reason === 'budget_exhausted'
-        ? 'budget'
-        : req.reason === 'interrupted' || req.reason === 'halted'
-          ? 'stopped'
-          : req.reason === 'needs_device'
-            ? 'blocked'
-            : 'failed';
+      : // The task goes to review at the step limit: say so, not "failed".
+        req.reason === 'max_steps'
+        ? 'review'
+        : req.reason === 'budget_exhausted'
+          ? 'budget'
+          : req.reason === 'interrupted' || req.reason === 'halted'
+            ? 'stopped'
+            : req.reason === 'needs_device'
+              ? 'blocked'
+              : 'failed';
   await deps.notify?.({ kind, title: headline, body: req.error ?? summary, taskId: run.taskId });
+}
+
+/** States a run can still be ended from; anything else has already ended. */
+const LIVE_STATES: ReadonlyArray<Run['state']> = ['queued', 'dispatching', 'claimed', 'running'];
+
+/**
+ * Move the run to its end state in a transaction, only if it is still live and still the same
+ * lease generation. False when someone else ended it (or a newer worker holds it).
+ */
+async function claimEnd(
+  deps: RunControlDeps,
+  run: Run,
+  state: Run['state'],
+  reason: RunEndReason,
+  now: number,
+): Promise<boolean> {
+  const ref = deps.db.doc(paths.run(run.id));
+  return deps.db.runTransaction(async (t) => {
+    const current = (await t.get(ref)).data() as Partial<Run> | undefined;
+    if (!current?.state || !LIVE_STATES.includes(current.state)) return false;
+    if ((current.generation ?? 0) !== (run.generation ?? 0)) return false;
+    t.update(ref, { state, endReason: reason, endedAt: now, updatedAt: now });
+    return true;
+  });
 }
 
 /**
@@ -707,15 +748,78 @@ export function exhaustedCap(error: string | undefined): {
   };
 }
 
+const infraCost = (run: Pick<Run, 'browser'>, ms: number) => {
+  const shape = workerShape(run);
+  return computeCost(Math.max(0, ms) / 1000, shape.vcpu, shape.gib);
+};
+
+/**
+ * Take the run's open infra reservation and the time it started covering, in one transaction:
+ * a second heartbeat at the same moment finds nothing to settle, so nothing is charged twice.
+ */
+async function takeInfraReservation(
+  deps: RunControlDeps,
+  run: Run,
+  now: number,
+): Promise<{ id: string; since: number } | undefined> {
+  const ref = deps.db.doc(paths.run(run.id));
+  return deps.db.runTransaction(async (t) => {
+    const d = (await t.get(ref)).data() ?? {};
+    const id = d.infraReservation as string | undefined;
+    if (!id) return undefined;
+    const since = (d.meteredAt as number | undefined) ?? now - HEARTBEAT_MS;
+    t.update(ref, { infraReservation: FieldValue.delete(), meteredAt: now });
+    return { id, since };
+  });
+}
+
+/**
+ * Infra metering for a Cloud Run worker: settle the previous slice at the time that actually
+ * passed (beats come every 15 s and at every step, so a fixed slice per beat over-charged),
+ * then reserve the next one. False when the budget cannot cover the next slice.
+ */
+export async function meterInfra(deps: RunControlDeps, run: Run, now: number): Promise<boolean> {
+  const ref = deps.db.doc(paths.run(run.id));
+  const prev = await takeInfraReservation(deps, run, now);
+  if (prev) {
+    const actual = infraCost(run, now - prev.since);
+    await deps.costGate.settle(prev.id, actual);
+    await ref.update({ spent: FieldValue.increment(actual) });
+  }
+  let next: { id: string };
+  try {
+    next = await deps.costGate.reserve({
+      scopes: scopesForRun(run, now),
+      category: 'infra',
+      amount: infraCost(run, HEARTBEAT_MS),
+      description: 'Cloud Run worker time',
+      taskId: run.taskId,
+      projectId: run.projectId,
+      runId: run.id,
+    });
+  } catch {
+    return false;
+  }
+  // Keep one open reservation per run: if another beat got there first, cancel ours.
+  const kept = await deps.db.runTransaction(async (t) => {
+    const d = (await t.get(ref)).data() ?? {};
+    if (d.infraReservation) return false;
+    t.update(ref, {
+      infraReservation: next.id,
+      meteredAt: (d.meteredAt as number | undefined) ?? now,
+    });
+    return true;
+  });
+  if (!kept) await deps.costGate.settle(next.id, 0);
+  return true;
+}
+
 /** Shared tail: settle the infra slice and make the run identity worthless. */
 async function endRun(deps: RunControlDeps, run: Run) {
-  const prev = (await deps.db.doc(paths.run(run.id)).get()).get('infraReservation') as
-    | string
-    | undefined;
-  if (prev) {
-    const shape = workerShape(run);
-    await deps.costGate.settle(prev, computeCost(HEARTBEAT_MS / 1000, shape.vcpu, shape.gib));
-  }
+  const now = (deps.now ?? Date.now)();
+  // The last slice is charged for the time it actually ran, not in full.
+  const prev = await takeInfraReservation(deps, run, now);
+  if (prev) await deps.costGate.settle(prev.id, infraCost(run, now - prev.since));
   try {
     await deps.auth.deleteUser(runUid(run.id));
   } catch (err) {
@@ -737,12 +841,51 @@ async function saveSession(
   return path;
 }
 
+export class SessionLoadError extends Error {}
+
+/**
+ * The stored conversation of a task. Never quietly empty: a resumed run that started from
+ * nothing would redo work and actions the user already approved. A transient Storage error is
+ * tried again; a missing or unreadable session throws `SessionLoadError`.
+ */
 export async function loadSession(
   deps: Pick<RunControlDeps, 'storage'>,
   path: string,
+  delays: number[] = [500, 2000],
 ): Promise<Content[]> {
-  const [buf] = await deps.storage.bucket().file(path).download();
-  return JSON.parse(buf.toString('utf8')) as Content[];
+  let buf: Buffer | undefined;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      [buf] = await deps.storage.bucket().file(path).download();
+      break;
+    } catch (err) {
+      const delay = delays[attempt];
+      const missing = (err as { code?: number }).code === 404;
+      if (missing || delay === undefined) {
+        throw new SessionLoadError(
+          `Could not load this task's conversation (${missing ? 'not found' : String(err).slice(0, 200)})`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  let session: unknown;
+  try {
+    session = JSON.parse(buf.toString('utf8'));
+  } catch {
+    throw new SessionLoadError("This task's stored conversation is corrupt (not JSON)");
+  }
+  const valid =
+    Array.isArray(session) &&
+    session.every(
+      (c) =>
+        !!c &&
+        typeof c === 'object' &&
+        (c.role === 'user' || c.role === 'model') &&
+        Array.isArray(c.parts),
+    );
+  if (!valid) throw new SessionLoadError("This task's stored conversation is corrupt");
+  return session as Content[];
 }
 
 /** Move the live trace out of Firestore into one JSON blob, so Firestore stays small. */
@@ -762,12 +905,30 @@ async function archiveTrace(deps: RunControlDeps, runId: string): Promise<string
   return path;
 }
 
+/** A queued or dispatching remote run that has not started by now never will. */
+export const START_GRACE_MS = 5 * 60_000;
+
 /**
- * Lease sweep: a worker that died (OOM, crash, cancelled execution) never calls finish. Runs
- * whose lease expired a while ago are ended as `lease_lost`, which releases the task and
- * settles the open infra reservation. Runs stuck in `claimed` (never started) are included.
+ * Why a run counts as dead, or undefined while it may still be alive:
+ * - running or claimed: the lease expired a while ago (the worker died without finishing);
+ * - queued or dispatching for Cloud Run: no worker started (the dispatch was lost);
+ * - queued for a Mac: never; it waits for that Mac's daemon, however long it is offline.
  */
-/** Reap one run if its lease expired; returns whether it was reaped. Used before enqueueing. */
+export function staleReason(run: Run, now: number, graceMs = 2 * LEASE_MS): string | undefined {
+  if (run.state === 'claimed' || run.state === 'running') {
+    const deadline = run.lease?.expiresAt ?? run.updatedAt;
+    return deadline + graceMs <= now ? 'The worker stopped responding.' : undefined;
+  }
+  if (run.state === 'queued' || run.state === 'dispatching') {
+    if (run.state === 'queued' && run.device !== 'gcp') return undefined;
+    return run.updatedAt + START_GRACE_MS <= now
+      ? 'The worker never started. Comment to try again.'
+      : undefined;
+  }
+  return undefined;
+}
+
+/** Reap one run if it is dead (see `staleReason`); returns whether it was reaped. */
 export async function reapIfStale(
   deps: RunControlDeps,
   runId: string,
@@ -777,17 +938,16 @@ export async function reapIfStale(
   const snap = await deps.db.doc(paths.run(runId)).get();
   if (!snap.exists) return false;
   const run = { id: snap.id, ...snap.data() } as Run;
-  if (!['claimed', 'running', 'dispatching', 'queued'].includes(run.state)) return false;
-  const deadline = run.lease?.expiresAt ?? run.updatedAt;
-  if (deadline + graceMs > now) return false;
-  await finish(deps, run, {
-    reason: 'lease_lost',
-    error: 'The worker stopped responding.',
-    session: [],
-  });
+  const why = staleReason(run, now, graceMs);
+  if (!why) return false;
+  await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
   return true;
 }
 
+/**
+ * Lease sweep (every 5 minutes): ends every run that is dead by `staleReason`, which releases
+ * its task and settles its open infra reservation.
+ */
 export async function reapStaleRuns(
   deps: RunControlDeps,
   graceMs = 2 * LEASE_MS,
@@ -795,19 +955,20 @@ export async function reapStaleRuns(
   const now = (deps.now ?? Date.now)();
   const live = await deps.db
     .collection(paths.runs())
-    .where('state', 'in', ['claimed', 'running'])
+    .where('state', 'in', ['queued', 'dispatching', 'claimed', 'running'])
     .get();
   const reaped: string[] = [];
   for (const d of live.docs) {
     const run = { id: d.id, ...d.data() } as Run;
-    const deadline = run.lease?.expiresAt ?? run.updatedAt;
-    if (deadline + graceMs > now) continue;
-    await finish(deps, run, {
-      reason: 'lease_lost',
-      error: 'The worker stopped responding.',
-      session: [],
-    });
-    reaped.push(run.id);
+    const why = staleReason(run, now, graceMs);
+    if (!why) continue;
+    try {
+      await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
+      reaped.push(run.id);
+    } catch (err) {
+      // One broken run must not keep the sweep from the others.
+      deps.log?.('reap failed', { runId: run.id, err: String(err) });
+    }
   }
   return reaped;
 }

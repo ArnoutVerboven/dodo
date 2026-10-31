@@ -197,8 +197,14 @@ export async function onTaskChanged(
 ) {
   if (!after) return;
   let current = after;
-  // A task stuck behind a dead worker (stale activeRunId) is released first.
-  if (after.activeRunId && deps.reap && (await deps.reap(after.activeRunId))) {
+  // A task stuck behind a dead worker (stale activeRunId) is released first. Only when the
+  // user moved it (a status change): the agent's own writes during a run need no check.
+  if (
+    after.activeRunId &&
+    before?.status !== after.status &&
+    deps.reap &&
+    (await deps.reap(after.activeRunId))
+  ) {
     current = { ...after, activeRunId: undefined };
   }
   if (!isReady(current) || isReady(before)) return;
