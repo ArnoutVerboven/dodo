@@ -665,13 +665,15 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   const headline =
     req.reason === 'finished'
       ? `${req.outcome === 'done' ? 'Done' : req.outcome === 'blocked' ? 'Blocked' : 'Ready for review'}: ${title}`
-      : req.reason === 'budget_exhausted'
-        ? `Budget used up: ${title}`
-        : req.reason === 'interrupted' || req.reason === 'halted'
-          ? `Stopped: ${title}`
-          : req.reason === 'needs_device'
-            ? `Needs your Mac: ${title}`
-            : `Run failed: ${title}`;
+      : req.reason === 'max_steps'
+        ? `Ready for review (step limit reached): ${title}`
+        : req.reason === 'budget_exhausted'
+          ? `Budget used up: ${title}`
+          : req.reason === 'interrupted' || req.reason === 'halted'
+            ? `Stopped: ${title}`
+            : req.reason === 'needs_device'
+              ? `Needs your Mac: ${title}`
+              : `Run failed: ${title}`;
   const summary =
     ((await taskRef.get()).get('statusLine') as { text?: string } | undefined)?.text ?? '';
   const kind: NotificationKind =
@@ -681,13 +683,16 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         : req.outcome === 'blocked'
           ? 'blocked'
           : 'review'
-      : req.reason === 'budget_exhausted'
-        ? 'budget'
-        : req.reason === 'interrupted' || req.reason === 'halted'
-          ? 'stopped'
-          : req.reason === 'needs_device'
-            ? 'blocked'
-            : 'failed';
+      : // The task goes to review at the step limit: say so, not "failed".
+        req.reason === 'max_steps'
+        ? 'review'
+        : req.reason === 'budget_exhausted'
+          ? 'budget'
+          : req.reason === 'interrupted' || req.reason === 'halted'
+            ? 'stopped'
+            : req.reason === 'needs_device'
+              ? 'blocked'
+              : 'failed';
   await deps.notify?.({ kind, title: headline, body: req.error ?? summary, taskId: run.taskId });
 }
 
