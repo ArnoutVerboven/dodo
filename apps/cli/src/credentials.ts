@@ -16,6 +16,12 @@ export interface CredentialStore {
 }
 
 const SERVICE = 'dev.dodo.device';
+/**
+ * The Keychain is read and written synchronously (the Auth SDK's persistence asks on every token
+ * refresh), so a `security` call that hangs (say, on a Keychain prompt) would freeze the whole
+ * daemon, heartbeats included. Bounded, it fails instead and the daemon carries on or restarts.
+ */
+const KEYCHAIN_TIMEOUT_MS = 10_000;
 const ACCOUNT = 'dodo';
 
 class KeychainStore implements CredentialStore {
@@ -28,6 +34,7 @@ class KeychainStore implements CredentialStore {
         {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: KEYCHAIN_TIMEOUT_MS,
         },
       ).trim();
     } catch {
@@ -39,15 +46,14 @@ class KeychainStore implements CredentialStore {
     execFileSync(
       'security',
       ['add-generic-password', '-a', ACCOUNT, '-s', SERVICE, '-U', '-w', value],
-      {
-        stdio: 'ignore',
-      },
+      { stdio: 'ignore', timeout: KEYCHAIN_TIMEOUT_MS },
     );
   }
   clear() {
     try {
       execFileSync('security', ['delete-generic-password', '-a', ACCOUNT, '-s', SERVICE], {
         stdio: 'ignore',
+        timeout: KEYCHAIN_TIMEOUT_MS,
       });
     } catch {
       // nothing stored
