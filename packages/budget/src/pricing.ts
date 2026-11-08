@@ -8,7 +8,7 @@ import { isLocalModel, LOCAL_CONTEXT_WINDOW, MICRO_PER_EUR, type MicroEur } from
  * https://cloud.google.com/run/pricing before changing. A model missing from this table
  * cannot run, so new models must be priced first.
  */
-export const PRICING_VERSION = '2026-10-26';
+export const PRICING_VERSION = '2026-11-08';
 const USD_TO_EUR = 1.0;
 
 export interface ModelPrice {
@@ -101,9 +101,27 @@ export function modelPrice(model: string): ModelPrice {
   return price;
 }
 
-export function tokenCost(model: string, inputTokens: number, outputTokens: number): MicroEur {
+/**
+ * What cached input tokens cost, as a share of the input price. Vertex bills the input tokens
+ * that Gemini's implicit cache served (`cachedContentTokenCount`, part of the prompt count) at
+ * a 90% discount on every Gemini 2.5 and later model.
+ */
+export const CACHED_INPUT_SHARE = 0.1;
+
+/**
+ * Cost of a call. `cachedInputTokens` is the part of `inputTokens` that came from the cache;
+ * leave it out before the call, when nobody knows it yet, so reservations stay full price.
+ */
+export function tokenCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cachedInputTokens = 0,
+): MicroEur {
   const p = modelPrice(model);
-  return usdToMicroEur((inputTokens * p.inputPerM + outputTokens * p.outputPerM) / 1_000_000);
+  const cached = Math.min(Math.max(0, cachedInputTokens), inputTokens);
+  const input = inputTokens - cached + cached * CACHED_INPUT_SHARE;
+  return usdToMicroEur((input * p.inputPerM + outputTokens * p.outputPerM) / 1_000_000);
 }
 
 /**

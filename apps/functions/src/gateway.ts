@@ -194,7 +194,12 @@ export async function generateWithBudget(
       thinkingBudget,
       temperature: req.temperature,
     });
-    actual = tokenCost(req.model, result.usage.inputTokens, result.usage.outputTokens);
+    actual = tokenCost(
+      req.model,
+      result.usage.inputTokens,
+      result.usage.outputTokens,
+      result.usage.cachedInputTokens,
+    );
     const remaining = Math.max(0, available - actual);
     if (ctx.runId) {
       await deps.db.doc(paths.run(ctx.runId)).update({
