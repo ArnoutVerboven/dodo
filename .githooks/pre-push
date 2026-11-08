@@ -1,0 +1,10 @@
+#!/bin/sh
+# Local gate 2 of 2 (see docs/TESTING.md): lint, type-check and the unit tests (`pnpm check`,
+# about 30-40 seconds, no emulators, no network). CI runs these again plus the emulator suites.
+# Skip once with `git push --no-verify`, or for a session with DODO_SKIP_HOOKS=1.
+[ "$DODO_SKIP_HOOKS" = 1 ] && exit 0
+# Pushing only a branch deletion has nothing to check.
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in 0000000000000000000000000000000000000000) ;; *) exec pnpm -s check ;; esac
+done
+exit 0
