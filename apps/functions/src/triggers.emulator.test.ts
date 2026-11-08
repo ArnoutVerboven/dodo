@@ -78,6 +78,41 @@ describe.skipIf(!enabled)('onInputAnswered', () => {
     expect(await runsOf(taskId)).toHaveLength(0);
   });
 
+  it('a yes to "continue on your Mac?" resumes the task on the Mac with a browser', async () => {
+    const d = db as NonNullable<typeof db>;
+    // request_device only comes from a run with a browser, so the task has one.
+    const { taskId } = await seedTask({
+      ai: { enabled: true, device: 'gcp', budget: 300_000, browser: 'auto' },
+    });
+    const deviceId = `mac-${randomUUID().slice(0, 8)}`;
+    await d.doc(paths.device(deviceId)).set({
+      name: 'Studio',
+      state: 'approved',
+      lastSeen: Date.now() + 60_000,
+      folders: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const input = { prompt: 'Continue on your Mac?', moveToMac: true, answer: { value: 'yes' } };
+    await onInputAnswered({ db: d }, taskId, 'm1', { input: {} }, { input });
+    const runs = await runsOf(taskId);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.get('device')).toMatch(/^mac:/);
+    expect(runs[0]?.get('browser')).toBe(true);
+    expect(runs[0]?.get('answer')?.value).toBe('yes');
+  });
+
+  it('a no to "continue on your Mac?" resumes it remotely with the answer', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { taskId } = await seedTask();
+    const input = { prompt: 'Continue on your Mac?', moveToMac: true, answer: { value: 'no' } };
+    await onInputAnswered({ db: d }, taskId, 'm1', { input: {} }, { input });
+    const runs = await runsOf(taskId);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.get('device')).toBe('gcp');
+    expect(runs[0]?.get('answer')?.value).toBe('no');
+  });
+
   it('does nothing when the answer was already there (a replayed event)', async () => {
     const d = db as NonNullable<typeof db>;
     const { taskId } = await seedTask();

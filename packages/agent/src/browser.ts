@@ -112,8 +112,9 @@ export const BROWSER_TOOLS = [
   'browser_take_screenshot',
 ] as const;
 
+// "Sign" means signing something (a contract, a form); "Sign in" / "Sign out" are logins.
 const SUBMIT =
-  /\b(submit|pay|purchase|buy|order|checkout|confirm|send|post|publish|delete|remove|sign|accept|agree|transfer|book|apply)\b/i;
+  /\b(submit|pay|purchase|buy|order|checkout|confirm|send|post|publish|delete|remove|sign(?![ -]?(?:in|on|out)\b)|accept|agree|transfer|book|apply)\b/i;
 const MAX_RESULT = 20_000;
 
 export const hostOf = (url: string): string => {

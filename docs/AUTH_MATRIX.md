@@ -1,0 +1,19 @@
+# What logs in where
+
+Which login methods dodo's agent gets through, on your Mac (dodo's Chrome window) and remotely (headless Chromium in Cloud Run). The measured part below is written by `pnpm test:auth` ([AUTH_TESTING.md](AUTH_TESTING.md)); the expectations are what the code and earlier debugging say, until a run confirms or corrects them.
+
+## Measured
+
+<!-- auth-matrix:start -->
+No run yet. Run `pnpm test:auth` to fill this in.
+<!-- auth-matrix:end -->
+
+## Expected (from the code, not yet measured)
+
+| Method                | Local (Mac)                                                                                                                                                                                                                          | Remote (cloud)                                                                                                                                                                                                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| itsme                 | Works. The phone-number option sends a push to the itsme app; nothing to do on the Mac. A QR-only page has to be scanned off the Mac's screen, or from the screenshot dodo sends, shown on another screen than the phone with itsme. | Works since the headless browser presents itself as a normal Chrome (itsme rejected "HeadlessChrome" and automation flags). Same phone-number push; a QR code comes as a screenshot and must be scanned from another screen. The request expires in a minute or two; the page is held open for up to 10 minutes while dodo waits for you.   |
+| Google (incl. 2-step) | Works in the real Chrome window; the 2-step prompt goes to your phone. You are needed at the Mac when Google offers a passkey, Touch ID or a security key, or shows a CAPTCHA.                                                       | Uncertain. Google often refuses automated or data-centre browsers ("This browser or app may not be secure"). When it does, the agent calls `request_device` and the fallback takes the task to your Mac. Once signed in anywhere remotely, your stored Google session (`use_google_session`) serves later remote tasks without a new login. |
+| Username + password   | Works: the agent types from the vault. Emailed codes are fetched from Gmail (`get_email_code`); SMS codes and authenticator codes are asked as secret answers (TOTP from the vault is not built yet).                                | Same, unless the site's bot protection (a CAPTCHA wall, a "suspicious login" block) refuses the cloud browser's address; then the fallback takes it to the Mac.                                                                                                                                                                             |
+
+Where a login needs you at the Mac rather than on your phone, see [AUTH_TESTING.md](AUTH_TESTING.md#when-you-have-to-be-at-the-mac).

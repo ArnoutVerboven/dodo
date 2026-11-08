@@ -55,10 +55,10 @@ From GitHub: **Actions › Manual tests › Run workflow** (or `gh workflow run 
 
 Each run writes its log to `tests/manual/reports/` (not committed). A suite can write a Markdown report there too (`$DODO_MANUAL_REPORT_DIR`); the workflow adds `*.md` reports to the run summary.
 
-| Suite  | Runs                            | Cost          | Run it when                                                                                          |
-| ------ | ------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
-| `auth` | your Mac only, needs your phone | model + infra | after changing browser, login, vault, MFA or device-routing code; before relying on a new site login |
-| `e2e`  | Mac or CI                       | free          | any time, to re-run the CI end-to-end on its own                                                     |
+| Suite  | Runs                            | Cost          | Run it when                                                                                                                                                                                   |
+| ------ | ------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth` | your Mac only, needs your phone | model + infra | after changing browser, login, vault, MFA or device-routing code; after a Playwright or Chromium upgrade; before relying on a new site login; monthly. See [AUTH_TESTING.md](AUTH_TESTING.md) |
+| `e2e`  | Mac or CI                       | free          | any time, to re-run the CI end-to-end on its own                                                                                                                                              |
 
 ### Adding a suite
 

@@ -2,11 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { type CostGate, computeCost, contextWindow } from '@dodo/budget';
 import {
   type Content,
+  DEVICE_MAC_RULE,
+  type Device,
   type FinishRequest,
+  type GlobalSettings,
   GOOGLE_SESSION_PROMPT,
   GOOGLE_SESSION_RULE,
   type HeartbeatResponse,
+  isDeviceOnline,
+  macMovePrompt,
   type NotificationKind,
+  type Project,
   paths,
   type RequestInputRequest,
   type Run,
@@ -14,6 +20,8 @@ import {
   type RunGoogleAccess,
   type RunNotionAccess,
   type RunToolAccess,
+  resolveAiConfig,
+  type Task,
   type TaskStatus,
   VaultEntry,
   vaultApprovalPrompt,
@@ -482,10 +490,74 @@ const TASK_STATUS_AFTER: Record<RunEndReason, TaskStatus | undefined> = {
   needs_device: 'in_progress',
 };
 
-/** The Macs a run can move to. */
-async function pairedMacs(deps: RunControlDeps): Promise<string[]> {
-  const snap = await deps.db.collection(paths.devices()).where('state', '==', 'approved').get();
-  return snap.docs.map((d) => d.id);
+/**
+ * Where request_device (needs_device) takes a run. The Mac is the approved one seen most
+ * recently, as `routeToMac` picks it. A task whose device resolves to `auto` (or a Mac) moves at
+ * once; a task pinned to remote (`gcp`) asks you first, unless a `Device(mac)` allow rule says
+ * not to; a deny rule refuses the move.
+ */
+export interface MacMove {
+  mac?: { id: string; name: string; online: boolean };
+  ask: boolean;
+  denied: boolean;
+  /** The agent's reason from its request_device call, for the card. */
+  reason?: string;
+}
+
+export async function macMove(
+  deps: Pick<RunControlDeps, 'db' | 'now'>,
+  run: Pick<Run, 'taskId' | 'projectId'>,
+  session: Content[],
+): Promise<MacMove> {
+  const now = (deps.now ?? Date.now)();
+  const [devicesSnap, taskSnap, projectSnap, settingsSnap] = await Promise.all([
+    deps.db.collection(paths.devices()).where('state', '==', 'approved').get(),
+    deps.db.doc(paths.task(run.taskId)).get(),
+    run.projectId ? deps.db.doc(paths.project(run.projectId)).get() : undefined,
+    deps.db.doc(paths.settings()).get(),
+  ]);
+  const best = devicesSnap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<Device, 'id'>) }))
+    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  const mac = best
+    ? { id: best.id, name: best.name, online: isDeviceOnline(best.lastSeen, now) }
+    : undefined;
+  const task = (taskSnap.data() ?? {}) as Partial<Task>;
+  const project = projectSnap?.data() as Project | undefined;
+  const settings = (settingsSnap.data() ?? {}) as Partial<GlobalSettings>;
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  const docs = [settings, project, task] as Array<Record<string, unknown> | undefined>;
+  const denied = docs
+    .flatMap((d) => list(d?.denyRules))
+    .some((r) => r === DEVICE_MAC_RULE || r === 'Device');
+  const allowed = docs.flatMap((d) => list(d?.allowRules)).includes(DEVICE_MAC_RULE);
+  const device = resolveAiConfig({ ai: task.ai ?? { enabled: true } }, project, {
+    defaults: settings.defaults ?? {},
+    defaultTaskBudget: settings.defaultTaskBudget ?? 0,
+  }).device;
+  return {
+    mac,
+    denied,
+    ask: device === 'gcp' && !allowed,
+    reason: requestDeviceReason(session),
+  };
+}
+
+/** The reason of the last request_device call in a session, cut to one line. */
+export function requestDeviceReason(session: Content[]): string | undefined {
+  for (let i = session.length - 1; i >= 0; i--) {
+    const parts = session[i]?.parts ?? [];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const call = parts[j]?.functionCall;
+      if (call?.name !== 'request_device') continue;
+      const reason = (call.args as { reason?: unknown } | undefined)?.reason;
+      if (typeof reason !== 'string') return undefined;
+      const line = reason.replace(/\s+/g, ' ').trim();
+      return line ? line.slice(0, 200) : undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -566,12 +638,12 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   if (req.reason === 'needs_browser') {
     taskUpdate.statusLine = { text: 'Starting again with a browser…', needsYou: false };
   }
-  // Moving to the Mac needs one paired; otherwise the task waits for the user.
-  const macs = req.reason === 'needs_device' ? await pairedMacs(deps) : [];
-  if (req.reason === 'needs_device') {
-    if (macs.length) {
-      taskUpdate.statusLine = { text: 'Moving to your Mac…', needsYou: false };
-    } else {
+  // Moving to the Mac needs one paired; a task pinned to remote asks first (macMove).
+  const move = req.reason === 'needs_device' ? await macMove(deps, run, req.session) : undefined;
+  const moves = !!move?.mac && !move.ask && !move.denied;
+  let moveAsk: { messageId: string; prompt: string } | undefined;
+  if (move) {
+    if (!move.mac) {
       taskUpdate.status = 'needs_input';
       taskUpdate.statusLine = { text: 'Needs your Mac: pair one under Settings', needsYou: true };
       batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
@@ -580,6 +652,35 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         runId: run.id,
         createdAt: now,
       });
+    } else if (move.denied) {
+      taskUpdate.status = 'needs_input';
+      taskUpdate.statusLine = { text: 'Needs your Mac, but a rule denies moving', needsYou: true };
+      batch.create(deps.db.collection(paths.messages(run.taskId)).doc(), {
+        author: 'system',
+        body: `This step needs the browser on your Mac, but a deny rule (${DEVICE_MAC_RULE}) keeps this task off it. Remove the rule or comment with another way to continue.`,
+        runId: run.id,
+        createdAt: now,
+      });
+    } else if (move.ask) {
+      const prompt = macMovePrompt(move.mac.name, move.mac.online, move.reason);
+      const ref = deps.db.collection(paths.messages(run.taskId)).doc();
+      moveAsk = { messageId: ref.id, prompt };
+      taskUpdate.status = 'needs_input';
+      taskUpdate.statusLine = {
+        text: `Login failed remotely. Move to ${move.mac.name}?`,
+        needsYou: true,
+      };
+      batch.create(ref, {
+        author: 'system',
+        body: prompt,
+        runId: run.id,
+        input: { kind: 'approval', prompt, suggestedRule: DEVICE_MAC_RULE, moveToMac: true },
+        createdAt: now,
+      });
+    } else {
+      taskUpdate.statusLine = move.mac.online
+        ? { text: `Moving to ${move.mac.name}…`, needsYou: false }
+        : { text: `Waiting for ${move.mac.name} to come online…`, needsYou: true };
     }
   }
   batch.update(taskRef, taskUpdate);
@@ -628,10 +729,7 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
   // The agent is through with what it was told, unless the run goes on in another one: a held
   // question was already acknowledged when it was asked, and a move to a browser or the Mac
   // continues the same work.
-  const continues =
-    req.reason === 'waiting_input' ||
-    req.reason === 'needs_browser' ||
-    (req.reason === 'needs_device' && macs.length > 0);
+  const continues = req.reason === 'waiting_input' || req.reason === 'needs_browser' || moves;
   if (!continues) await deps.ackTelegram?.(run.taskId);
 
   if (req.reason === 'waiting_input') {
@@ -658,8 +756,7 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     deps.log?.('run restarted with a browser', { taskId: run.taskId, runId: id });
     return;
   }
-  // Without a paired Mac the task waits for the user: fall through to the notification below.
-  if (req.reason === 'needs_device' && macs.length) {
+  if (moves && move?.mac) {
     const id = await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
       trigger: 'resume',
       sessionPath,
@@ -667,6 +764,30 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
       device: 'mac',
     });
     deps.log?.('run moved to the Mac', { taskId: run.taskId, runId: id });
+    // An offline Mac: the run waits for it, so say where the task is stuck.
+    if (!move.mac.online) {
+      await taskRef.update({
+        statusLine: { text: `Waiting for ${move.mac.name} to come online…`, needsYou: true },
+      });
+      const title = (await taskRef.get()).get('title') as string;
+      await deps.notify?.({
+        kind: 'blocked',
+        title: `Waiting for your Mac: ${title}`,
+        body: `This step needs the browser on ${move.mac.name}. It continues as soon as the Mac is online.`,
+        taskId: run.taskId,
+      });
+    }
+    return;
+  }
+  if (moveAsk) {
+    const title = (await taskRef.get()).get('title') as string;
+    await deps.notify?.({
+      kind: 'blocked',
+      title: `Move to your Mac? ${title}`,
+      body: moveAsk.prompt,
+      taskId: run.taskId,
+      input: { messageId: moveAsk.messageId, kind: 'approval', suggestedRule: DEVICE_MAC_RULE },
+    });
     return;
   }
 

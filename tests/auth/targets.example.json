@@ -1,0 +1,37 @@
+{
+  "methods": [
+    {
+      "id": "itsme",
+      "label": "itsme",
+      "site": "https://www.engie.be/nl/login/",
+      "vault": "energy",
+      "hosts": ["engie.be", "itsme-id.com", "itsme.services"],
+      "mfa": "itsme: a push to the itsme app after entering my phone number, or a QR code to scan",
+      "instructions": "Choose itsme on the login page. Prefer the option with my phone number (from the vault entry or get_personal_info), which sends a push to my itsme app; only use the QR code when there is no other option."
+    },
+    {
+      "id": "google",
+      "label": "Google",
+      "site": "https://myaccount.google.com/",
+      "vault": "google",
+      "hosts": ["google.com"],
+      "mfa": "Google 2-step verification: a prompt on my phone (tap Yes, maybe pick a number) or a code"
+    },
+    {
+      "id": "password",
+      "label": "Username + password",
+      "site": "https://www.example-shop.be/account/login",
+      "vault": "shop",
+      "hosts": ["example-shop.be"],
+      "mfa": "a code sent by email (use get_email_code) or SMS"
+    },
+    {
+      "id": "google-session",
+      "label": "Google (stored session)",
+      "site": "https://myaccount.google.com/",
+      "hosts": ["google.com"],
+      "useGoogleSession": true,
+      "enabled": false
+    }
+  ]
+}

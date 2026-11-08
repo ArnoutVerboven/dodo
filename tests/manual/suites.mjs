@@ -18,12 +18,12 @@ export const suites = [
   {
     name: 'auth',
     description:
-      'Login matrix against production: itsme, Google and username+password, on the Mac and remote, with MFA',
+      'Login matrix against production: itsme, Google and username+password, on the Mac and remote, with MFA on your phone (pnpm test:auth --help for one method or device)',
     command: 'pnpm test:auth',
     where: ['local'],
     cost: ['model', 'infra'],
     interactive: true,
-    when: 'After changing browser, login, vault, MFA or device-routing code; before relying on a new site login',
+    when: 'After changing browser, login, vault, MFA or device-routing code; after a Playwright or Chromium upgrade; before relying on a new site login; monthly, as sites change',
   },
   {
     name: 'e2e',

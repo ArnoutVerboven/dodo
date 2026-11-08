@@ -38,6 +38,19 @@ describe('browserClaim', () => {
     });
   });
 
+  it('treats a sign-in click as a login, but signing something as outbound', () => {
+    for (const element of ['Sign in button', 'Sign-in', 'Sign out link', 'Log in']) {
+      expect(browserClaim('browser_click', { element, target: 'e2' }, 'a.test')).toMatchObject({
+        key: 'act:a.test',
+      });
+    }
+    for (const element of ['Sign the contract', 'Sign button', 'Sign in and pay']) {
+      expect(browserClaim('browser_click', { element, target: 'e2' }, 'a.test')).toMatchObject({
+        key: 'submit:a.test',
+      });
+    }
+  });
+
   it('treats anything that looks like submitting as outbound, and scripts and uploads as writes', () => {
     expect(
       browserClaim('browser_click', { element: 'Pay now button', target: 'e9' }, 'shop.test'),

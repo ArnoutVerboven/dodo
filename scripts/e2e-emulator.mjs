@@ -282,9 +282,12 @@ if (macRun.state !== 'succeeded') fail(`mac run ${macRun.state}: ${macRun.error}
 if (macRun.execution !== `mac:${macConfig.deviceId}`)
   fail(`mac run executed by ${macRun.execution}`);
 if (macRun.infraReservation) fail('mac run should not meter infra');
-const macDone = (await macTask.get()).data();
-if (macDone.status !== 'review' || !macDone.summary.includes('Fake summary'))
-  fail('mac task not finished');
+// The run's end state is written first and the task right after it (finish), so wait for both.
+const macDone = await until('mac task to reach review', async () => {
+  const t = (await macTask.get()).data();
+  return t?.status === 'review' ? t : undefined;
+});
+if (!macDone.summary.includes('Fake summary')) fail('mac task not finished');
 const daemonExit = await daemonExited;
 if (daemonExit !== 0) fail(`daemon --once exited ${daemonExit}`);
 console.log('mac flow ok');

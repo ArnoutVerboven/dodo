@@ -8,6 +8,7 @@ A personal, asynchronous AI task agent. Create a task on a board; an agent works
 - [Testing](docs/TESTING.md): local hooks, the CI merge gate and manual suites
 - [GitHub](docs/GITHUB.md): the agent clones your repos, pushes branches and opens pull requests
 - [Notion](docs/NOTION.md): the agent searches, reads and (with your approval) adds to your Notion
+- [Auth testing](docs/AUTH_TESTING.md): a manual test of logins (itsme, Google, passwords) on your Mac and remotely; results in [AUTH_MATRIX.md](docs/AUTH_MATRIX.md)
 
 ## Layout
 

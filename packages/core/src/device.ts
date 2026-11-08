@@ -86,3 +86,20 @@ export const DeviceReleaseRequest = z.object({
   exitCode: z.number().int().nullable(),
 });
 export type DeviceReleaseRequest = z.infer<typeof DeviceReleaseRequest>;
+
+/**
+ * The rule that lets a task pinned to remote move to the Mac without asking (request_device).
+ * "Always allow" on the move card adds it; a deny rule `Device(mac)` or `Device` refuses moves.
+ */
+export const DEVICE_MAC_RULE = 'Device(mac)';
+
+/**
+ * The card a task pinned to remote gets when the agent asks for the Mac (a login the cloud
+ * browser could not finish). Written by the control plane; the agent's reason only follows the
+ * fixed question, so it cannot change what the card asks.
+ */
+export function macMovePrompt(macName: string, online: boolean, reason?: string): string {
+  const when = online ? '' : ' (it is offline now; the task waits for it)';
+  const why = reason ? ` The agent's reason: ${reason}` : '';
+  return `This task is set to run remotely, but the cloud browser could not finish a login. Continue it on your Mac "${macName}"${when} instead?${why}`;
+}

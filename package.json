@@ -20,6 +20,7 @@
     "test:emulator": "firebase emulators:exec --only firestore,auth,storage --project demo-dodo 'pnpm -r test'",
     "test:e2e": "firebase emulators:exec --only auth,firestore,storage,functions --project demo-dodo 'node scripts/e2e-emulator.mjs'",
     "test:manual": "node scripts/manual-tests.mjs",
+    "test:auth": "node --experimental-strip-types --no-warnings=ExperimentalWarning tests/auth/src/run.ts",
     "emulators": "firebase emulators:start --only auth,firestore,storage,functions --project demo-dodo",
     "seed": "node scripts/seed-emulator.mjs",
     "dev": "pnpm --filter @dodo/core build && pnpm --filter @dodo/web dev:emulators",

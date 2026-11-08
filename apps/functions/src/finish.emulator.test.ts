@@ -62,9 +62,9 @@ describe.skipIf(!enabled)('finish', () => {
     return { taskId, runId, run };
   }
 
-  async function end(req: Omit<FinishRequest, 'runId'>, browser?: 'auto') {
+  async function end(req: Omit<FinishRequest, 'runId'>, browser?: 'auto', device = 'gcp') {
     const d = db as NonNullable<typeof db>;
-    const { taskId, runId, run } = await seed('gcp', browser);
+    const { taskId, runId, run } = await seed(device, browser);
     const notices: Parameters<Notify>[0][] = [];
     await finish(
       {
@@ -210,21 +210,96 @@ describe.skipIf(!enabled)('finish', () => {
     expect(out.task.activeRunId).toBe(out.next[0]?.id);
   });
 
-  it('needs_device with a paired Mac: the work moves to it', async () => {
+  async function pairMac(lastSeen = Date.now()) {
     const d = db as NonNullable<typeof db>;
     const deviceId = `mac-${randomUUID().slice(0, 8)}`;
     await d.doc(paths.device(deviceId)).set({
-      name: 'Studio',
+      name: `Studio ${deviceId}`,
       state: 'approved',
-      lastSeen: Date.now(),
+      lastSeen,
       folders: [],
       createdAt: 1,
       updatedAt: 1,
     });
-    const out = await end({ reason: 'needs_device', session: [] });
+    return deviceId;
+  }
+
+  const requestDevice = (reason: string) => [
+    {
+      role: 'model' as const,
+      parts: [{ functionCall: { name: 'request_device', args: { reason } } }],
+    },
+  ];
+
+  it('needs_device on device auto with a Mac online: the work moves to it', async () => {
+    await pairMac(Date.now() + 1_000);
+    const out = await end({ reason: 'needs_device', session: [] }, 'auto', 'auto');
     expect(out.notices).toHaveLength(0);
     expect(out.next).toHaveLength(1);
+    // Other test files share the emulator and may pair a Mac seen later.
     expect(out.next[0]?.device).toMatch(/^mac:/);
+    expect(out.next[0]?.browser).toBe(true);
+    expect(out.task.statusLine?.text).toMatch(/moved to Studio/);
+  });
+
+  it('needs_device on device auto with the Mac offline: it waits for it and says so', async () => {
+    const d = db as NonNullable<typeof db>;
+    await pairMac(Date.now() + 2_000);
+    const { taskId, run } = await seed('auto', 'auto');
+    const notices: Parameters<Notify>[0][] = [];
+    // An hour from now every Mac has missed its heartbeats; this one is still the latest seen.
+    const later = Date.now() + 3_600_000;
+    await finish(
+      {
+        db: d,
+        auth,
+        storage,
+        costGate: costGateFor(d),
+        now: () => later,
+        notify: async (n) => void notices.push(n),
+      },
+      run,
+      { reason: 'needs_device', session: [] },
+    );
+    const task = (await d.doc(paths.task(taskId)).get()).data() ?? {};
+    const next = (await d.collection(paths.runs()).where('taskId', '==', taskId).get()).docs
+      .map((r) => r.data())
+      .filter((r) => r.state === 'queued');
+    expect(next[0]?.device).toMatch(/^mac:/);
+    expect(task.statusLine?.text).toMatch(/Waiting for .* to come online/);
+    expect(notices[0]?.title).toMatch(/^Waiting for your Mac/);
+  });
+
+  it('needs_device on a task pinned to remote: asks before moving', async () => {
+    await pairMac(Date.now() + 3_000);
+    const out = await end({
+      reason: 'needs_device',
+      session: requestDevice('Google says this browser may not be secure'),
+    });
+    expect(out.next).toHaveLength(0);
+    expect(out.task.status).toBe('needs_input');
+    expect(out.task.activeRunId).toBeUndefined();
+    const ask = out.system.find((m) => m.input?.moveToMac);
+    expect(ask?.input).toMatchObject({ kind: 'approval', suggestedRule: 'Device(mac)' });
+    expect(ask?.input.prompt).toMatch(/set to run remotely.*Continue it on your Mac/);
+    expect(ask?.input.prompt).toMatch(/may not be secure$/);
+    expect(out.notices[0]?.input).toMatchObject({ kind: 'approval' });
+  });
+
+  it('needs_device on a task pinned to remote with Device(mac) allowed: moves at once', async () => {
+    const d = db as NonNullable<typeof db>;
+    await pairMac(Date.now() + 4_000);
+    const { taskId, run } = await seed('gcp');
+    await d.doc(paths.task(taskId)).update({ allowRules: ['Device(mac)'] });
+    await finish({ db: d, auth, storage, costGate: costGateFor(d), notify: async () => {} }, run, {
+      reason: 'needs_device',
+      session: [],
+    });
+    const next = (await d.collection(paths.runs()).where('taskId', '==', taskId).get()).docs
+      .map((r) => r.data())
+      .filter((r) => r.state === 'queued');
+    expect(next).toHaveLength(1);
+    expect(next[0]?.device).toMatch(/^mac:/);
   });
 
   it('lease_lost: the task is released and says the run stopped', async () => {
