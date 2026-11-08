@@ -34,7 +34,9 @@ pnpm test:auth --help                       # all options
 
 **Cost.** Before it starts, the test shows the expected cost of every case: the cost that case had last time, or a rough guess (about €0.10 on the Mac, €0.15 remotely) until it has run once. It also shows the hard limit (€0.40 per case by default) and what the auth tests have cost so far this month, against the project's €5 monthly cap. After each case it prints what that case cost, split into model calls and Cloud Run time, and at the end the total for the run next to what was expected. The costs also go into the overview.
 
-Have your phone at hand. The test runs one case at a time and prints what happens. When the agent needs you (an itsme push, a Google prompt, a code), you answer in dodo, in the app or on Telegram, as you would for any task. That way the test covers the real MFA path too. After each case it asks you three short things: whether the agent's "signed in" claim is right, whether you had to do anything on the Mac itself, and any notes. Then it closes the test task, which also drops the task's stored logins and codes.
+Have your phone at hand. After the one "Start?" (skip it with `-y`), the test starts every case at once and you type nothing more in the terminal: remote cases run side by side, and local cases queue on your Mac, which runs one task at a time. When the agent needs you (an itsme push, a Google prompt, a code), you answer in dodo, in the app or on Telegram, as you would for any task. That way the test covers the real MFA path too. The terminal prints what each case does, tagged with its id. When a case ends, the test closes its task, which also drops the task's stored logins and codes. The agent's own result line counts; with `--ask` the test asks you afterwards, per case, whether that claim is right and whether you had to touch the Mac itself.
+
+The agent starts every login signed out: if a site already shows you signed in, it signs out and checks for the login form first, and reports `failed | could not sign out first` when it cannot (so an old session never passes as a working login). `--reuse-sessions` turns this off.
 
 At the end it prints the overview, saves the raw results in `tests/auth/results/` (gitignored), and updates [AUTH_MATRIX.md](AUTH_MATRIX.md) and `docs/auth-matrix.json` with the latest result of every case it ran. Commit those two files to keep the overview current. A run with `--only` updates only its own cells.
 
@@ -58,7 +60,7 @@ It is not free and it needs you, so it is on demand only. It is not part of CI o
 - before relying on a new site or login method: add it to `sites.ts` and run `--only <id>`;
 - every month or so, because sites change their logins without telling anyone.
 
-Local cases cost only model calls (a few cents). Point them at your local model with `--model <name>` to make them free, though small local models may not get through a login. Remote cases add Cloud Run time for the browser worker.
+Local cases use your usual model; with the local model they cost next to nothing (only compaction runs on Gemini flash-lite when a long login fills its context), though a small local model may not get through a login. Remote cases always use a cloud model: dodo's default Gemini, or the one you name with `--model`. The local model exists only on your Mac, and dodo moves a task that uses it there even when it is pinned to remote, so a remote case with it would not test the cloud browser at all. Remote cases add Cloud Run time for the browser worker.
 
 ## Fallback when a login fails remotely
 
@@ -82,4 +84,4 @@ Most logins on the Mac need only your phone: the agent types from the vault, an 
 - a CAPTCHA keeps coming back, or the agent asks you to "log in in the dodo Chrome window" (it does this for logins without a vault entry);
 - the first time the Playwright extension connects to your everyday Chrome (Chrome asks you to allow it), if you use it.
 
-The test asks you about this after every local case, and counts the questions that sent you to the Mac's screen, so the overview shows which logins need you there.
+With `--ask` the test asks you about this for every local case; it always counts the questions that sent you to the Mac's screen, so the overview shows which logins need you there.
