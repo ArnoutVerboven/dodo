@@ -28,6 +28,8 @@ export function runBrowserUse(cfg: {
   executablePath?: string;
   noSandbox?: boolean;
   maxSteps: number;
+  /** The server honours response_format with a JSON schema (OpenAI, Gemini). */
+  structuredOutput?: boolean;
 }): Promise<FrameworkResult> {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'browser_use_run.py');
   return new Promise((resolve) => {

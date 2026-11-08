@@ -24,6 +24,10 @@ async def main() -> None:
 		base_url=cfg['url'],
 		api_key=cfg.get('apiKey') or 'none',
 		temperature=0,
+		# Local servers (mlx_lm.server, LM Studio, llama.cpp) mostly ignore response_format with a
+		# JSON schema; there the schema goes into the system prompt instead.
+		add_schema_to_system_prompt=not cfg.get('structuredOutput', False),
+		dont_force_structured_output=not cfg.get('structuredOutput', False),
 	)
 	profile = BrowserProfile(
 		headless=not cfg.get('headed', False),
@@ -67,6 +71,10 @@ async def main() -> None:
 		pass
 
 	usage = getattr(history, 'usage', None) if history is not None else None
+	if history is not None and not error:
+		step_errors = [e for e in history.errors() if e]
+		if step_errors and not history.is_done():
+			error = f'{len(step_errors)} failed steps; last: {step_errors[-1][:300]}'
 	print(
 		json.dumps(
 			{

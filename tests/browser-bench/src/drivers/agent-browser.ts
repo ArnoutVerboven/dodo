@@ -77,7 +77,9 @@ export async function agentBrowserDriver(opts: DriverOptions): Promise<Driver> {
     // snapshot shows the old page and its refs go stale.
     await new Promise((r) => setTimeout(r, 300));
     await run(['wait', '--load', 'load'], 8_000);
-    const [url, snap] = await Promise.all([run(['get', 'url']), run(['snapshot', '-i', '-c'])]);
+    // One command at a time: two at once on a fresh session race to start its daemon.
+    const url = await run(['get', 'url']);
+    const snap = await run(['snapshot', '-i', '-c']);
     return `Page URL: ${url.text}\n\`\`\`yaml\n${snap.text}\n\`\`\``;
   };
   const act = async (args: string[]) => {
@@ -146,7 +148,8 @@ export async function agentBrowserDriver(opts: DriverOptions): Promise<Driver> {
     },
     prune: (messages: Message[]) => pruneSnapshots(messages),
     async finalState() {
-      const [url, snap] = await Promise.all([run(['get', 'url']), run(['snapshot'])]);
+      const url = await run(['get', 'url']);
+      const snap = await run(['snapshot']);
       return { url: url.text.trim(), text: snap.text };
     },
     async close() {

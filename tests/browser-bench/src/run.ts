@@ -138,12 +138,14 @@ async function main() {
   const resolveStart = (t: Task) => t.start.replace('{fixture}', fixture?.url ?? '');
 
   let stopModel: (() => void) | undefined;
+  let modelCtl: { url: string; restart?: () => Promise<void> } | undefined;
   let model: Model | undefined;
   let modelCfg: { url: string; model: string; apiKey?: string } | undefined;
   if (!selfTest) {
     const m = await pickModel(v);
     modelCfg = m.cfg;
     stopModel = m.stop;
+    modelCtl = { url: m.cfg.url, restart: m.restart };
     model = openAiModel({ ...m.cfg, timeoutMs: 900_000 });
   }
 
@@ -176,6 +178,106 @@ async function main() {
     workdir,
   });
 
+  const runOnce = async (task: Task, approach: Approach, rep: number): Promise<RunRecord> => {
+    const start = resolveStart(task);
+    const workdir = mkdtempSync(path.join(os.tmpdir(), 'dodo-bench-'));
+    const t0 = Date.now();
+    let rec: RunRecord;
+    try {
+      if (approach === 'browser-use') {
+        const r = await runBrowserUse({
+          start,
+          goal: task.goal,
+          url: modelCfg?.url ?? '',
+          model: modelCfg?.model ?? '',
+          apiKey: modelCfg?.apiKey,
+          headed: v.headed,
+          executablePath: v['executable-path'],
+          noSandbox: v['no-sandbox'],
+          maxSteps: maxCalls,
+          structuredOutput: /googleapis\.com|openai\.com/.test(modelCfg?.url ?? ''),
+        });
+        rec = base(task, approach, rep, {
+          success: !r.error?.startsWith('could not start') && passed(task, r),
+          agentSaysDone: r.agentSaysDone,
+          calls: r.calls,
+          input: r.input,
+          output: r.output,
+          cached: r.cached,
+          maxInput: 0,
+          seconds: r.seconds,
+          finalUrl: r.url,
+          error: r.error ?? undefined,
+        });
+      } else if (approach === 'replay') {
+        const code = recordings.get(task.id);
+        if (!code) {
+          rec = base(task, approach, rep, {
+            success: false,
+            error: 'no recording: run an mcp-* approach on this task first, successfully',
+            skipped: true,
+          });
+        } else {
+          const r = await replay(start, code, driverOpts(workdir));
+          rec = base(task, approach, rep, {
+            success: passed(task, r),
+            agentSaysDone: true,
+            seconds: (Date.now() - t0) / 1000,
+            finalUrl: r.url,
+            error: r.error,
+          });
+        }
+      } else {
+        const driver: Driver = MCP.has(approach)
+          ? await mcpDriver(approach as McpVariant, driverOpts(workdir))
+          : await agentBrowserDriver(driverOpts(workdir));
+        try {
+          const m = model ?? scriptedModel(SCRIPTS[task.id] ?? []);
+          const r = await runLoop({
+            model: m,
+            driver,
+            goal: task.goal,
+            start,
+            maxCalls,
+            interactive: v.interactive,
+          });
+          const final = await driver.finalState();
+          const ok = passed(task, final);
+          if (ok && MCP.has(approach) && !recordings.has(task.id) && driver.recorded)
+            recordings.set(task.id, driver.recorded());
+          rec = base(task, approach, rep, {
+            success: ok,
+            agentSaysDone: r.agentSaysDone,
+            calls: r.calls.length,
+            input: sum(r.calls.map((c) => c.input)),
+            output: sum(r.calls.map((c) => c.output)),
+            cached: sum(r.calls.map((c) => c.cached)),
+            maxInput: Math.max(0, ...r.calls.map((c) => c.input)),
+            seconds: (Date.now() - t0) / 1000,
+            asked: r.asked,
+            observedChars: r.observedChars,
+            toolSchemaChars: r.toolSchemaChars,
+            estimated: r.calls.some((c) => c.estimated),
+            finalUrl: final.url,
+            error: r.error,
+            perCall: r.calls.map((c) => ({
+              input: c.input,
+              output: c.output,
+              tools: c.tools,
+            })),
+          });
+        } finally {
+          await driver.close();
+        }
+      }
+    } catch (e) {
+      rec = base(task, approach, rep, { success: false, error: (e as Error).message });
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+    return rec;
+  };
+
   console.log(
     `${tasks.length} task(s) × ${approaches.length} approach(es) × ${reps} rep(s), model ${selfTest ? 'scripted' : modelCfg?.model}\n`,
   );
@@ -183,104 +285,26 @@ async function main() {
     for (const task of tasks) {
       for (const approach of approaches) {
         for (let rep = 1; rep <= reps; rep++) {
-          const start = resolveStart(task);
-          const workdir = mkdtempSync(path.join(os.tmpdir(), 'dodo-bench-'));
-          const t0 = Date.now();
-          let rec: RunRecord;
-          try {
-            if (approach === 'browser-use') {
-              const r = await runBrowserUse({
-                start,
-                goal: task.goal,
-                url: modelCfg?.url ?? '',
-                model: modelCfg?.model ?? '',
-                apiKey: modelCfg?.apiKey,
-                headed: v.headed,
-                executablePath: v['executable-path'],
-                noSandbox: v['no-sandbox'],
-                maxSteps: maxCalls,
-              });
-              rec = base(task, approach, rep, {
-                success: !r.error?.startsWith('could not start') && passed(task, r),
-                agentSaysDone: r.agentSaysDone,
-                calls: r.calls,
-                input: r.input,
-                output: r.output,
-                cached: r.cached,
-                maxInput: 0,
-                seconds: r.seconds,
-                finalUrl: r.url,
-                error: r.error ?? undefined,
-              });
-            } else if (approach === 'replay') {
-              const code = recordings.get(task.id);
-              if (!code) {
-                rec = base(task, approach, rep, {
-                  success: false,
-                  error: 'no recording: run an mcp-* approach on this task first, successfully',
-                  skipped: true,
-                });
-              } else {
-                const r = await replay(start, code, driverOpts(workdir));
-                rec = base(task, approach, rep, {
-                  success: passed(task, r),
-                  agentSaysDone: true,
-                  seconds: (Date.now() - t0) / 1000,
-                  finalUrl: r.url,
-                  error: r.error,
-                });
-              }
-            } else {
-              const driver: Driver = MCP.has(approach)
-                ? await mcpDriver(approach as McpVariant, driverOpts(workdir))
-                : await agentBrowserDriver(driverOpts(workdir));
-              try {
-                const m = model ?? scriptedModel(SCRIPTS[task.id] ?? []);
-                const r = await runLoop({
-                  model: m,
-                  driver,
-                  goal: task.goal,
-                  start,
-                  maxCalls,
-                  interactive: v.interactive,
-                });
-                const final = await driver.finalState();
-                const ok = passed(task, final);
-                if (ok && MCP.has(approach) && !recordings.has(task.id) && driver.recorded)
-                  recordings.set(task.id, driver.recorded());
-                rec = base(task, approach, rep, {
-                  success: ok,
-                  agentSaysDone: r.agentSaysDone,
-                  calls: r.calls.length,
-                  input: sum(r.calls.map((c) => c.input)),
-                  output: sum(r.calls.map((c) => c.output)),
-                  cached: sum(r.calls.map((c) => c.cached)),
-                  maxInput: Math.max(0, ...r.calls.map((c) => c.input)),
-                  seconds: (Date.now() - t0) / 1000,
-                  asked: r.asked,
-                  observedChars: r.observedChars,
-                  toolSchemaChars: r.toolSchemaChars,
-                  estimated: r.calls.some((c) => c.estimated),
-                  finalUrl: final.url,
-                  error: r.error,
-                  perCall: r.calls.map((c) => ({
-                    input: c.input,
-                    output: c.output,
-                    tools: c.tools,
-                  })),
-                });
-              } finally {
-                await driver.close();
-              }
-            }
-          } catch (e) {
-            rec = base(task, approach, rep, { success: false, error: (e as Error).message });
-          } finally {
-            rmSync(workdir, { recursive: true, force: true });
+          let rec = await runOnce(task, approach, rep);
+          const down =
+            MODEL_DOWN.test(rec.error ?? '') ||
+            (approach === 'browser-use' && rec.input === 0 && !(await healthy(modelCfg)));
+          if (modelCtl && down) {
+            if (!modelCtl.restart)
+              throw new Error(
+                `The model at ${modelCtl.url} stopped answering, and the bench did not start it, so it cannot restart it. Restart it and rerun.`,
+              );
+            console.log('  the local model crashed; restarting it and running this one again');
+            await modelCtl.restart();
+            rec = await runOnce(task, approach, rep);
+            if (MODEL_DOWN.test(rec.error ?? ''))
+              throw new Error(
+                'The local model keeps crashing; stopping. Try fewer approaches or --max-calls 15.',
+              );
           }
           records.push(rec);
           console.log(
-            `${rec.success ? '✓' : '✗'} ${task.id.padEnd(22)} ${approach.padEnd(18)} calls ${String(rec.calls).padStart(2)}  in ${String(rec.input).padStart(7)}  out ${String(rec.output).padStart(5)}  ${rec.seconds.toFixed(0).padStart(4)}s${rec.error ? `  ${rec.error.slice(0, 100)}` : ''}`,
+            `${rec.success ? '✓' : '✗'} ${task.id.padEnd(22)} ${approach.padEnd(18)} calls ${String(rec.calls).padStart(2)}  in ${String(rec.input).padStart(7)}  out ${String(rec.output).padStart(5)}  ${rec.seconds.toFixed(0).padStart(4)}s${rec.success || !rec.finalUrl ? '' : `  ended on ${shortUrl(rec.finalUrl)}`}${rec.error ? `  ${rec.error.slice(0, 120)}` : ''}`,
           );
           save();
         }
@@ -293,6 +317,19 @@ async function main() {
   console.log(`\n${summarize({ model: selfTest ? 'scripted' : modelCfg?.model }, records)}`);
   console.log(`Saved to ${path.join(outDir, stamp)}.{json,md}`);
 }
+
+/** The model server went away (mlx_lm.server can die on a long prompt). */
+const MODEL_DOWN =
+  /model 404|model 5\d\d|fetch failed|ECONNREFUSED|ECONNRESET|generation thread died/;
+
+const shortUrl = (u: string) => {
+  try {
+    const x = new URL(u);
+    return `${x.host}${x.pathname}`.slice(0, 70);
+  } catch {
+    return u.slice(0, 70);
+  }
+};
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -323,7 +360,11 @@ async function pickModel(v: {
   model?: string;
   gemini: boolean;
   'api-key'?: string;
-}): Promise<{ cfg: { url: string; model: string; apiKey?: string }; stop?: () => void }> {
+}): Promise<{
+  cfg: { url: string; model: string; apiKey?: string };
+  stop?: () => void;
+  restart?: () => Promise<void>;
+}> {
   const apiKey = v['api-key'] ?? process.env.BENCH_API_KEY;
   if (v.gemini) {
     const key = apiKey ?? process.env.GEMINI_API_KEY;
@@ -348,18 +389,55 @@ async function pickModel(v: {
   if (!local)
     throw new Error('No model: pass --model-url, --gemini, or set one up with `dodo model set`.');
   const cfg = { url: local.url, model: v.model ?? local.model ?? 'default', apiKey };
+  const command = local.command;
+  let child: ChildProcess | undefined;
+  const startServer = async () => {
+    if (!command?.length) throw new Error(`The local model at ${cfg.url} is not running.`);
+    child?.kill('SIGTERM');
+    console.log(`Starting the local model: ${command.join(' ')}`);
+    child = spawn(command[0] ?? '', command.slice(1), { stdio: 'ignore' });
+    for (let i = 0; i < 180; i++) {
+      if (await reachable(cfg.url)) return;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    child.kill('SIGTERM');
+    throw new Error(`The local model did not come up at ${cfg.url} within 3 minutes.`);
+  };
+  // A server someone else started (the dodo daemon) is not ours to restart.
   if (await reachable(cfg.url)) return { cfg };
-  if (!local.command?.length) throw new Error(`The local model at ${cfg.url} is not running.`);
-  console.log(`Starting the local model: ${local.command.join(' ')}`);
-  const child: ChildProcess = spawn(local.command[0] ?? '', local.command.slice(1), {
-    stdio: 'ignore',
-  });
-  for (let i = 0; i < 180; i++) {
-    if (await reachable(cfg.url)) return { cfg, stop: () => child.kill('SIGTERM') };
-    await new Promise((r) => setTimeout(r, 1000));
+  await startServer();
+  const restart = async () => {
+    // mlx_lm.server stays up after its generation thread dies, holding the port: kill it and
+    // wait for the port to free before starting a fresh one.
+    child?.kill('SIGKILL');
+    for (let i = 0; i < 15 && (await reachable(cfg.url)); i++)
+      await new Promise((r) => setTimeout(r, 1000));
+    await startServer();
+  };
+  return { cfg, restart, stop: () => child?.kill('SIGTERM') };
+}
+
+/** The server answers a one-token completion: up and able to generate. */
+async function healthy(cfg?: { url: string; model: string; apiKey?: string }): Promise<boolean> {
+  if (!cfg) return true;
+  try {
+    const res = await fetch(`${cfg.url.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
-  child.kill('SIGTERM');
-  throw new Error(`The local model did not come up at ${cfg.url} within 3 minutes.`);
 }
 
 async function reachable(url: string): Promise<boolean> {
