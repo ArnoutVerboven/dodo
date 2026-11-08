@@ -299,11 +299,9 @@ function run(
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
-    let out = '';
+    const out = new OutputBuffer();
     let timedOut = false;
-    const append = (chunk: Buffer) => {
-      if (out.length < MAX_OUTPUT * 2) out += chunk.toString('utf8');
-    };
+    const append = (chunk: Buffer) => out.push(chunk.toString('utf8'));
     child.stdout.on('data', append);
     child.stderr.on('data', append);
     const timer = setTimeout(() => {
@@ -314,7 +312,7 @@ function run(
     }, timeoutMs);
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, out, timedOut });
+      resolve({ code, out: out.text(), timedOut });
     });
     child.on('error', (err) => {
       clearTimeout(timer);
@@ -327,6 +325,165 @@ const clip = (s: string) =>
   s.length > MAX_OUTPUT
     ? `${s.slice(0, MAX_OUTPUT)}\n…[truncated ${s.length - MAX_OUTPUT} chars]`
     : s;
+
+/** How much of a long command output's start is kept; the rest of the budget goes to its end. */
+const OUTPUT_HEAD = 4_000;
+
+/**
+ * Command output, kept as its start and its end: errors and results usually come last, so a
+ * long build log must not lose them to the cut. Holds at most about MAX_OUTPUT characters.
+ */
+export class OutputBuffer {
+  private head = '';
+  private tail = '';
+  private dropped = 0;
+
+  push(chunk: string): void {
+    if (this.head.length < OUTPUT_HEAD) {
+      const room = OUTPUT_HEAD - this.head.length;
+      this.head += chunk.slice(0, room);
+      chunk = chunk.slice(room);
+    }
+    if (!chunk) return;
+    this.tail += chunk;
+    const max = MAX_OUTPUT - OUTPUT_HEAD;
+    if (this.tail.length > max) {
+      this.dropped += this.tail.length - max;
+      this.tail = this.tail.slice(this.tail.length - max);
+    }
+  }
+
+  text(): string {
+    if (!this.dropped) return this.head + this.tail;
+    return `${this.head}\n…[${this.dropped} chars cut from the middle]…\n${this.tail}`;
+  }
+}
+
+/** Lines read_file returns when no limit is given, and the most it returns in one call. */
+const READ_LINES = 2_000;
+/** A longer line is cut in read_file's output, so one minified file cannot fill the answer. */
+const READ_LINE_CHARS = 2_000;
+
+/**
+ * A slice of a text file, numbered from 1 like an editor, and where to continue. Stops early
+ * when the slice would pass MAX_OUTPUT characters, so the answer always says what is left.
+ */
+export function readSlice(
+  text: string,
+  offset = 1,
+  limit = READ_LINES,
+): {
+  text: string;
+  totalLines: number;
+  nextOffset?: number;
+} {
+  const lines = text.split('\n');
+  if (lines.length > 1 && lines.at(-1) === '') lines.pop();
+  const totalLines = lines.length;
+  const start = Math.max(1, offset);
+  const end = Math.min(totalLines, start - 1 + Math.min(limit, READ_LINES));
+  const width = String(end).length;
+  const out: string[] = [];
+  let size = 0;
+  let last = start - 1;
+  for (let n = start; n <= end; n++) {
+    let line = lines[n - 1] as string;
+    if (line.length > READ_LINE_CHARS)
+      line = `${line.slice(0, READ_LINE_CHARS)}…[line cut, ${line.length} chars]`;
+    const numbered = `${String(n).padStart(width)}\t${line}`;
+    if (size + numbered.length > MAX_OUTPUT && out.length) break;
+    out.push(numbered);
+    size += numbered.length + 1;
+    last = n;
+  }
+  return {
+    text: out.join('\n'),
+    totalLines,
+    ...(last < totalLines ? { nextOffset: last + 1 } : {}),
+  };
+}
+
+/** Where `find` occurs in `text`, by character index. */
+function occurrences(text: string, find: string): number[] {
+  const at: number[] = [];
+  for (let i = text.indexOf(find); i !== -1; i = text.indexOf(find, i + find.length)) at.push(i);
+  return at;
+}
+
+/**
+ * Replace an exact piece of text. One match is required unless `all` is set: an edit that
+ * could land in two places is refused, so the agent adds context instead of guessing.
+ */
+export function applyEdit(
+  text: string,
+  oldText: string,
+  newText: string,
+  all = false,
+): { text: string; replacements: number; line: number } | { error: string } {
+  if (!oldText) return { error: 'old_text is empty; use write_file to create a file.' };
+  if (oldText === newText) return { error: 'old_text and new_text are the same.' };
+  const at = occurrences(text, oldText);
+  if (at.length === 0) {
+    return {
+      error:
+        'old_text was not found. It must match the file exactly, whitespace and line breaks included; read the file again and copy the text from it.',
+    };
+  }
+  if (at.length > 1 && !all) {
+    return {
+      error: `old_text occurs ${at.length} times. Add surrounding lines so it is unique, or set replace_all.`,
+    };
+  }
+  const line = text.slice(0, at[0]).split('\n').length;
+  return { text: text.split(oldText).join(newText), replacements: at.length, line };
+}
+
+/** Folders a search never needs to look in. */
+const SKIP_DIRS = ['.git', 'node_modules'];
+/** The most matches or file names a search returns. */
+const SEARCH_RESULTS = 200;
+const SEARCH_TIMEOUT_MS = 30_000;
+
+/** Runs a program (no shell) as the agent and returns what it printed, cut to MAX_OUTPUT. */
+function runProgram(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  timeoutMs = SEARCH_TIMEOUT_MS,
+): Promise<{ code: number | null; out: string; missing: boolean }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      env: { ...inheritedEnv(), HOME: cwd, LANG: 'C.UTF-8' },
+      ...asAgent(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const out = new OutputBuffer();
+    child.stdout.on('data', (c: Buffer) => out.push(c.toString('utf8')));
+    child.stderr.on('data', (c: Buffer) => out.push(c.toString('utf8')));
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, out: out.text(), missing: false });
+    });
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      resolve({ code: null, out: String(err), missing: err.code === 'ENOENT' });
+    });
+  });
+}
+
+/** Keeps the first `max` lines of a program's output and says how many more there were. */
+function firstLines(out: string, max: number): { text: string; more: number } {
+  const lines = out.split('\n').filter(Boolean);
+  return { text: lines.slice(0, max).join('\n'), more: Math.max(0, lines.length - max) };
+}
+
+/** A path inside the task folder as an argument: relative to it, and never read as an option. */
+const relative = (workdir: string, p: string) => {
+  const rel = path.relative(workdir, p);
+  return rel ? `.${path.sep}${rel}` : '.';
+};
 
 /**
  * Hosts http_fetch reaches only when you approved that very host: the worker's own machine
@@ -385,7 +542,7 @@ export const execTools = [
   define({
     name: 'bash',
     description:
-      'Run a shell command in the task folder (bash, 120 s timeout, output truncated). Read-only commands run at once; writes outside the folder and anything reaching the network need approval, so prefer http_fetch for web requests.',
+      'Run a shell command in the task folder (bash, 120 s timeout; a long output keeps its start and its end). For files, prefer read_file, edit_file, grep and find_files. Read-only commands run at once; writes outside the folder and anything reaching the network need approval, so prefer http_fetch for web requests.',
     schema: z.object({ command: z.string().min(1).max(4000) }),
     policy: ({ command }, ctx) => ({
       tool: 'Bash',
@@ -401,23 +558,203 @@ export const execTools = [
   }),
   define({
     name: 'read_file',
-    description: 'Read a text file from the task folder.',
-    schema: z.object({ path: z.string().min(1) }),
+    description:
+      'Read a text file from the task folder. Lines come numbered from 1; a long file comes in parts of up to 2000 lines: continue with the offset the answer gives as nextOffset. Use grep to find the right part of a big file first.',
+    schema: z.object({
+      path: z.string().min(1),
+      offset: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('First line to return, counted from 1. Default 1.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(READ_LINES)
+        .optional()
+        .describe(`Most lines to return. Default and maximum ${READ_LINES}.`),
+    }),
     policy: ({ path: p }) => ({ tool: 'Read', key: p, category: 'sandbox' }),
-    async execute({ path: p }, ctx) {
+    async execute({ path: p, offset, limit }, ctx) {
       const file = inside(ctx.workdir ?? process.cwd(), p);
-      return { result: { text: clip((await readAsAgent(file, 50_000_000)).toString('utf8')) } };
+      const text = (await readAsAgent(file, 50_000_000)).toString('utf8');
+      const slice = readSlice(text, offset, limit);
+      if (offset && offset > slice.totalLines) {
+        return {
+          result: {
+            error: `The file has ${slice.totalLines} lines; offset ${offset} is past its end.`,
+          },
+        };
+      }
+      return { result: slice };
     },
   }),
   define({
     name: 'write_file',
-    description: 'Write a text file in the task folder (creates parent folders).',
+    description:
+      'Write a whole text file in the task folder (creates parent folders). To change part of an existing file, use edit_file instead.',
     schema: z.object({ path: z.string().min(1), content: z.string().max(500_000) }),
     policy: ({ path: p }) => ({ tool: 'Write', key: p, category: 'sandbox' }),
     async execute({ path: p, content }, ctx) {
       const file = inside(ctx.workdir ?? process.cwd(), p);
       await writeAsAgent(file, content);
       return { result: { ok: true, bytes: Buffer.byteLength(content) } };
+    },
+  }),
+  define({
+    name: 'edit_file',
+    description:
+      "Change part of a text file in the task folder: replace old_text, copied exactly from the file (whitespace included, without read_file's line numbers), with new_text. old_text must occur once; add surrounding lines to make it unique, or set replace_all to change every occurrence.",
+    schema: z.object({
+      path: z.string().min(1),
+      old_text: z.string().min(1).max(100_000),
+      new_text: z.string().max(100_000),
+      replace_all: z.boolean().optional(),
+    }),
+    policy: ({ path: p }) => ({ tool: 'Write', key: p, category: 'sandbox' }),
+    async execute({ path: p, old_text, new_text, replace_all }, ctx) {
+      const file = inside(ctx.workdir ?? process.cwd(), p);
+      const before = (await readAsAgent(file, 10_000_000)).toString('utf8');
+      const edit = applyEdit(before, old_text, new_text, replace_all);
+      if ('error' in edit) return { result: { error: edit.error } };
+      await writeAsAgent(file, edit.text);
+      return { result: { ok: true, replacements: edit.replacements, line: edit.line } };
+    },
+  }),
+  define({
+    name: 'grep',
+    description: `Search file contents in the task folder for a regular expression; answers path:line:text, at most ${SEARCH_RESULTS} matches. Skips .git, node_modules and (where ripgrep is installed) whatever .gitignore lists.`,
+    schema: z.object({
+      pattern: z.string().min(1).max(1000).describe('A regular expression.'),
+      path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('File or folder to search, relative to the task folder. Default: all of it.'),
+      glob: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe('Only files whose name matches, like *.ts.'),
+      ignore_case: z.boolean().optional(),
+    }),
+    policy: ({ path: p }) => ({ tool: 'Read', key: p ?? '.', category: 'sandbox' }),
+    async execute({ pattern, path: p, glob, ignore_case }, ctx) {
+      const workdir = ctx.workdir ?? process.cwd();
+      const target = relative(workdir, inside(workdir, p ?? '.'));
+      const rg = await runProgram(
+        'rg',
+        [
+          '--line-number',
+          '--no-heading',
+          '--color=never',
+          '--max-columns=500',
+          '--max-columns-preview',
+          ...(ignore_case ? ['-i'] : []),
+          ...(glob ? ['--glob', glob] : []),
+          ...SKIP_DIRS.flatMap((d) => ['--glob', `!${d}`]),
+          '-e',
+          pattern,
+          '--',
+          target,
+        ],
+        workdir,
+      );
+      const r = rg.missing
+        ? await runProgram(
+            'grep',
+            [
+              '-rnIE',
+              ...(ignore_case ? ['-i'] : []),
+              ...(glob ? [`--include=${glob}`] : []),
+              ...SKIP_DIRS.map((d) => `--exclude-dir=${d}`),
+              '-e',
+              pattern,
+              '--',
+              target,
+            ],
+            workdir,
+          )
+        : rg;
+      // Both exit 1 for no match and 2 for an error (a bad pattern, a missing path).
+      if (r.code === 1) return { result: { matches: '', count: 0 } };
+      if (r.code !== 0) return { result: { error: r.out.trim() || `search failed (${r.code})` } };
+      const { text, more } = firstLines(r.out, SEARCH_RESULTS);
+      return { result: { matches: text, ...(more ? { more } : {}) } };
+    },
+  }),
+  define({
+    name: 'find_files',
+    description: `List files in the task folder whose name matches a glob (like *.md or test_*.py), at most ${SEARCH_RESULTS}. Skips .git, node_modules and (where ripgrep is installed) whatever .gitignore lists.`,
+    schema: z.object({
+      pattern: z.string().min(1).max(200).describe('A file-name glob, like *.ts.'),
+      path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Folder to look in, relative to the task folder. Default: all of it.'),
+    }),
+    policy: ({ path: p }) => ({ tool: 'Read', key: p ?? '.', category: 'sandbox' }),
+    async execute({ pattern, path: p }, ctx) {
+      const workdir = ctx.workdir ?? process.cwd();
+      const target = relative(workdir, inside(workdir, p ?? '.'));
+      const rg = await runProgram(
+        'rg',
+        [
+          '--files',
+          '--color=never',
+          '--glob',
+          pattern.includes('/') ? pattern : `**/${pattern}`,
+          ...SKIP_DIRS.flatMap((d) => ['--glob', `!${d}`]),
+          '--',
+          target,
+        ],
+        workdir,
+      );
+      const r = rg.missing
+        ? await runProgram(
+            'find',
+            [
+              target,
+              ...SKIP_DIRS.flatMap((d) => ['-name', d, '-prune', '-o']),
+              '-type',
+              'f',
+              pattern.includes('/') ? '-path' : '-name',
+              pattern,
+              '-print',
+            ],
+            workdir,
+          )
+        : rg;
+      // ripgrep exits 1 when no file matches.
+      if (r.code === 1 && !rg.missing) return { result: { files: '', count: 0 } };
+      if (r.code !== 0) return { result: { error: r.out.trim() || `search failed (${r.code})` } };
+      const { text, more } = firstLines(r.out, SEARCH_RESULTS);
+      return { result: { files: text, ...(more ? { more } : {}) } };
+    },
+  }),
+  define({
+    name: 'list_dir',
+    description:
+      'List a folder in the task folder: names, with a trailing / for folders. Hidden files included.',
+    schema: z.object({
+      path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Folder relative to the task folder. Default: the task folder itself.'),
+    }),
+    policy: ({ path: p }) => ({ tool: 'Read', key: p ?? '.', category: 'sandbox' }),
+    async execute({ path: p }, ctx) {
+      const workdir = ctx.workdir ?? process.cwd();
+      const target = relative(workdir, inside(workdir, p ?? '.'));
+      const r = await runProgram('ls', ['-1Ap', '--', target], workdir);
+      if (r.code !== 0) return { result: { error: r.out.trim() || `ls failed (${r.code})` } };
+      const { text, more } = firstLines(r.out, 500);
+      return { result: { entries: text, ...(more ? { more } : {}) } };
     },
   }),
   define({

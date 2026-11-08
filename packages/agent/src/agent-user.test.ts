@@ -60,7 +60,18 @@ describe.skipIf(!isRoot)('agent commands as their own user', () => {
     await tool('write_file').execute({ path: 'sub/note.txt', content: 'hi' }, ctx);
     expect((await stat(path.join(workdir, 'sub/note.txt'))).uid).toBe(UID);
     expect(await tool('read_file').execute({ path: 'sub/note.txt' }, ctx)).toEqual({
-      result: { text: 'hi' },
+      result: { text: '1\thi', totalLines: 1 },
     });
+
+    // An edit through the symlink to the worker's file fails like a read; one in the folder works.
+    await expect(
+      tool('edit_file').execute({ path: 'link', old_text: 'run', new_text: 'x' }, ctx),
+    ).rejects.toThrow(/Permission denied/);
+    await tool('edit_file').execute({ path: 'sub/note.txt', old_text: 'hi', new_text: 'ho' }, ctx);
+    expect((await stat(path.join(workdir, 'sub/note.txt'))).uid).toBe(UID);
+
+    // Searches run as the agent too: the worker's file stays out of their output.
+    const hits = await tool('grep').execute({ pattern: 'run-token' }, ctx);
+    expect(JSON.stringify(hits.result)).not.toContain('secret:1');
   });
 });

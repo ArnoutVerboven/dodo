@@ -242,7 +242,7 @@ export const catalog: unknown[] = [
   {
     "name": "bash",
     "group": "exec",
-    "description": "Run a shell command in the task folder (bash, 120 s timeout, output truncated). Read-only commands run at once; writes outside the folder and anything reaching the network need approval, so prefer http_fetch for web requests.",
+    "description": "Run a shell command in the task folder (bash, 120 s timeout; a long output keeps its start and its end). For files, prefer read_file, edit_file, grep and find_files. Read-only commands run at once; writes outside the folder and anything reaching the network need approval, so prefer http_fetch for web requests.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -260,13 +260,25 @@ export const catalog: unknown[] = [
   {
     "name": "read_file",
     "group": "exec",
-    "description": "Read a text file from the task folder.",
+    "description": "Read a text file from the task folder. Lines come numbered from 1; a long file comes in parts of up to 2000 lines: continue with the offset the answer gives as nextOffset. Use grep to find the right part of a big file first.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "path": {
           "type": "string",
           "minLength": 1
+        },
+        "offset": {
+          "description": "First line to return, counted from 1. Default 1.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "description": "Most lines to return. Default and maximum 2000.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
         }
       },
       "required": [
@@ -277,7 +289,7 @@ export const catalog: unknown[] = [
   {
     "name": "write_file",
     "group": "exec",
-    "description": "Write a text file in the task folder (creates parent folders).",
+    "description": "Write a whole text file in the task folder (creates parent folders). To change part of an existing file, use edit_file instead.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -294,6 +306,109 @@ export const catalog: unknown[] = [
         "path",
         "content"
       ]
+    }
+  },
+  {
+    "name": "edit_file",
+    "group": "exec",
+    "description": "Change part of a text file in the task folder: replace old_text, copied exactly from the file (whitespace included, without read_file's line numbers), with new_text. old_text must occur once; add surrounding lines to make it unique, or set replace_all to change every occurrence.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "old_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "new_text": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "replace_all": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "old_text",
+        "new_text"
+      ]
+    }
+  },
+  {
+    "name": "grep",
+    "group": "exec",
+    "description": "Search file contents in the task folder for a regular expression; answers path:line:text, at most 200 matches. Skips .git, node_modules and (where ripgrep is installed) whatever .gitignore lists.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "A regular expression."
+        },
+        "path": {
+          "description": "File or folder to search, relative to the task folder. Default: all of it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "glob": {
+          "description": "Only files whose name matches, like *.ts.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "ignore_case": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "find_files",
+    "group": "exec",
+    "description": "List files in the task folder whose name matches a glob (like *.md or test_*.py), at most 200. Skips .git, node_modules and (where ripgrep is installed) whatever .gitignore lists.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "A file-name glob, like *.ts."
+        },
+        "path": {
+          "description": "Folder to look in, relative to the task folder. Default: all of it.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "list_dir",
+    "group": "exec",
+    "description": "List a folder in the task folder: names, with a trailing / for folders. Hidden files included.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Folder relative to the task folder. Default: the task folder itself.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   },
   {
