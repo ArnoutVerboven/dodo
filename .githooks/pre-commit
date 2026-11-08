@@ -1,0 +1,5 @@
+#!/bin/sh
+# Local gate 1 of 2 (see docs/TESTING.md): lint and format check on the staged files only.
+# Takes well under a second. Fix with `pnpm lint:fix`, skip once with `git commit --no-verify`.
+[ "$DODO_SKIP_HOOKS" = 1 ] && exit 0
+exec pnpm exec biome check --staged --no-errors-on-unmatched --files-ignore-unknown=true

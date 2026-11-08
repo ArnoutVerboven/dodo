@@ -14,3 +14,4 @@ coverage/
 !.env.development
 .vite/
 !.env.emulator
+tests/manual/reports/

@@ -185,7 +185,7 @@ describe('notifyTelegram with a picture', () => {
     expect(method).toBe('sendPhoto');
     expect(form.get('chat_id')).toBe('42');
     expect(form.get('caption')).toBe('Needs you: Engie bill');
-    const photo = form.get('photo') as File;
+    const photo = form.get('photo') as unknown as Blob;
     expect(photo.type).toBe('image/png');
     expect(photo.size).toBe(4);
     // The text with the question still follows, as before.

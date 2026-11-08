@@ -658,8 +658,8 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     deps.log?.('run restarted with a browser', { taskId: run.taskId, runId: id });
     return;
   }
-  if (req.reason === 'needs_device') {
-    if (!macs.length) return;
+  // Without a paired Mac the task waits for the user: fall through to the notification below.
+  if (req.reason === 'needs_device' && macs.length) {
     const id = await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
       trigger: 'resume',
       sessionPath,

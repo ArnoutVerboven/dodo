@@ -5,6 +5,7 @@ A personal, asynchronous AI task agent. Create a task on a board; an agent works
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [One-time setup](docs/SETUP.md)
+- [Testing](docs/TESTING.md): local hooks, the CI merge gate and manual suites
 - [GitHub](docs/GITHUB.md): the agent clones your repos, pushes branches and opens pull requests
 - [Notion](docs/NOTION.md): the agent searches, reads and (with your approval) adds to your Notion
 
@@ -32,12 +33,12 @@ pnpm seed                 # terminal 2: owner account + example data
 pnpm dev                  # web app on http://localhost:5173, "Sign in as local owner"
 ```
 
-Checks (same as CI):
+Checks (see [docs/TESTING.md](docs/TESTING.md) for what runs where):
 
 ```sh
-pnpm lint
-pnpm build
-pnpm test:emulator        # unit, Firestore budget store and security rules tests
+pnpm check                # lint, type-check, unit tests: also the pre-push hook
+pnpm check:full           # everything CI runs, emulator and e2e tests included
+pnpm test:manual          # costly or interactive suites (auth matrix), on demand
 ```
 
 ## Run tasks on your Mac

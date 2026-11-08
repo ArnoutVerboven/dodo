@@ -124,13 +124,13 @@ describe('routeToMac', () => {
     const devices = [
       mac('d1', 'Air', now - 3_600_000),
       mac('d2', 'Studio', now - 7_200_000),
-      mac('d3', 'Old', now, 'pending'),
+      mac('d3', 'Old', now, 'revoked'),
     ];
     expect(routeToMac(devices)).toEqual({ device: 'mac:d1', reason: 'moved to Air by the agent' });
   });
 
   it('is undefined without a paired Mac', () => {
-    expect(routeToMac([mac('d3', 'Old', now, 'pending')])).toBeUndefined();
+    expect(routeToMac([mac('d3', 'Old', now, 'revoked')])).toBeUndefined();
   });
 });
 
