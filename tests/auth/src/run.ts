@@ -10,6 +10,7 @@
  * your phone and answer the agent's questions in dodo, as you normally would. So it never runs
  * in CI. See docs/AUTH_TESTING.md.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -379,6 +380,12 @@ writeFileSync(path.join(outDir, `${stamp}.json`), `${JSON.stringify(results, nul
 writeFileSync(path.join(outDir, `${stamp}.md`), `${thisRun}\n`);
 console.log(`\n${thisRun}\n`);
 console.log(`Saved to tests/auth/results/${stamp}.md`);
+// Started from `pnpm test:manual auth`: the report goes with the suite's log too.
+const manualDir = process.env.DODO_MANUAL_REPORT_DIR;
+if (manualDir) {
+  mkdirSync(path.resolve(root, manualDir), { recursive: true });
+  writeFileSync(path.resolve(root, manualDir, `auth-${stamp}.md`), `${thisRun}\n`);
+}
 
 // The overview keeps the latest result of every case, so a run of one method updates its row.
 const store = path.join(root, 'docs/auth-matrix.json');
@@ -393,6 +400,11 @@ if (results.length) {
       replaceMatrix(readFileSync(overview, 'utf8'), renderReport(merged, { date })),
     );
   }
+  // Formatted the way the lint check expects, so committing them keeps CI green.
+  spawnSync('pnpm', ['exec', 'biome', 'format', '--write', store, overview], {
+    cwd: root,
+    stdio: 'ignore',
+  });
   console.log('Updated docs/AUTH_MATRIX.md: commit it to keep the overview current.');
 }
 process.exit(0);

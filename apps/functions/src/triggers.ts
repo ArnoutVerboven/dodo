@@ -56,7 +56,7 @@ export interface EnqueueOptions {
 /** What the run's browser flag is, given the setting and what is already known. */
 export async function decideBrowser(
   setting: Task['ai']['browser'],
-  opts: Pick<EnqueueOptions, 'trigger' | 'browser'>,
+  opts: Pick<EnqueueOptions, 'trigger' | 'browser' | 'hint'>,
   ask: (() => Promise<boolean>) | undefined,
   log?: TriggerDeps['log'],
 ): Promise<{ browser: boolean; reason?: string }> {

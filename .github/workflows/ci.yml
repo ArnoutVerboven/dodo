@@ -1,13 +1,48 @@
 name: CI
 
+# The merge gate (docs/TESTING.md). Mark the `gate` job as the one required status check in
+# the branch protection / ruleset for main: it passes only when every check job below passed,
+# so adding or renaming a check job never needs a settings change.
 on:
   pull_request:
   push:
     branches: [main]
 
+concurrency:
+  # A new push to a PR cancels its older run; runs on main always finish (they deploy).
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 jobs:
-  check:
+  # Fast feedback: formatting, lint, types and the deploy filter check.
+  static:
+    name: Lint and type-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint and format (biome)
+        run: pnpm exec biome ci .
+      - name: Build
+        run: pnpm build
+      - name: Type-check every workspace (the esbuild bundles do not)
+        run: pnpm typecheck
+      - name: Deploy filters cover every workspace dependency
+        run: node scripts/check-deploy-filters.mjs
+
+  tests:
+    name: Unit, emulator and e2e tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,18 +60,28 @@ jobs:
           sudo apt-get install -y -q bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
       - run: pnpm build
       - name: Unit, emulator and security rules tests
         run: pnpm test:emulator
       - name: End-to-end on the emulators (fake model)
         run: pnpm test:e2e
-      - name: Deploy filters cover every workspace dependency
-        run: node scripts/check-deploy-filters.mjs
+
+  # The single required check. `if: always()` so a failed or cancelled check job fails this
+  # one too, instead of leaving it skipped (a skipped required check counts as passing).
+  gate:
+    name: gate
+    needs: [static, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: |
+          echo 'static: ${{ needs.static.result }}, tests: ${{ needs.tests.result }}'
+          [ '${{ needs.static.result }}' = success ] && [ '${{ needs.tests.result }}' = success ]
 
   # Deploy only what passed: pushes to main, after the checks above.
   deploy:
-    needs: check
+    needs: gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     concurrency: deploy
     permissions:

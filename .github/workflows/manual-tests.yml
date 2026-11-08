@@ -1,0 +1,63 @@
+name: Manual tests
+
+# Suites that are too slow, costly or interactive for the merge gate (docs/TESTING.md).
+# Actions › Manual tests › Run workflow, or: gh workflow run manual-tests.yml -f suite=e2e
+# The suites live in tests/manual/suites.mjs; local-only and interactive ones (the auth
+# matrix) refuse to run here and print how to run them on your Mac.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Suite name from tests/manual/suites.mjs (pnpm test:manual lists them)"
+        required: true
+        default: e2e
+      ref_note:
+        description: "Why you are running it (shows in the run summary)"
+        required: false
+
+concurrency:
+  group: manual-tests-${{ inputs.suite }}
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Suites that need secrets read them from this environment; add required reviewers to it
+    # (Settings › Environments) if a suite should need an approval before it spends money.
+    environment: manual-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: pnpm install --frozen-lockfile
+      - name: Run ${{ inputs.suite }}
+        env:
+          SUITE: ${{ inputs.suite }}
+        run: pnpm test:manual "$SUITE" --yes
+      - name: Summary
+        if: always()
+        env:
+          SUITE: ${{ inputs.suite }}
+          NOTE: ${{ inputs.ref_note }}
+        run: |
+          echo "### Manual suite: $SUITE" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$NOTE" ] && echo "$NOTE" >> "$GITHUB_STEP_SUMMARY"
+          for f in tests/manual/reports/*.md; do [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"; done
+          true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-${{ inputs.suite }}-reports
+          path: tests/manual/reports/
+          if-no-files-found: ignore
