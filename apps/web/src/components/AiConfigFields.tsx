@@ -81,13 +81,19 @@ export function AiConfigFields({
 
   // Model: the plain names; the local one by the model the Mac serves, marked local only.
   const localName = macs.find((d) => d.localModel)?.localModel;
+  // The local model runs only on a Mac: it and Remote exclude each other at this level.
+  const device = value.device ?? inherited.device;
+  const remote = device === 'gcp';
   const modelOptions: DropdownOption[] = MODEL_OPTIONS.map((m) =>
     m.value === LOCAL_MODEL
       ? {
           ...m,
           label: localName ?? m.label,
           trailing: <LocalOnly />,
-          title: 'On your Mac, no budget used',
+          title: remote
+            ? 'Runs only on your Mac: set Device to Auto or your Mac first'
+            : 'On your Mac, no budget used',
+          disabled: remote,
         }
       : m,
   );
@@ -98,7 +104,15 @@ export function AiConfigFields({
 
   const deviceOptions: DropdownOption[] = [
     { value: 'auto', label: 'Auto', icon: Wand2, title: 'Your Mac when it is online, else remote' },
-    { value: 'gcp', label: 'Remote', icon: Cloud, title: 'A sandbox in the cloud' },
+    isLocalModel(value.model)
+      ? {
+          value: 'gcp',
+          label: 'Remote',
+          icon: Cloud,
+          title: 'The local model runs only on your Mac: pick another model first',
+          disabled: true,
+        }
+      : { value: 'gcp', label: 'Remote', icon: Cloud, title: 'A sandbox in the cloud' },
     ...macs.map((d) => ({ value: `mac:${d.id}`, label: d.name, icon: Laptop })),
   ];
   if (value.device?.startsWith('mac:') && !macs.some((d) => `mac:${d.id}` === value.device))
@@ -139,7 +153,11 @@ export function AiConfigFields({
           label="Model"
           hint={
             isLocalModel(value.model ?? inherited.model)
-              ? 'Runs on your Mac (the one picked under Device, else the one seen last). No budget is used.'
+              ? remote
+                ? isLocalModel(value.model)
+                  ? 'The local model runs only on your Mac, but Device is Remote: pick another model, or set Device to Auto or your Mac.'
+                  : 'Remote cannot use the local model, so this runs on the default cloud model (Auto).'
+                : 'Runs on your Mac (the one picked under Device, else the one seen last). No budget is used.'
               : undefined
           }
         >

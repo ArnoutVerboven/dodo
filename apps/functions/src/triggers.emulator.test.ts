@@ -169,3 +169,43 @@ describe.skipIf(!enabled)('onInputAnswered', () => {
     expect(await runsOf(taskId)).toHaveLength(1);
   });
 });
+
+/** The local model runs only on a Mac: a task pinned to Remote never sends it there. */
+describe.skipIf(!enabled)('local model on a Remote task', () => {
+  async function seed(ai: Record<string, unknown>, projectDefaults: Record<string, unknown> = {}) {
+    const d = db as NonNullable<typeof db>;
+    const taskId = `t-${randomUUID()}`;
+    const projectId = `p-${randomUUID()}`;
+    await d
+      .doc(paths.project(projectId))
+      .set({ name: 'P', defaults: projectDefaults, createdAt: 1, updatedAt: 1 });
+    await d.doc(paths.task(taskId)).set({
+      title: 'Remote',
+      description: '',
+      status: 'todo',
+      projectId,
+      ai: { enabled: true, budget: 300_000, ...ai },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    return taskId;
+  }
+
+  it('an inherited local model runs remotely on the default cloud model', async () => {
+    const d = db as NonNullable<typeof db>;
+    const taskId = await seed({ device: 'gcp' }, { model: 'local' });
+    const runId = await enqueueRun({ db: d }, taskId, { trigger: 'new' });
+    const run = (await d.doc(paths.run(runId as string)).get()).data();
+    expect(run?.device).toBe('gcp');
+    expect(run?.model).toMatch(/^gemini-/);
+  });
+
+  it('a task that picks both itself is stopped with a message, not moved to the Mac', async () => {
+    const d = db as NonNullable<typeof db>;
+    const taskId = await seed({ device: 'gcp', model: 'local' });
+    expect(await enqueueRun({ db: d }, taskId, { trigger: 'new' })).toBeUndefined();
+    const task = (await d.doc(paths.task(taskId)).get()).data();
+    expect(task?.status).toBe('needs_input');
+    expect(task?.statusLine?.text).toMatch(/Remote but uses the local model/);
+  });
+});

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { repoDir, repoList, reposFor } from './github.js';
+import { localModelOnRemote } from './local-model.js';
 import { eur, InputRequest } from './model.js';
 import { resolveAiConfig } from './resolve.js';
 
@@ -66,5 +67,16 @@ describe('InputRequest', () => {
   it('keeps the top-up of a budget ask, so answering it in the app does not drop it', () => {
     const parsed = InputRequest.parse({ kind: 'approval', prompt: 'Top up?', topUp: 500_000 });
     expect(parsed.topUp).toBe(500_000);
+  });
+});
+
+describe('localModelOnRemote', () => {
+  it('only matters for Remote with the local model, and tells a choice from a default', () => {
+    expect(localModelOnRemote({ model: 'local', device: 'auto' }, {})).toBe('ok');
+    expect(localModelOnRemote({ model: 'gemini-x', device: 'gcp' }, {})).toBe('ok');
+    expect(localModelOnRemote({ model: 'local', device: 'gcp' }, {})).toBe('use-cloud');
+    expect(
+      localModelOnRemote({ model: 'local:qwen', device: 'gcp' }, { model: 'local:qwen' }),
+    ).toBe('conflict');
   });
 });
