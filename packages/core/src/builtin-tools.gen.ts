@@ -189,7 +189,7 @@ export const catalog: unknown[] = [
   {
     "name": "list_vault",
     "group": "vault",
-    "description": "The user's vault: logins and other secret values (passwords, usernames, phone numbers for itsme) you can type into a site without seeing them. Returns each entry's id, name, the sites it may be used on, its fields and a login hint, never the values. Refer to a value as {{vault:<id>.<field>}} in a tool that types into a page; a task must be approved for an entry first (request_vault_access).",
+    "description": "The user's vault: logins and other secret values (passwords, usernames, phone numbers) you can type into a site without seeing them. Returns each entry's id, name, the sites it may be used on, its fields and a login hint, never the values. Refer to a value as {{vault:<id>.<field>}} in a tool that types into a page; a task must be approved for an entry first (request_vault_access).",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -853,7 +853,7 @@ export const catalog: unknown[] = [
   {
     "name": "request_device",
     "group": "browser",
-    "description": "Move this task to the user's Mac when a login cannot be finished in this cloud browser: a passkey, a login bound to their device, a site that refuses this browser (Google's 'this browser or app may not be secure', a CAPTCHA that keeps coming back), or a login that still fails after one fresh try. Try itsme, passwords and codes here first: they usually work. This run ends either way; depending on the user's device setting the task moves at once or after they agree, and continues on the Mac in its Chrome window with your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline.",
+    "description": "Move this task to the user's Mac when a login cannot be finished in this cloud browser: itsme or another phone-app QR login (its code changes every few seconds, so nobody can scan it from here: move as soon as the page offers it), a passkey, a login bound to their device, a site that refuses this browser (Google's 'this browser or app may not be secure', a CAPTCHA that keeps coming back), or a login that still fails after one fresh try. Try passwords and codes here first: they usually work. This run ends either way; depending on the user's device setting the task moves at once or after they agree, and continues on the Mac in its Chrome window with your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline.",
     "inputSchema": {
       "type": "object",
       "properties": {

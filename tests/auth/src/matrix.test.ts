@@ -26,7 +26,7 @@ const vault = [
   { id: 'energy', name: 'Energy', domains: ['engie.be'] },
   { id: 'google', name: 'Google account', domains: ['google.com'] },
   { id: 'overleaf', name: 'Overleaf', domains: ['*.overleaf.com'] },
-  { id: 'vinted', name: 'Vinted', domains: ['vinted.be'] },
+  { id: 'booking', name: 'Booking', domains: ['booking.com'] },
 ];
 const example = parseTargets(SITES);
 for (const m of example.methods) m.vault = resolveVault(m, vault)?.id;
@@ -35,8 +35,9 @@ describe('targets and cases', () => {
   it('reads the fixed sites and adds the site host to the hosts', () => {
     const google = example.methods.find((m) => m.id === 'google');
     expect(google?.hosts).toEqual([
-      'account.booking.com',
-      'booking.com',
+      'www.vinted.com',
+      'vinted.com',
+      'vinted.be',
       'accounts.google.com',
       'google.com',
     ]);
@@ -96,14 +97,16 @@ describe('the test task', () => {
     });
     expect(doc.allowRules).toEqual([
       'Vault(google)',
-      'Browser(submit:account.booking.com)',
-      'Browser(submit:booking.com)',
+      'Browser(submit:www.vinted.com)',
+      'Browser(submit:vinted.com)',
+      'Browser(submit:vinted.be)',
       'Browser(submit:accounts.google.com)',
       'Browser(submit:google.com)',
     ]);
     expect(doc.allowedHosts).toEqual([
-      'account.booking.com',
-      'booking.com',
+      'www.vinted.com',
+      'vinted.com',
+      'vinted.be',
       'accounts.google.com',
       'google.com',
     ]);
@@ -284,8 +287,8 @@ describe('the overview', () => {
     expect(md).toContain('| Method | Local (Mac) | Remote (cloud) |');
     expect(md).toContain('| itsme (engie.be) | works | works |');
     // A pipe in the agent's reason must not break the table.
-    expect(md).toContain('| Google (booking.com) | works | fails: refused / browser |');
-    expect(md).toMatch(/- \*\*Google \(booking\.com\), remote\*\*: fails/);
+    expect(md).toContain('| Google (vinted) | works | fails: refused / browser |');
+    expect(md).toMatch(/- \*\*Google \(vinted\), remote\*\*: fails/);
   });
 
   it('keeps the latest result per case and replaces only the marked block', () => {
@@ -333,7 +336,7 @@ describe('vault entries', () => {
       ['itsme', 'energy'],
       ['google', 'google'],
       ['password', 'overleaf'],
-      ['email-2fa', 'vinted'],
+      ['email-2fa', 'booking'],
       ['google-session', 'google'],
     ]);
   });
