@@ -18,7 +18,12 @@ import {
   type Task,
 } from '@dodo/core';
 
-/** The texts live in @dodo/core's prompts module; this assembles them for one run. */
+/**
+ * The texts live in @dodo/core's prompts module; this assembles them for one run, in three
+ * layers: dodo's core rules and task contract (the same for every harness), a section per
+ * tool family the run has, and a section about the harness itself (its own tools, how a run
+ * ends there), which dodo's own loop does not need.
+ */
 
 export interface PromptFeatures {
   /** The run has browser tools: a Chrome window on the user's Mac, or headless Chromium remotely. */
@@ -35,6 +40,8 @@ export interface PromptFeatures {
   google?: string;
   /** The run has Notion tools; the workspace they reach. */
   notion?: { workspace?: string };
+  /** The harness's own section: its built-in tools and conventions (absent for dodo's loop). */
+  harness?: string;
 }
 
 export function systemPrompt(
@@ -65,6 +72,7 @@ export function systemPrompt(
     );
   if (features.google) lines.push('', agentGoogle(features.google));
   if (features.notion) lines.push('', agentNotion(features.notion.workspace));
+  if (features.harness) lines.push('', features.harness);
   if (project) {
     lines.push('', agentProject(project.name, project.description, project.instructions));
   }
