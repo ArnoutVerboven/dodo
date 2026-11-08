@@ -61,6 +61,7 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
                          pair this Mac with the code from Settings › Your Macs
   dodo daemon [--once]   wait for runs addressed to this Mac and execute them
   dodo daemon install    keep the daemon running in the background (launchd), start at login
+  dodo daemon restart    restart the background daemon (e.g. when it shows offline)
   dodo daemon uninstall
   dodo folders [add|remove <path>]
                          folders the agent may work in on this Mac
@@ -648,6 +649,14 @@ async function main(full: string[]): Promise<number> {
       if (sub === 'install') {
         const plist = installAgent(fileURLToPath(import.meta.url));
         console.log(`Installed ${plist}. It starts at login; log: ${logPath()}`);
+        return 0;
+      }
+      if (sub === 'restart') {
+        console.log(
+          restartAgent()
+            ? 'Daemon restarted. Check it with `pnpm dodo status`.'
+            : 'No background daemon installed; run `pnpm dodo daemon install` once (it then starts at login and after updates).',
+        );
         return 0;
       }
       if (sub === 'uninstall') {

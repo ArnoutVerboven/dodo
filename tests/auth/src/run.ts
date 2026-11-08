@@ -63,6 +63,7 @@ const { values: args, positionals } = parseArgs({
     timeout: { type: 'string', default: '15' },
     'reuse-sessions': { type: 'boolean', default: false },
     keep: { type: 'boolean', default: false },
+    ask: { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     yes: { type: 'boolean', short: 'y', default: false },
     project: { type: 'string' },
@@ -84,12 +85,15 @@ if (args.help) {
   --env local,remote    where to test; default: both
   --targets <file>      test other sites: a JSON file shaped like tests/auth/src/sites.ts
   --mac <id|name>       the Mac for local cases; default: the one seen most recently
-  --model <id>          model for the agent; default: your usual one
+  --model <id>          model for the agent; default: your usual one on the Mac, dodo's default
+                        Gemini remotely (the local model cannot run remotely)
   --budget 0.40         budget cap per case in EUR
   --month-cap 5         monthly cap of the "Auth tests" project in EUR
   --timeout 15          minutes before a case counts as timed out
   --reuse-sessions      keep existing logins instead of signing out first
   --keep                leave the test tasks open instead of closing them
+  --ask                 after the run, ask per case whether the agent was right and whether
+                        you had to touch the Mac (otherwise the agent's own result counts)
   --dry-run             print the plan and the task texts; create nothing
   -y, --yes             do not ask before starting
   --project <id>        Firebase project; default from apps/web/.env.production`);
@@ -310,7 +314,7 @@ await projectRef.set(
   { merge: true },
 );
 
-// ── Run the cases, one at a time (MFA requests expire, and you can do one at a time) ──
+// ── Run the cases: all at once; the Mac takes its own one after another ──
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -329,9 +333,19 @@ async function observe(taskId: string): Promise<Observation> {
   };
 }
 
-async function runCase(c: Case, n: number): Promise<CaseResult> {
-  const where = c.env === 'remote' ? 'remote' : (mac?.name ?? 'Mac');
-  console.log(`\n━━ ${n}/${runnable.length}  ${c.method.label} on ${where} ━━`);
+interface Live {
+  c: Case;
+  taskId: string;
+  createdAt: number;
+  o?: Observation;
+  seenMessages: Set<number>;
+  seenRuns: Set<number>;
+  lastLine: string;
+  done: boolean;
+}
+
+/** Creates the case's task: remote ones start at once, local ones queue on the Mac in order. */
+async function startCase(c: Case): Promise<Live> {
   const ref = await db.collection('tasks').add(
     taskDoc(c, {
       now: Date.now(),
@@ -342,78 +356,111 @@ async function runCase(c: Case, n: number): Promise<CaseResult> {
       reuseSessions: args['reuse-sessions'],
     }),
   );
-  console.log(`  Task: ${APP_URL}/tasks/${ref.id}`);
+  console.log(`  [${c.id}] ${APP_URL}/tasks/${ref.id}`);
+  return {
+    c,
+    taskId: ref.id,
+    createdAt: Date.now(),
+    seenMessages: new Set(),
+    seenRuns: new Set(),
+    lastLine: '',
+    done: false,
+  };
+}
 
-  const started = Date.now();
-  const seenMessages = new Set<number>();
-  const seenRuns = new Set<number>();
-  let lastLine = '';
-  let o: Observation = await observe(ref.id);
-  while (true) {
-    o = await observe(ref.id);
-    o.runs.forEach((r, i) => {
-      if (seenRuns.has(i)) return;
-      seenRuns.add(i);
-      const on = r.device?.startsWith('mac:') ? (mac?.name ?? 'the Mac') : 'remote';
-      console.log(`  · run ${i + 1} on ${on}`);
-    });
-    o.messages.forEach((m, i) => {
-      if (seenMessages.has(i)) return;
-      seenMessages.add(i);
-      if (m.input) {
-        const pic = m.input.image ? ' (with a picture)' : '';
-        const code = m.input.secret ? ' (a code: answer in dodo, it stays secret)' : '';
-        console.log(`  ? ${oneLine(m.input.prompt ?? m.body ?? '')}${pic}${code}`);
-        console.log('    Answer in dodo (app or Telegram).');
-      } else if (m.author === 'agent' || m.author === 'system') {
-        console.log(`  ${m.author === 'agent' ? '›' : '·'} ${oneLine(m.body ?? '')}`);
-      }
-    });
-    const line = o.task.statusLine?.text ?? '';
-    if (line && line !== lastLine) {
-      console.log(`  status: ${oneLine(line)}`);
-      lastLine = line;
+/** Prints what is new on a case since the last look. */
+function report(l: Live, o: Observation): void {
+  const tag = `  [${l.c.id}]`;
+  o.runs.forEach((r, i) => {
+    if (l.seenRuns.has(i)) return;
+    l.seenRuns.add(i);
+    const on = r.device?.startsWith('mac:') ? (mac?.name ?? 'the Mac') : 'remote';
+    console.log(`${tag} run ${i + 1} on ${on}`);
+  });
+  o.messages.forEach((m, i) => {
+    if (l.seenMessages.has(i)) return;
+    l.seenMessages.add(i);
+    if (m.input) {
+      const pic = m.input.image ? ' (with a picture)' : '';
+      const code = m.input.secret ? ' (a code: it stays secret)' : '';
+      console.log(`${tag} ? ${oneLine(m.input.prompt ?? m.body ?? '')}${pic}${code}`);
+      console.log(`${tag}   answer in dodo (app or Telegram)`);
+    } else if (m.author === 'agent' || m.author === 'system') {
+      console.log(`${tag} ${m.author === 'agent' ? '›' : '·'} ${oneLine(m.body ?? '')}`);
     }
-    if (caseState(o).ended) break;
-    if (Date.now() - started > timeoutMs) {
-      o.timedOut = true;
-      console.log(`  ! no result after ${args.timeout} min`);
-      break;
-    }
-    await sleep(3000);
+  });
+  const line = o.task.statusLine?.text ?? '';
+  if (line && line !== l.lastLine) {
+    console.log(`${tag} status: ${oneLine(line)}`);
+    l.lastLine = line;
   }
+}
 
-  const claim = [o.task.summary ?? '', ...o.messages.map((m) => m.body ?? '')]
+const claimOf = (o: Observation) =>
+  [o.task.summary ?? '', ...o.messages.map((m) => m.body ?? '')]
     .map((t) => RESULT_LINE.exec(t))
     .find(Boolean);
-  console.log(
-    claim
-      ? `  Agent: ${claim[1]?.toLowerCase() === 'ok' ? 'signed in' : 'failed'}${claim[2] ? `: ${oneLine(claim[2])}` : ''}`
-      : '  Agent: no AUTH_RESULT line',
-  );
+
+/** Starts every case, then follows them all until each has ended or timed out. */
+async function runAll(cases: Case[]): Promise<Live[]> {
+  console.log('\nStarting the cases. Answer the agent in dodo when it asks; nothing to type here.');
+  const live: Live[] = [];
+  for (const c of cases) live.push(await startCase(c));
+  while (live.some((l) => !l.done)) {
+    await sleep(3000);
+    for (const l of live.filter((x) => !x.done)) {
+      const o = await observe(l.taskId);
+      l.o = o;
+      report(l, o);
+      // The clock starts when the case's first run does: local cases wait for the Mac in turn.
+      const startedAt = o.runs[0]?.startedAt;
+      const late = startedAt
+        ? Date.now() - startedAt > timeoutMs
+        : Date.now() - l.createdAt > timeoutMs * cases.length;
+      if (caseState(o).ended || late) {
+        if (!caseState(o).ended) {
+          o.timedOut = true;
+          console.log(`  [${l.c.id}] ! no result after ${args.timeout} min`);
+        }
+        const claim = claimOf(o);
+        console.log(
+          `  [${l.c.id}] ${claim ? (claim[1]?.toLowerCase() === 'ok' ? 'signed in' : 'failed') : 'ended without an AUTH_RESULT line'}${claim?.[2] ? `: ${oneLine(claim[2])}` : ''}`,
+        );
+        l.done = true;
+        await close(l.taskId, o);
+      }
+    }
+  }
+  return live;
+}
+
+/** With --ask: what you saw yourself, per case, once they have all ended. */
+async function askTester(l: Live): Promise<TesterAnswers> {
   const tester: TesterAnswers = {};
-  if (claim?.[1]?.toLowerCase() === 'ok') tester.confirmed = await yesNo('  Is that right?', true);
-  const ranOnMac = o.runs.some((r) => r.device?.startsWith('mac:'));
-  if (ranOnMac) {
+  if (!args.ask || !l.o) return tester;
+  console.log(`\n${l.c.method.label} on ${l.c.env}:`);
+  if (claimOf(l.o)?.[1]?.toLowerCase() === 'ok') {
+    tester.confirmed = await yesNo('  The agent says it signed in. Is that right?', true);
+  }
+  if (l.o.runs.some((r) => r.device?.startsWith('mac:'))) {
     tester.macInput = await yesNo(
       '  Did you have to do anything on the Mac itself (its Chrome window, Touch ID, a QR on its screen)?',
       false,
     );
   }
-  const notes = await ask('  Notes (MFA you did, anything odd; enter to skip): ');
+  const notes = await ask('  Notes (enter to skip): ');
   if (notes) tester.notes = notes;
+  return tester;
+}
 
-  await close(ref.id, o);
-  const result = classify(c, o, tester);
+async function resultOf(l: Live, tester: TesterAnswers): Promise<CaseResult> {
+  const result = classify(l.c, l.o as Observation, tester);
   // The last Cloud Run slice is settled when the run ends, so the ledger is complete by now.
-  const ledger = await db.collection('ledger').where('taskId', '==', ref.id).get();
+  const ledger = await db.collection('ledger').where('taskId', '==', l.taskId).get();
   const cost = costBreakdown(ledger.docs.map((d) => d.data()));
   result.costEur = Math.max(result.costEur, cost.total);
   result.costModelEur = cost.model;
   result.costCloudEur = cost.cloud;
-  console.log(
-    `  Cost: ${euro(result.costEur)} (model ${euro(cost.model)}, cloud ${euro(cost.cloud)})`,
-  );
   return result;
 }
 
@@ -436,16 +483,19 @@ const oneLine = (s: string) => {
 };
 
 const before = history();
+const live = await runAll(runnable);
 const results: CaseResult[] = [];
-let n = 0;
-for (const c of runnable) {
-  n++;
+for (const l of live) {
+  if (!l.o) continue;
   try {
-    results.push(await runCase(c, n));
+    const r = await resultOf(l, await askTester(l));
+    console.log(
+      `  [${l.c.id}] cost ${euro(r.costEur)} (model ${euro(r.costModelEur ?? 0)}, cloud ${euro(r.costCloudEur ?? 0)})`,
+    );
+    results.push(r);
   } catch (err) {
-    console.log(`  ✗ ${String(err)}`);
+    console.log(`  [${l.c.id}] ✗ ${String(err)}`);
   }
-  if (n < runnable.length && !args.yes && !(await yesNo('Next case?', true))) break;
 }
 rl.close();
 

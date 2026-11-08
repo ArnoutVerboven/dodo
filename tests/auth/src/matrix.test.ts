@@ -10,6 +10,7 @@ import {
   MATRIX_END,
   MATRIX_START,
   mergeResults,
+  modelFor,
   type Observation,
   parseTargets,
   renderReport,
@@ -86,7 +87,13 @@ describe('the test task', () => {
       macDevice: 'mac:m1',
       budget: 400_000,
     });
-    expect(doc.ai).toEqual({ enabled: true, device: 'gcp', browser: 'chrome', budget: 400_000 });
+    expect(doc.ai).toEqual({
+      enabled: true,
+      device: 'gcp',
+      browser: 'chrome',
+      budget: 400_000,
+      model: 'auto',
+    });
     expect(doc.allowRules).toEqual([
       'Vault(google)',
       'Browser(submit:account.booking.com)',
@@ -108,13 +115,23 @@ describe('the test task', () => {
       budget: 400_000,
     });
     expect((local.ai as { device: string }).device).toBe('mac:m1');
+    expect(local.ai).not.toHaveProperty('model');
+  });
+
+  it('never gives a remote case the local model, which would move it to the Mac', () => {
+    expect(modelFor('remote')).toBe('auto');
+    expect(modelFor('remote', 'local')).toBe('auto');
+    expect(modelFor('remote', 'local:qwen')).toBe('auto');
+    expect(modelFor('remote', 'gemini-2.5-pro')).toBe('gemini-2.5-pro');
+    expect(modelFor('local', 'local')).toBe('local');
+    expect(modelFor('local')).toBeUndefined();
   });
 
   it('tells the agent how to report, and how to treat existing sessions', () => {
     const remote = taskDescription(caseOf('google-remote'));
     expect(remote).toMatch(/AUTH_RESULT: ok \|/);
     expect(remote).toMatch(/do not call use_google_session/);
-    expect(remote).toMatch(/sign out first/);
+    expect(remote).toMatch(/could not sign out first/);
     expect(taskDescription(caseOf('google-local'))).not.toMatch(/use_google_session/);
     expect(taskDescription(caseOf('itsme-local'), { reuseSessions: true })).not.toMatch(
       /sign out first/,

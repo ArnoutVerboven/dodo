@@ -137,7 +137,7 @@ export function taskDescription(c: Case, opts: { reuseSessions?: boolean } = {})
   }
   if (!opts.reuseSessions && !m.useGoogleSession) {
     lines.push(
-      'If the site shows you are already signed in, sign out first, so the whole login is tested.',
+      'This tests the whole login, so start signed out. If the site already shows you signed in (an account name, a "Log out" link, a dashboard), sign out first and check that you see the login form before you log in. A login you did not type yourself does not count: if you cannot sign out, stop and report AUTH_RESULT: failed | could not sign out first.',
     );
   }
   lines.push(
@@ -183,7 +183,7 @@ export function taskDoc(
       device: c.env === 'remote' ? 'gcp' : opts.macDevice,
       browser: 'chrome',
       budget: opts.budget,
-      ...(opts.model ? { model: opts.model } : {}),
+      ...(modelFor(c.env, opts.model) ? { model: modelFor(c.env, opts.model) } : {}),
     },
     allowRules,
     allowedHosts: m.hosts,
@@ -192,6 +192,17 @@ export function taskDoc(
     createdAt: opts.now,
     updatedAt: opts.now,
   };
+}
+
+/**
+ * The model a case runs on. The local model exists only on the Mac, and dodo moves a run that
+ * uses it there even when the task is pinned to gcp, so a remote case always gets a cloud model
+ * (`auto` is dodo's default Gemini) unless you name one. A local case uses yours (or your default).
+ */
+export function modelFor(env: Env, model?: string): string | undefined {
+  const local = !!model && (model === 'local' || model.startsWith('local:'));
+  if (env === 'remote') return model && !local ? model : 'auto';
+  return model;
 }
 
 /** What a case left behind in Firestore, read once it has ended. */
