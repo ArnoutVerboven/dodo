@@ -1,9 +1,9 @@
 /**
- * Manual auth test: logs in with each configured method (itsme, Google, a password login) on
- * your Mac and remotely, through real dodo tasks, and writes down what works where.
+ * Manual auth test: logs in with each fixed login in sites.ts (itsme on engie.be, Google on
+ * booking.com, a password on overleaf, email + 2FA on vinted) on your Mac and remotely, through
+ * real dodo tasks, and writes down what works where.
  *
- *   pnpm test:auth                         # first time: sets itself up; then runs every case
- *   pnpm test:auth setup                   # pick the vault entries and sites again
+ *   pnpm test:auth                         # runs every case
  *   pnpm test:auth cost                    # what a run will cost, and what auth tests cost so far
  *   pnpm test:auth --only itsme --env remote
  *   pnpm test:auth --dry-run               # the plan and the task texts, nothing created
@@ -27,25 +27,22 @@ import {
   caseState,
   classify,
   costBreakdown,
-  defaultSite,
   type Env,
   estimateCost,
   euro,
-  guessEntry,
-  KINDS,
-  type Method,
   mergeResults,
-  methodFor,
   type Observation,
   parseTargets,
   RESULT_LINE,
   renderReport,
   replaceMatrix,
+  resolveVault,
   type TesterAnswers,
   taskDescription,
   taskDoc,
   type VaultSummary,
 } from './matrix.ts';
+import { SITES } from './sites.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../../..');
@@ -58,7 +55,7 @@ const { values: args, positionals } = parseArgs({
   options: {
     only: { type: 'string' },
     env: { type: 'string' },
-    targets: { type: 'string', default: path.join(root, 'tests/auth/targets.json') },
+    targets: { type: 'string' },
     mac: { type: 'string' },
     model: { type: 'string' },
     budget: { type: 'string', default: '0.40' },
@@ -74,15 +71,18 @@ const { values: args, positionals } = parseArgs({
 });
 
 if (args.help) {
-  console.log(`pnpm test:auth [setup | cost] [options]
+  console.log(`pnpm test:auth [cost] [options]
 
-  (nothing)             run the test; the first time it sets itself up
-  setup                 pick the vault entry and start page for itsme, Google and a password login
+  (nothing)             run the test: ${SITES.methods
+    .filter((m) => m.enabled !== false)
+    .map((m) => m.label)
+    .join(', ')}
   cost                  what a run will cost, and what the auth tests cost this month (free)
 
-  --only itsme,google   methods to test (ids from targets.json); default: every enabled one
+  --only itsme,google   methods to test: ${SITES.methods.map((m) => m.id).join(', ')}
+                        default: all but google-session
   --env local,remote    where to test; default: both
-  --targets <file>      default tests/auth/targets.json (written by setup)
+  --targets <file>      test other sites: a JSON file shaped like tests/auth/src/sites.ts
   --mac <id|name>       the Mac for local cases; default: the one seen most recently
   --model <id>          model for the agent; default: your usual one
   --budget 0.40         budget cap per case in EUR
@@ -115,8 +115,10 @@ function fail(message: string): never {
 }
 
 const command = positionals[0];
-if (command && command !== 'setup' && command !== 'cost') fail(`Unknown command "${command}"`);
-const targetsPath = path.resolve(args.targets as string);
+if (command && command !== 'cost') fail(`Unknown command "${command}"`);
+const targets = args.targets
+  ? parseTargets(JSON.parse(readFileSync(path.resolve(args.targets), 'utf8')))
+  : parseTargets(SITES);
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = async (q: string) => (await rl.question(q)).trim();
@@ -145,11 +147,7 @@ function printEstimate(cs: Case[]) {
 }
 
 if (args['dry-run']) {
-  if (!existsSync(targetsPath)) fail('No targets yet: run `pnpm test:auth setup` first.');
-  const cs = buildCases(parseTargets(JSON.parse(readFileSync(targetsPath, 'utf8'))), {
-    only: list(args.only),
-    envs,
-  });
+  const cs = buildCases(targets, { only: list(args.only), envs });
   console.log(`Plan: ${cs.length} case${cs.length === 1 ? '' : 's'}\n`);
   for (const c of cs) {
     console.log(
@@ -207,63 +205,6 @@ async function monthToDate(): Promise<number> {
   return costBreakdown(entries).total;
 }
 
-// ── Setup: which vault entry and page for each login ───────────────────────
-
-async function setup() {
-  console.log('\nSetup: which logins to test.');
-  const snap = await db.collection('vault').get();
-  const entries: VaultSummary[] = snap.docs.map((d) => ({
-    id: d.id,
-    name: String(d.get('name') ?? d.id),
-    domains: (d.get('domains') as string[] | undefined) ?? [],
-    hint: d.get('hint') as string | undefined,
-  }));
-  if (!entries.length) {
-    fail(
-      `Your vault is empty. Add your logins in dodo first (${APP_URL}/settings, Vault): one for an itsme site, your Google account (site google.com) and a site with a username and password. Then run pnpm test:auth again.`,
-    );
-  }
-  console.log('\nYour vault entries:');
-  entries.forEach((e, i) => {
-    console.log(`  ${String(i + 1).padStart(2)}. ${e.name}  (${e.domains.join(', ')})`);
-  });
-  const methods: Method[] = [];
-  for (const kind of KINDS) {
-    const guess = guessEntry(kind.id, entries);
-    const def = guess ? entries.indexOf(guess) + 1 : undefined;
-    const a = await ask(
-      `\n${kind.label}: which entry? [number${def ? `, enter for ${def}` : ''}, "-" to skip] `,
-    );
-    if (a === '-' || (!a && !def)) {
-      console.log(`  ${kind.label} skipped.`);
-      continue;
-    }
-    const entry = entries[(a ? Number(a) : (def as number)) - 1];
-    if (!entry) {
-      console.log(`  No entry ${a}: ${kind.label} skipped.`);
-      continue;
-    }
-    const suggested = defaultSite(kind.id, entry);
-    let site = (await ask(`  Login page [enter for ${suggested}]: `)) || suggested;
-    if (!/^https:\/\//.test(site)) site = `https://${site.replace(/^\w+:\/\//, '')}`;
-    methods.push(methodFor(kind.id, entry, site));
-  }
-  if (!methods.length) fail('Nothing picked: nothing to test.');
-  parseTargets({ methods });
-  writeFileSync(targetsPath, `${JSON.stringify({ methods }, null, 2)}\n`);
-  console.log(`\nSaved ${path.relative(root, targetsPath)} (only on this Mac, never committed).`);
-}
-
-if (command === 'setup' || !existsSync(targetsPath)) {
-  if (!existsSync(targetsPath)) console.log('First run: let us pick the logins to test.');
-  await setup();
-  if (!(await yesNo('\nRun the test now?', true))) {
-    console.log('Run it later with: pnpm test:auth');
-    process.exit(0);
-  }
-}
-
-const targets = parseTargets(JSON.parse(readFileSync(targetsPath, 'utf8')));
 const cases = buildCases(targets, { only: list(args.only), envs });
 if (!cases.length) fail('Nothing to test with these options.');
 
@@ -305,26 +246,31 @@ if (cases.some((c) => c.env === 'local')) {
     );
   }
 }
+const vault: VaultSummary[] = (await db.collection('vault').get()).docs.map((d) => ({
+  id: d.id,
+  name: String(d.get('name') ?? d.id),
+  domains: (d.get('domains') as string[] | undefined) ?? [],
+}));
+const vaultUse: string[] = [];
 for (const m of new Set(runnable.map((c) => c.method))) {
-  if (!m.vault) continue;
-  const entry = await db.doc(`vault/${m.vault}`).get();
-  if (!entry.exists) {
-    warnings.push(`${m.label}: no vault entry "${m.vault}" (Settings › Vault).`);
-    continue;
-  }
-  const domains = (entry.get('domains') as string[] | undefined) ?? [];
-  const covered = (h: string) =>
-    domains.some((d) => {
-      const x = d.replace(/^\*\./, '');
-      return h === x || h.endsWith(`.${x}`);
-    });
-  const missing = m.hosts.filter((h) => !covered(h));
-  if (missing.length && missing.length === m.hosts.length) {
+  if (m.useGoogleSession) continue;
+  const named = m.vault;
+  const entry = resolveVault(m, vault);
+  if (entry) {
+    m.vault = entry.id;
+    vaultUse.push(`${m.label}: ${entry.name} (${entry.domains.join(', ')})`);
+  } else if (m.vaultOptional && !named) {
+    vaultUse.push(`${m.label}: no vault entry needed (uses your personal info)`);
+  } else {
+    const sites = (m.vaultHosts?.length ? m.vaultHosts : m.hosts).join(' or ');
     warnings.push(
-      `${m.label}: vault entry "${m.vault}" is for ${domains.join(', ')}, none of ${m.hosts.join(', ')}.`,
+      named
+        ? `${m.label}: no vault entry "${named}" (${APP_URL}/settings, Vault).`
+        : `${m.label}: no vault entry for ${sites}; the agent will have to ask you. Add one at ${APP_URL}/settings (Vault).`,
     );
   }
 }
+if (vaultUse.length) console.log(`\nVault entries:\n  ${vaultUse.join('\n  ')}`);
 console.log(`\nAuth test: ${runnable.length} case${runnable.length === 1 ? '' : 's'}`);
 for (const c of runnable) {
   const where = c.env === 'remote' ? 'remote (cloud browser)' : `local (${mac?.name})`;

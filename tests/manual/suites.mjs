@@ -18,7 +18,7 @@ export const suites = [
   {
     name: 'auth',
     description:
-      'Login matrix against production: itsme, Google and username+password, on the Mac and remote, with MFA on your phone (pnpm test:auth --help for one method or device)',
+      'Login matrix against production: itsme (engie.be), Google (booking.com), username+password (overleaf) and email+2FA (vinted), on the Mac and remote, with MFA on your phone (pnpm test:auth --help for one method or device)',
     command: 'pnpm test:auth',
     where: ['local'],
     cost: ['model', 'infra'],

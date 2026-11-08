@@ -8,7 +8,7 @@
 export type Env = 'local' | 'remote';
 export const ENVS: readonly Env[] = ['local', 'remote'];
 
-/** One login method on one site, as configured in targets.json. */
+/** One login method on one site (sites.ts, or a file passed with --targets). */
 export interface Method {
   /** Short id used on the command line: `itsme`, `google`, `password`. */
   id: string;
@@ -17,6 +17,10 @@ export interface Method {
   site: string;
   /** Vault entry the agent may use (approved up front for the test task). */
   vault?: string;
+  /** Without `vault`: use the vault entry for the first of these sites you have one for. */
+  vaultHosts?: string[];
+  /** The login works without a vault entry (e.g. only your email or phone number is needed). */
+  vaultOptional?: boolean;
   /** Hosts the login passes through: opened and submitted to without asking. */
   hosts: string[];
   /** What the second step looks like, so the agent and the report know what to expect. */
@@ -60,7 +64,7 @@ export function buildCases(targets: Targets, plan: Plan = {}): Case[] {
   );
 }
 
-/** Checks targets.json and fills defaults; throws with every problem at once. */
+/** Checks the targets and fills defaults; throws with every problem at once. */
 export function parseTargets(raw: unknown): Targets {
   const problems: string[] = [];
   const list = (raw as { methods?: unknown })?.methods;
@@ -86,6 +90,10 @@ export function parseTargets(raw: unknown): Targets {
       label: str('label') ?? id,
       site,
       vault: str('vault'),
+      vaultHosts: Array.isArray(v.vaultHosts)
+        ? v.vaultHosts.filter((h): h is string => typeof h === 'string')
+        : undefined,
+      vaultOptional: v.vaultOptional === true,
       hosts: [...new Set([host, ...hosts].filter(Boolean).map((h) => h.toLowerCase()))],
       mfa: str('mfa'),
       instructions: str('instructions'),
@@ -472,78 +480,28 @@ export function costBreakdown(entries: Array<{ category?: string; actual?: numbe
 
 export const euro = (n: number) => `€${n.toFixed(2)}`;
 
-// ── Setup: targets.json from your vault ────────────────────────────────────
-
-/** The three logins the test knows, with what each needs besides your vault entry. */
-export const KINDS = [
-  {
-    id: 'itsme',
-    label: 'itsme',
-    extraHosts: ['itsme-id.com'],
-    defaultSite: undefined as string | undefined,
-    mfa: 'itsme: a push to the itsme app after entering my phone number, or a QR code to scan',
-    instructions:
-      'Choose itsme on the login page. Prefer the option with my phone number (from the vault entry or get_personal_info), which sends a push to my itsme app; only use the QR code when there is no other option.',
-  },
-  {
-    id: 'google',
-    label: 'Google',
-    extraHosts: ['google.com'],
-    defaultSite: 'https://myaccount.google.com/',
-    mfa: 'Google 2-step verification: a prompt on my phone (tap Yes, maybe pick a number) or a code',
-    instructions: undefined as string | undefined,
-  },
-  {
-    id: 'password',
-    label: 'Username + password',
-    extraHosts: [] as string[],
-    defaultSite: undefined as string | undefined,
-    mfa: 'a code by email (use get_email_code) or SMS, if the site asks for one',
-    instructions: undefined as string | undefined,
-  },
-] as const;
-
-export type KindId = (typeof KINDS)[number]['id'];
+// ── Vault: which entry each login uses ─────────────────────────────────────
 
 export interface VaultSummary {
   id: string;
   name: string;
   domains: string[];
-  hint?: string;
 }
 
-/** The vault entry that most likely belongs to a login kind, to offer as the default. */
-export function guessEntry(kind: KindId, entries: VaultSummary[]): VaultSummary | undefined {
-  const text = (e: VaultSummary) => `${e.id} ${e.name} ${e.hint ?? ''} ${e.domains.join(' ')}`;
-  if (kind === 'itsme') return entries.find((e) => /itsme/i.test(text(e)));
-  if (kind === 'google') {
-    return entries.find((e) => e.domains.some((d) => /(^|\.)google\.com$/.test(d)));
+const covers = (domain: string, host: string) => {
+  const d = domain.toLowerCase().replace(/^\*\./, '');
+  return host === d || host.endsWith(`.${d}`);
+};
+
+/**
+ * The vault entry a method logs in with: the one named in `vault`, else the first entry whose
+ * domains cover one of `vaultHosts` (in that order), else of the method's hosts.
+ */
+export function resolveVault(m: Method, entries: VaultSummary[]): VaultSummary | undefined {
+  if (m.vault) return entries.find((e) => e.id === m.vault);
+  for (const host of m.vaultHosts?.length ? m.vaultHosts : m.hosts) {
+    const hit = entries.find((e) => e.domains.some((d) => covers(d, host)));
+    if (hit) return hit;
   }
-  return entries.find((e) => !/itsme|google/i.test(text(e)));
-}
-
-/** The page a login starts from when you do not name one: the kind's own, else the entry's site. */
-export function defaultSite(kind: KindId, entry: VaultSummary): string {
-  const own = KINDS.find((k) => k.id === kind)?.defaultSite;
-  if (own) return own;
-  const host = entry.domains.find((d) => !/itsme/.test(d)) ?? entry.domains[0] ?? '';
-  return `https://${host.replace(/^\*\./, '')}/`;
-}
-
-/** One method for targets.json, from a kind, the vault entry you picked and the start page. */
-export function methodFor(kind: KindId, entry: VaultSummary, site: string): Method {
-  const k = KINDS.find((x) => x.id === kind);
-  if (!k) throw new Error(kind);
-  const hosts = [
-    ...new Set([...entry.domains.map((d) => d.replace(/^\*\./, '')), ...k.extraHosts]),
-  ];
-  return {
-    id: k.id,
-    label: k.label,
-    site,
-    vault: entry.id,
-    hosts,
-    mfa: k.mfa,
-    ...(k.instructions ? { instructions: k.instructions } : {}),
-  };
+  return undefined;
 }

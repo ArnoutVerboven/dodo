@@ -92,7 +92,10 @@ const ledger = await db.collection('ledger').where('taskId', '==', task.id).get(
 if (ledger.empty) fail('no ledger entries');
 const spent = ledger.docs.reduce((s, d) => s + d.get('actual'), 0);
 console.log(`ledger: ${ledger.size} entries, ${spent} micro-EUR`);
-if (!ended.sessionPath || !ended.tracePath) fail('session/trace not archived');
+// The run's end state is claimed before its session and trace are stored (in the same batch as
+// the task's status), so read the run again now that the task has followed.
+const archived = (await db.doc(`runs/${run}`).get()).data();
+if (!archived?.sessionPath || !archived?.tracePath) fail('session/trace not archived');
 const events = await db.collection(`runs/${run}/events`).get();
 if (!events.empty) fail('events not cleaned up after archival');
 
