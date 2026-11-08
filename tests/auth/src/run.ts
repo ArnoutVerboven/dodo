@@ -57,7 +57,7 @@ const { values: args, positionals } = parseArgs({
     env: { type: 'string' },
     targets: { type: 'string' },
     mac: { type: 'string' },
-    model: { type: 'string' },
+    model: { type: 'string', default: 'gemini-3.5-flash-lite' },
     budget: { type: 'string', default: '0.40' },
     'month-cap': { type: 'string', default: '5' },
     timeout: { type: 'string', default: '15' },
@@ -85,8 +85,9 @@ if (args.help) {
   --env local,remote    where to test; default: both
   --targets <file>      test other sites: a JSON file shaped like tests/auth/src/sites.ts
   --mac <id|name>       the Mac for local cases; default: the one seen most recently
-  --model <id>          model for the agent; default: your usual one on the Mac, dodo's default
-                        Gemini remotely (the local model cannot run remotely)
+  --model <id>          model for the agent; default gemini-3.5-flash-lite, on the Mac and
+                        remotely (--model local tests the Mac with your local model; remote
+                        cases then use dodo's default Gemini, as the local one cannot run there)
   --budget 0.40         budget cap per case in EUR
   --month-cap 5         monthly cap of the "Auth tests" project in EUR
   --timeout 15          minutes before a case counts as timed out

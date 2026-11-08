@@ -60,7 +60,7 @@ It is not free and it needs you, so it is on demand only. It is not part of CI o
 - before relying on a new site or login method: add it to `sites.ts` and run `--only <id>`;
 - every month or so, because sites change their logins without telling anyone.
 
-Local cases use your usual model; with the local model they cost nothing unless the agent uses a paid tool such as `web_search` (the task tells it not to; the test prints what each case's cost went to), though a small local model may not get through a login. Remote cases always use a cloud model: dodo's default Gemini, or the one you name with `--model`. The local model exists only on your Mac, and dodo moves a task that uses it there even when it is pinned to remote, so a remote case with it would not test the cloud browser at all. Remote cases add Cloud Run time for the browser worker.
+Every case runs on Gemini 3.5 Flash-Lite by default, to keep a run cheap. Pick another with `--model <id>`. `--model local` runs the Mac cases on your local model, which costs nothing unless the agent uses a paid tool such as `web_search` (the task tells it not to; the test prints what each case's cost went to), though a small local model may not get through a login; the remote cases then use dodo's default Gemini, because the local model exists only on your Mac. Remote cases add Cloud Run time for the browser worker.
 
 ## Fallback when a login fails remotely
 
