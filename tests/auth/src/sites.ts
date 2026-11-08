@@ -14,19 +14,18 @@ export const SITES: Targets = {
       vaultHosts: ['engie.be', 'itsme-id.com', 'itsme.be'],
       vaultOptional: true,
       hosts: ['engie.be', 'itsme-id.com', 'itsme.services', 'itsme.be'],
-      mfa: 'itsme: a push to the itsme app after entering my phone number, or a QR code to scan',
-      instructions:
-        'Log in to My ENGIE and choose itsme on the login page. Prefer the option with my phone number (from the vault entry or get_personal_info), which sends a push to my itsme app; only use the QR code when there is no other option.',
+      mfa: 'itsme: a QR code that changes every few seconds, scanned with the app straight off the Mac screen (remotely: move to the Mac with request_device)',
+      instructions: 'Log in to My ENGIE and choose itsme on the login page.',
     },
     {
       id: 'google',
-      label: 'Google (booking.com)',
-      site: 'https://account.booking.com/sign-in',
+      label: 'Google (vinted)',
+      site: 'https://www.vinted.com/',
       vaultHosts: ['google.com'],
-      hosts: ['booking.com', 'accounts.google.com', 'google.com'],
+      hosts: ['vinted.com', 'vinted.be', 'accounts.google.com', 'google.com'],
       mfa: 'Google 2-step verification: a prompt on my phone (tap Yes, maybe pick a number) or a code',
       instructions:
-        'Sign in to Booking.com with "Continue with Google" (or "Sign in with Google"), using my Google account from the vault. Do not sign in with an email address on Booking.com itself.',
+        'Log in to Vinted with "Continue with Google", using my Google account from the vault. Do not use the email, Apple or Facebook options. Accept only the cookie choices needed to continue.',
     },
     {
       id: 'password',
@@ -40,14 +39,14 @@ export const SITES: Targets = {
     },
     {
       id: 'email-2fa',
-      label: 'Email + 2FA (vinted)',
-      site: 'https://www.vinted.com/',
-      vaultHosts: ['vinted.com', 'vinted.be'],
+      label: 'Email + 2FA (booking.com)',
+      site: 'https://account.booking.com/sign-in',
+      vaultHosts: ['booking.com'],
       vaultOptional: true,
-      hosts: ['vinted.com', 'vinted.be'],
-      mfa: 'a verification code sent to my email (fetch it with get_email_code), or by SMS (ask me)',
+      hosts: ['booking.com'],
+      mfa: 'a verification code sent to my email (fetch it with get_email_code)',
       instructions:
-        'Choose "Log in", then the email option (not Google, Apple or Facebook). Use my email address from get_personal_info, or from the vault entry if there is one; if Vinted asks for a password and there is no vault entry, ask me. Accept only the cookie choices needed to continue.',
+        'Sign in to Booking.com with my email address (from get_personal_info, or the vault entry if there is one), not with Google, Apple or Facebook. If it asks for a password and there is no vault entry, ask me.',
     },
     {
       id: 'google-session',

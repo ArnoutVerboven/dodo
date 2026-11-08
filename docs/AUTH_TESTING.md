@@ -6,12 +6,12 @@ dodo's agent logs in to sites for you in two places: on your Mac, in the dodo Ch
 
 The test always uses the same four logins, fixed in [`tests/auth/src/sites.ts`](../tests/auth/src/sites.ts):
 
-| Id          | Login                                                                        | Vault entry it uses (by its site)                                                                      |
-| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `itsme`     | itsme on [engie.be](https://www.engie.be/nl/login/)                          | optional: `engie.be` (else `itsme-id.com`); without one the phone number comes from your personal info |
-| `google`    | "Continue with Google" on [booking.com](https://account.booking.com/sign-in) | `google.com`                                                                                           |
-| `password`  | username + password on [overleaf.com](https://www.overleaf.com/login)        | `overleaf.com`                                                                                         |
-| `email-2fa` | email, then a code by mail, on [vinted.com](https://www.vinted.com/)         | optional: by default your email address from your personal info, then the code from your mail          |
+| Id          | Login                                                                                                                        | Vault entry it uses (by its site)                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `itsme`     | itsme on [engie.be](https://www.engie.be/nl/login/): a QR code you scan off the Mac screen; the remote case moves to the Mac | optional: `engie.be` (else `itsme-id.com`)                                                    |
+| `google`    | "Continue with Google" on [vinted.com](https://www.vinted.com/)                                                              | `google.com`                                                                                  |
+| `password`  | username + password on [overleaf.com](https://www.overleaf.com/login)                                                        | `overleaf.com`                                                                                |
+| `email-2fa` | email, then a code by mail, on [booking.com](https://account.booking.com/sign-in)                                            | optional: by default your email address from your personal info, then the code from your mail |
 
 `google-session` (your stored Google session, remotely) is there too, but only runs with `--only google-session`.
 
@@ -77,9 +77,9 @@ A deny rule `Device(mac)` (or `Device`) keeps a task off the Mac; the task then 
 
 ## When you have to be at the Mac
 
-Most logins on the Mac need only your phone: the agent types from the vault, an itsme push or a Google prompt goes to your phone, and a code is answered in dodo. You do need to touch the Mac itself when:
+Most logins on the Mac need only your phone: the agent types from the vault, a Google prompt goes to your phone, and a code is answered in dodo. You do need to be at the Mac itself when:
 
-- a login only offers a QR code and you are not answering from another screen than the phone that has the app: scan it off the Mac's screen;
+- a login uses itsme or another phone-app QR code: the code changes every few seconds, so dodo does not send it as a picture; it asks you to open the dodo Chrome window and scan the code there. In the cloud browser nobody can scan it, so such a login moves to the Mac (`request_device`);
 - a site asks for a passkey, Touch ID or a security key (macOS shows its own dialog, which the agent cannot click);
 - a CAPTCHA keeps coming back, or the agent asks you to "log in in the dodo Chrome window" (it does this for logins without a vault entry);
 - the first time the Playwright extension connects to your everyday Chrome (Chrome asks you to allow it), if you use it.
