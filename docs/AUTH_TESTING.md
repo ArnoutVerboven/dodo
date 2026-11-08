@@ -4,20 +4,31 @@ dodo's agent logs in to sites for you in two places: on your Mac, in the dodo Ch
 
 ## Run it
 
-Before the first run, put the logins you want tested in your vault ([Settings › Vault](https://dodo-app.web.app/settings)): one for an itsme site, your Google account (site `google.com`), and a site with a username and password. Then, on your Mac:
+The test always uses the same four logins, fixed in [`tests/auth/src/sites.ts`](../tests/auth/src/sites.ts):
+
+| Id          | Login                                                                        | Vault entry it uses (by its site)                                                                   |
+| ----------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `itsme`     | itsme on [engie.be](https://www.engie.be/nl/login/)                          | `engie.be` (else `itsme-id.com`); none is fine, the phone number then comes from your personal info |
+| `google`    | "Continue with Google" on [booking.com](https://account.booking.com/sign-in) | `google.com`                                                                                        |
+| `password`  | username + password on [overleaf.com](https://www.overleaf.com/login)        | `overleaf.com`                                                                                      |
+| `email-2fa` | email + password, then a code, on [vinted.com](https://www.vinted.com/)      | `vinted.com` or `vinted.be`                                                                         |
+
+`google-session` (your stored Google session, remotely) is there too, but only runs with `--only google-session`.
+
+Before the first run, make sure those vault entries exist ([Settings › Vault](https://dodo-app.web.app/settings)). The test finds each one by its site, so the names do not matter. Then, on your Mac:
 
 ```sh
 git pull && pnpm install
 pnpm test:auth
 ```
 
-The first time, it sets itself up. If it can't reach your dodo data, it offers to run `gcloud auth application-default login`, which signs you in through the browser. Then it lists your vault entries and asks which one to use for itsme, Google and the password login (it guesses one for each, so usually you just press enter) and which page each login starts from. It saves your answers in `tests/auth/targets.json`, which stays on your Mac (gitignored). Then it shows the plan and the expected cost, and asks before it starts.
+If it can't reach your dodo data, it offers to run `gcloud auth application-default login`, which signs you in through the browser. Then it shows which vault entry each login uses (and warns about a missing one), the plan and the expected cost, and asks before it starts.
 
 ```sh
 pnpm test:auth cost                         # free: what a run will cost, and what auth tests cost this month
 pnpm test:auth --dry-run                    # free: the plan, the exact task texts and the expected cost
 pnpm test:auth --only google --env remote   # one cell of the matrix
-pnpm test:auth setup                        # pick other vault entries or pages
+pnpm test:auth --only email-2fa             # one login, on the Mac and remotely
 pnpm test:auth --help                       # all options
 ```
 
@@ -44,7 +55,7 @@ It is not free and it needs you, so it is on demand only. It is not part of CI o
 
 - after changing anything on the login path: the browser tools, the headless browser (`apps/worker/src/headless.ts`, `Dockerfile.browser`), the vault, secret answers, email codes, `request_device`, or the browser prompts;
 - after a Playwright, Chromium or Chrome upgrade;
-- before relying on a new site or login method: add it to `targets.json` and run `--only <id>`;
+- before relying on a new site or login method: add it to `sites.ts` and run `--only <id>`;
 - every month or so, because sites change their logins without telling anyone.
 
 Local cases cost only model calls (a few cents). Point them at your local model with `--model <name>` to make them free, though small local models may not get through a login. Remote cases add Cloud Run time for the browser worker.

@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildCases,
@@ -7,29 +6,39 @@ import {
   caseState,
   classify,
   costBreakdown,
-  defaultSite,
   estimateCost,
-  guessEntry,
   MATRIX_END,
   MATRIX_START,
   mergeResults,
-  methodFor,
   type Observation,
   parseTargets,
   renderReport,
   replaceMatrix,
+  resolveVault,
   taskDescription,
   taskDoc,
 } from './matrix.ts';
+import { SITES } from './sites.ts';
 
-const example = parseTargets(
-  JSON.parse(readFileSync(new URL('../targets.example.json', import.meta.url), 'utf8')),
-);
+const vault = [
+  { id: 'shop', name: 'Webshop', domains: ['shop.test'] },
+  { id: 'energy', name: 'Energy', domains: ['engie.be'] },
+  { id: 'google', name: 'Google account', domains: ['google.com'] },
+  { id: 'overleaf', name: 'Overleaf', domains: ['*.overleaf.com'] },
+  { id: 'vinted', name: 'Vinted', domains: ['vinted.be'] },
+];
+const example = parseTargets(SITES);
+for (const m of example.methods) m.vault = resolveVault(m, vault)?.id;
 
 describe('targets and cases', () => {
-  it('reads the example targets and adds the site host to the hosts', () => {
+  it('reads the fixed sites and adds the site host to the hosts', () => {
     const google = example.methods.find((m) => m.id === 'google');
-    expect(google?.hosts).toEqual(['myaccount.google.com', 'google.com']);
+    expect(google?.hosts).toEqual([
+      'account.booking.com',
+      'booking.com',
+      'accounts.google.com',
+      'google.com',
+    ]);
   });
 
   it('refuses a broken targets file with every problem at once', () => {
@@ -47,6 +56,8 @@ describe('targets and cases', () => {
       'google-remote',
       'password-local',
       'password-remote',
+      'email-2fa-local',
+      'email-2fa-remote',
     ]);
   });
 
@@ -78,10 +89,17 @@ describe('the test task', () => {
     expect(doc.ai).toEqual({ enabled: true, device: 'gcp', browser: 'chrome', budget: 400_000 });
     expect(doc.allowRules).toEqual([
       'Vault(google)',
-      'Browser(submit:myaccount.google.com)',
+      'Browser(submit:account.booking.com)',
+      'Browser(submit:booking.com)',
+      'Browser(submit:accounts.google.com)',
       'Browser(submit:google.com)',
     ]);
-    expect(doc.allowedHosts).toEqual(['myaccount.google.com', 'google.com']);
+    expect(doc.allowedHosts).toEqual([
+      'account.booking.com',
+      'booking.com',
+      'accounts.google.com',
+      'google.com',
+    ]);
     expect(doc.tags).toEqual(['auth-test']);
     const local = taskDoc(caseOf('itsme-local'), {
       now: 1,
@@ -247,10 +265,10 @@ describe('the overview', () => {
   it('renders a method × device table and a line per case', () => {
     const md = renderReport(results, { date: '2026-11-08 12:00' });
     expect(md).toContain('| Method | Local (Mac) | Remote (cloud) |');
-    expect(md).toContain('| itsme | works | works |');
+    expect(md).toContain('| itsme (engie.be) | works | works |');
     // A pipe in the agent's reason must not break the table.
-    expect(md).toContain('| Google | works | fails: refused / browser |');
-    expect(md).toMatch(/- \*\*Google, remote\*\*: fails/);
+    expect(md).toContain('| Google (booking.com) | works | fails: refused / browser |');
+    expect(md).toMatch(/- \*\*Google \(booking\.com\), remote\*\*: fails/);
   });
 
   it('keeps the latest result per case and replaces only the marked block', () => {
@@ -292,36 +310,23 @@ describe('cost', () => {
   });
 });
 
-describe('setup', () => {
-  const entries = [
-    { id: 'shop', name: 'Webshop', domains: ['shop.test'] },
-    {
-      id: 'energy',
-      name: 'Energy',
-      domains: ['engie.be', 'itsme-id.com'],
-      hint: 'Log in with itsme',
-    },
-    { id: 'google', name: 'Google account', domains: ['google.com'] },
-  ];
-
-  it('guesses the entry for each login kind', () => {
-    expect(guessEntry('itsme', entries)?.id).toBe('energy');
-    expect(guessEntry('google', entries)?.id).toBe('google');
-    expect(guessEntry('password', entries)?.id).toBe('shop');
+describe('vault entries', () => {
+  it('finds the entry for each fixed site by its domains, in order', () => {
+    expect(example.methods.map((m) => [m.id, m.vault])).toEqual([
+      ['itsme', 'energy'],
+      ['google', 'google'],
+      ['password', 'overleaf'],
+      ['email-2fa', 'vinted'],
+      ['google-session', 'google'],
+    ]);
   });
 
-  it('builds a valid method from the entry and the start page', () => {
-    const energy = entries[1] as (typeof entries)[number];
-    expect(defaultSite('itsme', energy)).toBe('https://engie.be/');
-    expect(defaultSite('google', entries[2] as (typeof entries)[number])).toBe(
-      'https://myaccount.google.com/',
-    );
-    const m = methodFor('itsme', energy, 'https://www.engie.be/login');
-    expect(m).toMatchObject({ id: 'itsme', vault: 'energy', hosts: ['engie.be', 'itsme-id.com'] });
-    expect(parseTargets({ methods: [m] }).methods[0]?.hosts).toEqual([
-      'www.engie.be',
-      'engie.be',
-      'itsme-id.com',
-    ]);
+  it('uses a named entry only, and nothing when no domain matches', () => {
+    const m = parseTargets({ methods: [{ id: 'x', site: 'https://www.nowhere.test/' }] })
+      .methods[0] as (typeof example.methods)[number];
+    expect(resolveVault(m, vault)).toBeUndefined();
+    expect(resolveVault({ ...m, vault: 'shop' }, vault)?.id).toBe('shop');
+    expect(resolveVault({ ...m, vault: 'gone' }, vault)).toBeUndefined();
+    expect(resolveVault({ ...m, hosts: ['eu.shop.test'] }, vault)?.id).toBe('shop');
   });
 });
