@@ -31,6 +31,7 @@ import {
   estimateCost,
   euro,
   mergeResults,
+  modelFor,
   type Observation,
   parseTargets,
   RESULT_LINE,
@@ -57,7 +58,8 @@ const { values: args, positionals } = parseArgs({
     env: { type: 'string' },
     targets: { type: 'string' },
     mac: { type: 'string' },
-    model: { type: 'string', default: 'gemini-3.5-flash-lite' },
+    'mac-model': { type: 'string', default: 'local' },
+    'remote-model': { type: 'string', default: 'gemini-3.5-flash-lite' },
     budget: { type: 'string', default: '0.40' },
     'month-cap': { type: 'string', default: '5' },
     timeout: { type: 'string', default: '15' },
@@ -85,9 +87,9 @@ if (args.help) {
   --env local,remote    where to test; default: both
   --targets <file>      test other sites: a JSON file shaped like tests/auth/src/sites.ts
   --mac <id|name>       the Mac for local cases; default: the one seen most recently
-  --model <id>          model for the agent; default gemini-3.5-flash-lite, on the Mac and
-                        remotely (--model local tests the Mac with your local model; remote
-                        cases then use dodo's default Gemini, as the local one cannot run there)
+  --mac-model local     model for the Mac cases; default: your local model (free)
+  --remote-model <id>   model for the remote cases; default gemini-3.5-flash-lite (the local
+                        model cannot run remotely)
   --budget 0.40         budget cap per case in EUR
   --month-cap 5         monthly cap of the "Auth tests" project in EUR
   --timeout 15          minutes before a case counts as timed out
@@ -352,7 +354,7 @@ async function startCase(c: Case): Promise<Live> {
       now: Date.now(),
       projectId: PROJECT_ID,
       macDevice: mac ? `mac:${mac.id}` : undefined,
-      model: args.model,
+      model: c.env === 'remote' ? args['remote-model'] : args['mac-model'],
       budget: Math.round(budgetEur * 1_000_000),
       reuseSessions: args['reuse-sessions'],
     }),
@@ -518,7 +520,7 @@ mkdirSync(outDir, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const thisRun = renderReport(results, {
   date,
-  note: args.model ? `Model: ${args.model}.` : undefined,
+  note: `Models: ${args['mac-model']} on the Mac, ${modelFor('remote', args['remote-model'])} remotely.`,
 });
 writeFileSync(path.join(outDir, `${stamp}.json`), `${JSON.stringify(results, null, 2)}\n`);
 writeFileSync(path.join(outDir, `${stamp}.md`), `${thisRun}\n`);
