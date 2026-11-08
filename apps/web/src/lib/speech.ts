@@ -101,7 +101,9 @@ export function usePushToTalk(onText: (text: string) => void) {
       set('transcribing');
       try {
         const audio = await blobToBase64(blob);
-        const res = await transcribeCall({ audio, mimeType, language: navigator.language });
+        // The bare type is all Gemini needs: `audio/webm;codecs=opus` → `audio/webm`.
+        const type = mimeType.split(';')[0]?.trim() || 'audio/webm';
+        const res = await transcribeCall({ audio, mimeType: type, language: navigator.language });
         const text = res.data.text.trim();
         if (text) handler.current(text);
         else if (mounted.current) setError('No speech heard.');
