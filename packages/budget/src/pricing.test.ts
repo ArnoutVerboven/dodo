@@ -14,6 +14,14 @@ describe('pricing', () => {
     expect(tokenCost('gemini-2.5-flash', 1, 0)).toBe(1);
   });
 
+  it('bills cached input tokens at a tenth of the input price', () => {
+    expect(tokenCost('gemini-2.5-flash', 1_000_000, 0, 1_000_000)).toBe(eur(0.03));
+    expect(tokenCost('gemini-2.5-flash', 1_000_000, 0, 500_000)).toBe(eur(0.165));
+    // Never more cached than the prompt, never less than nothing.
+    expect(tokenCost('gemini-2.5-flash', 1_000_000, 0, 2_000_000)).toBe(eur(0.03));
+    expect(tokenCost('gemini-2.5-flash', 1_000_000, 0, -5)).toBe(eur(0.3));
+  });
+
   it('refuses unknown models', () => {
     expect(() => tokenCost('mystery-model', 1, 1)).toThrow(UnknownModelError);
   });
