@@ -15,6 +15,7 @@ import {
   githubTools,
   googleSessionTool,
   googleTools,
+  harnessFor,
   inheritedEnv,
   LocalModelControlPlane,
   type McpClient,
@@ -23,7 +24,6 @@ import {
   prepareDir,
   requestBrowserTool,
   requestDeviceTool,
-  runAgent,
   type ToolDef,
   takeScreenshot,
   taskTools,
@@ -257,7 +257,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   if (started.tools?.toolsets.length)
     console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
 
-  const result = await runAgent(
+  const result = await harnessFor().run(
     {
       runId: env.runId,
       task: taskForRun,
