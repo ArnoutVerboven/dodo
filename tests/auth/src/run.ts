@@ -458,6 +458,15 @@ async function resultOf(l: Live, tester: TesterAnswers): Promise<CaseResult> {
   // The last Cloud Run slice is settled when the run ends, so the ledger is complete by now.
   const ledger = await db.collection('ledger').where('taskId', '==', l.taskId).get();
   const cost = costBreakdown(ledger.docs.map((d) => d.data()));
+  // What the money went to, so a cost on a free (local) case is explained.
+  for (const d of ledger.docs) {
+    const e = d.data() as { actual?: number; description?: string; category?: string };
+    if ((e.actual ?? 0) > 0) {
+      console.log(
+        `  [${l.c.id}]   ${euro((e.actual ?? 0) / 1_000_000)} ${e.description ?? e.category ?? ''}`,
+      );
+    }
+  }
   result.costEur = Math.max(result.costEur, cost.total);
   result.costModelEur = cost.model;
   result.costCloudEur = cost.cloud;

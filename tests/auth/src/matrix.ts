@@ -116,7 +116,7 @@ export function taskDescription(c: Case, opts: { reuseSessions?: boolean } = {})
   const lines = [
     'This is a login test. Only log in; do nothing else on the site: do not change settings, send, buy, accept or sign anything.',
     '',
-    `Site: ${m.site}`,
+    `Site: ${m.site} (open it directly; no web_search, which costs money and is not needed here)`,
     `Method: ${m.label}`,
   ];
   if (m.vault) {
