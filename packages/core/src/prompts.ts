@@ -50,7 +50,7 @@ export const AGENT_HEADLESS_NO_HOLD =
 
 /** Headless browser: a site that needs the user's own browser, when request_device can move the run. */
 export const AGENT_HEADLESS_REQUEST_DEVICE =
-  "A site that only works in the user's own browser (a passkey, a login bound to their device, a site that keeps refusing this browser) is not for this browser: call request_device the moment such a page appears; the run continues on their Mac in a real Chrome window. itsme works here: ask the user to scan its QR code from another screen, as above.";
+  'A login this browser cannot finish (a passkey, a login bound to their device, a site that refuses this browser, or one that still fails after a fresh try) is not for this browser: call request_device the moment that is clear, rather than giving up; the run continues on their Mac in a real Chrome window (at once or once they agree). itsme works here: use its phone-number option or ask the user to scan its QR code from another screen, as above.';
 
 /** Headless browser: a site that needs the user's own browser, without request_device. */
 export const AGENT_HEADLESS_DEVICE_BLOCKED =

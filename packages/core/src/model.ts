@@ -200,6 +200,8 @@ export const InputRequest = z.object({
   costEstimate: MicroEur.optional(),
   /** For a budget ask: what approving adds to the task's budget. */
   topUp: MicroEur.optional(),
+  /** For a move ask (request_device on a task pinned to remote): approving moves it to the Mac. */
+  moveToMac: z.boolean().optional(),
   answer: z
     .object({
       value: z.string(),

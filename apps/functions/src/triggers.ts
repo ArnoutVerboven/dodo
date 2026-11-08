@@ -252,6 +252,7 @@ export async function onInputAnswered(
       prompt: string;
       suggestedRule?: string;
       topUp?: number;
+      moveToMac?: boolean;
       answer?: { value: string; alwaysAllow?: { rule: string; scope: string } };
     };
   },
@@ -302,10 +303,14 @@ export async function onInputAnswered(
   }
 
   const { sessionPath, browser } = await latestRun(db, taskId);
+  // A yes to "continue on your Mac?" (a task pinned to remote whose login failed there) moves
+  // the run; a no resumes it where it was, and the agent hears the answer.
+  const toMac = !!after.input?.moveToMac && isApproved(answer.value);
   const id = await enqueueRun(deps, taskId, {
     trigger: 'resume',
     sessionPath,
-    browser,
+    browser: toMac ? true : browser,
+    ...(toMac ? { device: 'mac' as const } : {}),
     answer: {
       prompt: after.input?.prompt ?? '',
       value: answer.value,
