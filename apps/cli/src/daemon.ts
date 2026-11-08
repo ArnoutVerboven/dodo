@@ -35,6 +35,7 @@ import { type CliConfig, chromeProfile, expandFolder, home, VERSION, workRoot } 
 import { credentialStore } from './credentials.js';
 import { ModelServer, type ServerProcess, startSharedEndpoint } from './local-model.js';
 import { LocalMcpHost } from './mcp.js';
+import { onBeat, type PresenceWatch } from './presence.js';
 import {
   finishSandboxed,
   sandboxConfig,
@@ -59,7 +60,8 @@ export type StopReason =
   | 'updated'
   | 'signed_out'
   | 'sandbox_missing'
-  | 'once';
+  | 'once'
+  | 'disconnected';
 
 /**
  * The daemon: sign in as the device, say hello every 30 s, and when a queued run addressed to
@@ -180,13 +182,30 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         browser: browser.state === 'ready',
         localModel: localModelName(config.localModel) ?? deleteField(),
         updatedAt: Date.now(),
-      }).catch((err: { code?: string }) => {
-        if (String(err.code).endsWith('permission-denied'))
-          stop('revoked', 'This Mac was revoked in Settings.');
-        else log(`heartbeat failed: ${String((err as Error).message ?? err)}`);
-      });
+      })
+        .then(() => {
+          watch = { ...watch, confirmedAt: Date.now() };
+        })
+        .catch((err: { code?: string }) => {
+          if (String(err.code).endsWith('permission-denied'))
+            stop('revoked', 'This Mac was revoked in Settings.');
+          else log(`heartbeat failed: ${String((err as Error).message ?? err)}`);
+        });
     };
-    const beat = setInterval(hello, DEVICE_HEARTBEAT_MS);
+    let watch: PresenceWatch = { confirmedAt: Date.now(), beatAt: Date.now() };
+    const beat = setInterval(() => {
+      const r = onBeat(watch, Date.now(), DEVICE_HEARTBEAT_MS);
+      watch = r.watch;
+      // A run or an update in progress finishes first: the run has its own connection and timeout.
+      if (r.stalled && !busy) {
+        stop(
+          'disconnected',
+          `no heartbeat confirmed for ${Math.round((Date.now() - watch.confirmedAt) / 1000)}s: the connection is gone; exiting so launchd starts a fresh daemon.`,
+        );
+        return;
+      }
+      void hello();
+    }, DEVICE_HEARTBEAT_MS);
     void hello();
 
     // Staying current: the worker runs from this checkout, so an old one means old tools.
