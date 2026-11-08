@@ -16,7 +16,9 @@ import {
 import {
   collection,
   deleteField,
+  disableNetwork,
   doc,
+  enableNetwork,
   onSnapshot,
   query,
   updateDoc,
@@ -35,7 +37,7 @@ import { type CliConfig, chromeProfile, expandFolder, home, VERSION, workRoot } 
 import { credentialStore } from './credentials.js';
 import { ModelServer, type ServerProcess, startSharedEndpoint } from './local-model.js';
 import { LocalMcpHost } from './mcp.js';
-import { onBeat, type PresenceWatch } from './presence.js';
+import { onBeat, type PresenceWatch, settleWithin } from './presence.js';
 import {
   finishSandboxed,
   sandboxConfig,
@@ -160,9 +162,12 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       clearInterval(beat);
       clearInterval(updates);
       modelServer?.stop();
-      void Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop(), shared?.close()]).then(
-        () => resolve(reason),
-      );
+      // Bounded: a cleanup that hangs must not keep a dead daemon alive, since launchd only
+      // starts a fresh one once this process exits.
+      void settleWithin(
+        Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop(), shared?.close()]),
+        15_000,
+      ).then(() => resolve(reason));
     };
 
     // Presence. Firestore rules let the device write only these fields on its own document.
@@ -184,7 +189,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         updatedAt: Date.now(),
       })
         .then(() => {
-          watch = { ...watch, confirmedAt: Date.now() };
+          watch = { ...watch, confirmedAt: Date.now(), reconnectedAt: undefined };
         })
         .catch((err: { code?: string }) => {
           if (String(err.code).endsWith('permission-denied'))
@@ -196,6 +201,16 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     const beat = setInterval(() => {
       const r = onBeat(watch, Date.now(), DEVICE_HEARTBEAT_MS);
       watch = r.watch;
+      if (r.reconnect) {
+        // The usual case after a network change: the stream is dead but the SDK has not noticed.
+        // Closing and reopening it sends the queued heartbeat and brings the listeners back.
+        log(
+          `no heartbeat confirmed for ${Math.round((Date.now() - watch.confirmedAt) / 1000)}s; reconnecting to Firestore`,
+        );
+        void settleWithin(disableNetwork(clients.db), 10_000).then(() =>
+          enableNetwork(clients.db).catch((err: Error) => log(`reconnect failed: ${err.message}`)),
+        );
+      }
       // A run or an update in progress finishes first: the run has its own connection and timeout.
       if (r.stalled && !busy) {
         stop(
