@@ -2,7 +2,9 @@
  * Manual auth test: logs in with each configured method (itsme, Google, a password login) on
  * your Mac and remotely, through real dodo tasks, and writes down what works where.
  *
- *   pnpm test:auth                         # every enabled method, local and remote
+ *   pnpm test:auth                         # first time: sets itself up; then runs every case
+ *   pnpm test:auth setup                   # pick the vault entries and sites again
+ *   pnpm test:auth cost                    # what a run will cost, and what auth tests cost so far
  *   pnpm test:auth --only itsme --env remote
  *   pnpm test:auth --dry-run               # the plan and the task texts, nothing created
  *
@@ -24,8 +26,16 @@ import {
   type CaseResult,
   caseState,
   classify,
+  costBreakdown,
+  defaultSite,
   type Env,
+  estimateCost,
+  euro,
+  guessEntry,
+  KINDS,
+  type Method,
   mergeResults,
+  methodFor,
   type Observation,
   parseTargets,
   RESULT_LINE,
@@ -34,6 +44,7 @@ import {
   type TesterAnswers,
   taskDescription,
   taskDoc,
+  type VaultSummary,
 } from './matrix.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +53,8 @@ const APP_URL = 'https://dodo-app.web.app';
 const PROJECT_ID = 'auth-tests';
 const HEARTBEAT_MS = 30_000;
 
-const { values: args } = parseArgs({
+const { values: args, positionals } = parseArgs({
+  allowPositionals: true,
   options: {
     only: { type: 'string' },
     env: { type: 'string' },
@@ -62,11 +74,15 @@ const { values: args } = parseArgs({
 });
 
 if (args.help) {
-  console.log(`pnpm test:auth [options]
+  console.log(`pnpm test:auth [setup | cost] [options]
+
+  (nothing)             run the test; the first time it sets itself up
+  setup                 pick the vault entry and start page for itsme, Google and a password login
+  cost                  what a run will cost, and what the auth tests cost this month (free)
 
   --only itsme,google   methods to test (ids from targets.json); default: every enabled one
   --env local,remote    where to test; default: both
-  --targets <file>      default tests/auth/targets.json (copy targets.example.json)
+  --targets <file>      default tests/auth/targets.json (written by setup)
   --mac <id|name>       the Mac for local cases; default: the one seen most recently
   --model <id>          model for the agent; default: your usual one
   --budget 0.40         budget cap per case in EUR
@@ -98,15 +114,9 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+const command = positionals[0];
+if (command && command !== 'setup' && command !== 'cost') fail(`Unknown command "${command}"`);
 const targetsPath = path.resolve(args.targets as string);
-if (!existsSync(targetsPath)) {
-  fail(
-    `No ${path.relative(root, targetsPath)}. Copy tests/auth/targets.example.json to tests/auth/targets.json and fill in your sites and vault entries.`,
-  );
-}
-const targets = parseTargets(JSON.parse(readFileSync(targetsPath, 'utf8')));
-const cases = buildCases(targets, { only: list(args.only), envs });
-if (!cases.length) fail('Nothing to test with these options.');
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = async (q: string) => (await rl.question(q)).trim();
@@ -117,13 +127,36 @@ const yesNo = async (q: string, def?: boolean): Promise<boolean | undefined> => 
   return /^y/.test(a);
 };
 
+const storePath = path.join(root, 'docs/auth-matrix.json');
+const history = (): CaseResult[] =>
+  existsSync(storePath) ? (JSON.parse(readFileSync(storePath, 'utf8')) as CaseResult[]) : [];
+
+function printEstimate(cs: Case[]) {
+  const est = estimateCost(cs, history(), budgetEur);
+  console.log('\nExpected cost:');
+  for (const r of est.cases) {
+    console.log(
+      `  ${r.id.padEnd(24)} ${euro(r.eur)}  ${r.measured ? '(last run)' : '(rough guess)'}`,
+    );
+  }
+  console.log(
+    `  ${'total'.padEnd(24)} ${euro(est.total)}  (never more than ${euro(est.cap)}: ${euro(budgetEur)} cap per case)`,
+  );
+}
+
 if (args['dry-run']) {
-  console.log(`Plan: ${cases.length} case${cases.length === 1 ? '' : 's'}\n`);
-  for (const c of cases) {
+  if (!existsSync(targetsPath)) fail('No targets yet: run `pnpm test:auth setup` first.');
+  const cs = buildCases(parseTargets(JSON.parse(readFileSync(targetsPath, 'utf8'))), {
+    only: list(args.only),
+    envs,
+  });
+  console.log(`Plan: ${cs.length} case${cs.length === 1 ? '' : 's'}\n`);
+  for (const c of cs) {
     console.log(
       `── ${c.id} ──\n${taskDescription(c, { reuseSessions: args['reuse-sessions'] })}\n`,
     );
   }
+  printEstimate(cs);
   process.exit(0);
 }
 
@@ -139,6 +172,100 @@ function projectId(): string {
 
 initializeApp({ projectId: projectId(), credential: applicationDefault() });
 const db: Firestore = getFirestore();
+
+/** Reads Firestore once; when that fails for want of a sign-in, offers to run gcloud. */
+async function connect(): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return (await db.doc('settings/global').get()).data() ?? {};
+    } catch (err) {
+      console.log(`\nCannot reach your dodo data (${String(err).split('\n')[0]}).`);
+      if (attempt > 0) break;
+      if (!(await yesNo('Sign in with gcloud now (opens your browser)?', true))) break;
+      const r = spawnSync('gcloud', ['auth', 'application-default', 'login'], { stdio: 'inherit' });
+      if (r.error) {
+        fail(
+          'gcloud is not installed. Install it (https://cloud.google.com/sdk/docs/install), then run pnpm test:auth again.',
+        );
+      }
+    }
+  }
+  fail('Sign in with: gcloud auth application-default login');
+}
+const settings = await connect();
+if (settings.halted) fail('Processing is halted (Settings › Budget). Resume it first.');
+
+/** What the auth tests cost this calendar month, from the ledger. */
+async function monthToDate(): Promise<number> {
+  const start = new Date();
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
+  const snap = await db.collection('ledger').where('projectId', '==', PROJECT_ID).get();
+  const entries = snap.docs
+    .map((d) => d.data() as { createdAt?: number; category?: string; actual?: number })
+    .filter((e) => (e.createdAt ?? 0) >= start.getTime());
+  return costBreakdown(entries).total;
+}
+
+// ── Setup: which vault entry and page for each login ───────────────────────
+
+async function setup() {
+  console.log('\nSetup: which logins to test.');
+  const snap = await db.collection('vault').get();
+  const entries: VaultSummary[] = snap.docs.map((d) => ({
+    id: d.id,
+    name: String(d.get('name') ?? d.id),
+    domains: (d.get('domains') as string[] | undefined) ?? [],
+    hint: d.get('hint') as string | undefined,
+  }));
+  if (!entries.length) {
+    fail(
+      `Your vault is empty. Add your logins in dodo first (${APP_URL}/settings, Vault): one for an itsme site, your Google account (site google.com) and a site with a username and password. Then run pnpm test:auth again.`,
+    );
+  }
+  console.log('\nYour vault entries:');
+  entries.forEach((e, i) => {
+    console.log(`  ${String(i + 1).padStart(2)}. ${e.name}  (${e.domains.join(', ')})`);
+  });
+  const methods: Method[] = [];
+  for (const kind of KINDS) {
+    const guess = guessEntry(kind.id, entries);
+    const def = guess ? entries.indexOf(guess) + 1 : undefined;
+    const a = await ask(
+      `\n${kind.label}: which entry? [number${def ? `, enter for ${def}` : ''}, "-" to skip] `,
+    );
+    if (a === '-' || (!a && !def)) {
+      console.log(`  ${kind.label} skipped.`);
+      continue;
+    }
+    const entry = entries[(a ? Number(a) : (def as number)) - 1];
+    if (!entry) {
+      console.log(`  No entry ${a}: ${kind.label} skipped.`);
+      continue;
+    }
+    const suggested = defaultSite(kind.id, entry);
+    let site = (await ask(`  Login page [enter for ${suggested}]: `)) || suggested;
+    if (!/^https:\/\//.test(site)) site = `https://${site.replace(/^\w+:\/\//, '')}`;
+    methods.push(methodFor(kind.id, entry, site));
+  }
+  if (!methods.length) fail('Nothing picked: nothing to test.');
+  parseTargets({ methods });
+  writeFileSync(targetsPath, `${JSON.stringify({ methods }, null, 2)}\n`);
+  console.log(`\nSaved ${path.relative(root, targetsPath)} (only on this Mac, never committed).`);
+}
+
+if (command === 'setup' || !existsSync(targetsPath)) {
+  if (!existsSync(targetsPath)) console.log('First run: let us pick the logins to test.');
+  await setup();
+  if (!(await yesNo('\nRun the test now?', true))) {
+    console.log('Run it later with: pnpm test:auth');
+    process.exit(0);
+  }
+}
+
+const targets = parseTargets(JSON.parse(readFileSync(targetsPath, 'utf8')));
+const cases = buildCases(targets, { only: list(args.only), envs });
+if (!cases.length) fail('Nothing to test with these options.');
 
 interface Mac {
   id: string;
@@ -198,9 +325,6 @@ for (const m of new Set(runnable.map((c) => c.method))) {
     );
   }
 }
-const settings = (await db.doc('settings/global').get()).data() ?? {};
-if (settings.halted) fail('Processing is halted (Settings › Budget). Resume it first.');
-
 console.log(`\nAuth test: ${runnable.length} case${runnable.length === 1 ? '' : 's'}`);
 for (const c of runnable) {
   const where = c.env === 'remote' ? 'remote (cloud browser)' : `local (${mac?.name})`;
@@ -209,9 +333,12 @@ for (const c of runnable) {
   );
 }
 for (const w of warnings) console.log(`  ! ${w}`);
+printEstimate(runnable);
+const spentThisMonth = await monthToDate().catch(() => undefined);
 console.log(
-  `\nCost: at most €${budgetEur.toFixed(2)} per case (€${(budgetEur * runnable.length).toFixed(2)} in all), capped at €${monthCapEur.toFixed(2)} a month for the "Auth tests" project.`,
+  `  Auth tests this month so far: ${spentThisMonth === undefined ? 'unknown' : euro(spentThisMonth)} of the ${euro(monthCapEur)} monthly cap.`,
 );
+if (command === 'cost') process.exit(0);
 console.log(
   'You need your phone: approve logins there and answer the agent in dodo (app or Telegram).',
 );
@@ -331,7 +458,17 @@ async function runCase(c: Case, n: number): Promise<CaseResult> {
   if (notes) tester.notes = notes;
 
   await close(ref.id, o);
-  return classify(c, o, tester);
+  const result = classify(c, o, tester);
+  // The last Cloud Run slice is settled when the run ends, so the ledger is complete by now.
+  const ledger = await db.collection('ledger').where('taskId', '==', ref.id).get();
+  const cost = costBreakdown(ledger.docs.map((d) => d.data()));
+  result.costEur = Math.max(result.costEur, cost.total);
+  result.costModelEur = cost.model;
+  result.costCloudEur = cost.cloud;
+  console.log(
+    `  Cost: ${euro(result.costEur)} (model ${euro(cost.model)}, cloud ${euro(cost.cloud)})`,
+  );
+  return result;
 }
 
 /** Stops a run still going and closes the task, which also drops its stored logins and codes. */
@@ -352,6 +489,7 @@ const oneLine = (s: string) => {
   return t.length > 200 ? `${t.slice(0, 197)}…` : t;
 };
 
+const before = history();
 const results: CaseResult[] = [];
 let n = 0;
 for (const c of runnable) {
@@ -379,6 +517,13 @@ const thisRun = renderReport(results, {
 writeFileSync(path.join(outDir, `${stamp}.json`), `${JSON.stringify(results, null, 2)}\n`);
 writeFileSync(path.join(outDir, `${stamp}.md`), `${thisRun}\n`);
 console.log(`\n${thisRun}\n`);
+const estimated = estimateCost(
+  runnable.filter((c) => results.some((r) => r.id === c.id)),
+  before,
+  budgetEur,
+).total;
+const spent = results.reduce((sum, r) => sum + r.costEur, 0);
+console.log(`Cost of this run: ${euro(spent)} (expected ${euro(estimated)}).`);
 console.log(`Saved to tests/auth/results/${stamp}.md`);
 // Started from `pnpm test:manual auth`: the report goes with the suite's log too.
 const manualDir = process.env.DODO_MANUAL_REPORT_DIR;
@@ -388,11 +533,10 @@ if (manualDir) {
 }
 
 // The overview keeps the latest result of every case, so a run of one method updates its row.
-const store = path.join(root, 'docs/auth-matrix.json');
+const store = storePath;
 const overview = path.join(root, 'docs/AUTH_MATRIX.md');
 if (results.length) {
-  const before: CaseResult[] = existsSync(store) ? JSON.parse(readFileSync(store, 'utf8')) : [];
-  const merged = mergeResults(before, results);
+  const merged = mergeResults(history(), results);
   writeFileSync(store, `${JSON.stringify(merged, null, 2)}\n`);
   if (existsSync(overview)) {
     writeFileSync(

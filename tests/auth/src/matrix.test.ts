@@ -6,9 +6,14 @@ import {
   type CaseResult,
   caseState,
   classify,
+  costBreakdown,
+  defaultSite,
+  estimateCost,
+  guessEntry,
   MATRIX_END,
   MATRIX_START,
   mergeResults,
+  methodFor,
   type Observation,
   parseTargets,
   renderReport,
@@ -258,5 +263,65 @@ describe('the overview', () => {
       `# Title\n\nIntro\n\n${MATRIX_START}\nnew\n${MATRIX_END}\n\nAfter\n`,
     );
     expect(replaceMatrix('# T\n', 'x')).toBe(`# T\n\n${MATRIX_START}\nx\n${MATRIX_END}\n`);
+  });
+});
+
+describe('cost', () => {
+  it('expects the last measured cost per case, else a rough guess, never above the cap', () => {
+    const cases = buildCases(example, { only: ['itsme'] });
+    const seen = classify(cases[1] as Case, obs({ runs: [{ device: 'gcp', spent: 230_000 }] }));
+    const est = estimateCost(cases, [seen], 0.4);
+    expect(est.cases).toEqual([
+      { id: 'itsme-local', eur: 0.1, measured: false },
+      { id: 'itsme-remote', eur: 0.23, measured: true },
+    ]);
+    expect(est.total).toBe(0.33);
+    expect(est.cap).toBe(0.8);
+    expect(estimateCost(cases, [{ ...seen, costEur: 2 }], 0.4).cases[1]?.eur).toBe(0.4);
+  });
+
+  it('splits the ledger into model calls and Cloud Run time', () => {
+    expect(
+      costBreakdown([
+        { category: 'tokens', actual: 51_000 },
+        { category: 'tokens', actual: 20_000 },
+        { category: 'infra', actual: 9_000 },
+        { category: 'action', actual: 5_000 },
+      ]),
+    ).toEqual({ model: 0.07, cloud: 0.01, other: 0.01, total: 0.09 });
+  });
+});
+
+describe('setup', () => {
+  const entries = [
+    { id: 'shop', name: 'Webshop', domains: ['shop.test'] },
+    {
+      id: 'energy',
+      name: 'Energy',
+      domains: ['engie.be', 'itsme-id.com'],
+      hint: 'Log in with itsme',
+    },
+    { id: 'google', name: 'Google account', domains: ['google.com'] },
+  ];
+
+  it('guesses the entry for each login kind', () => {
+    expect(guessEntry('itsme', entries)?.id).toBe('energy');
+    expect(guessEntry('google', entries)?.id).toBe('google');
+    expect(guessEntry('password', entries)?.id).toBe('shop');
+  });
+
+  it('builds a valid method from the entry and the start page', () => {
+    const energy = entries[1] as (typeof entries)[number];
+    expect(defaultSite('itsme', energy)).toBe('https://engie.be/');
+    expect(defaultSite('google', entries[2] as (typeof entries)[number])).toBe(
+      'https://myaccount.google.com/',
+    );
+    const m = methodFor('itsme', energy, 'https://www.engie.be/login');
+    expect(m).toMatchObject({ id: 'itsme', vault: 'energy', hosts: ['engie.be', 'itsme-id.com'] });
+    expect(parseTargets({ methods: [m] }).methods[0]?.hosts).toEqual([
+      'www.engie.be',
+      'engie.be',
+      'itsme-id.com',
+    ]);
   });
 });
