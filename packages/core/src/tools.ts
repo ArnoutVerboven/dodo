@@ -144,6 +144,12 @@ export const McpServer = z.object({
   enabled: z.boolean().default(true),
   /** Tools of this server the agent never gets. */
   disabledTools: z.array(z.string()).default([]),
+  /**
+   * Tools the owner lets run without asking because the server labels them read-only, as the
+   * labels stood when the owner said so. The label alone never skips approval: a server decides
+   * its own labels, and a tool added or relabelled later asks until the owner looks again.
+   */
+  quietTools: z.array(z.string()).default([]),
   /** Remote: an Authorization header is stored (Secret Manager), never shown again. */
   hasAuth: z.boolean().default(false),
   catalog: McpCatalog.optional(),
@@ -218,6 +224,8 @@ export interface RunMcpServer {
   /** Remote only: the stored Authorization header. */
   authorization?: string;
   filter: ToolFilter;
+  /** Tools that run without asking while the server still labels them read-only. */
+  quietTools?: string[];
 }
 
 export interface RunToolAccess {
@@ -287,6 +295,7 @@ export function resolveToolAccess(input: {
           runsOn: s.runsOn,
           ...(s.url ? { url: s.url } : {}),
           filter,
+          ...(s.quietTools.length ? { quietTools: s.quietTools } : {}),
         },
       ];
     });

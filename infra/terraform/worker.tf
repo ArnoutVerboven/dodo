@@ -103,6 +103,9 @@ resource "google_cloud_run_v2_job" "worker_browser" {
       max_retries     = 0
       timeout         = "3600s"
 
+      # Gen2 lets Chromium make the user namespace its sandbox needs (headless.ts).
+      execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+
       containers {
         image = var.worker_browser_image
 

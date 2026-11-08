@@ -18,6 +18,7 @@ const server = (over: Partial<McpServer>): McpServer => ({
   url: 'https://mcp.linear.app/mcp',
   enabled: true,
   disabledTools: [],
+  quietTools: [],
   hasAuth: false,
   createdAt: 1,
   updatedAt: 1,
@@ -113,6 +114,16 @@ describe('resolveToolAccess', () => {
     expect(f && toolAllowed(f, 'list_mail')).toBe(true);
     expect(f && toolAllowed(f, 'something_new')).toBe(true);
     expect(f && toolAllowed(f, 'send_mail')).toBe(false);
+  });
+
+  it('passes the tools the owner let run without asking to the run', () => {
+    const r = resolveToolAccess({
+      settings: { disabledBuiltins: [] },
+      servers: [{ ...outlook, quietTools: ['list_mail'] }],
+      toolsets: [],
+      device: 'mac:mac1',
+    });
+    expect(r.mcp[0]?.quietTools).toEqual(['list_mail']);
   });
 });
 
