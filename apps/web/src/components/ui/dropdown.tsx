@@ -23,6 +23,8 @@ export interface DropdownOption {
   trailing?: ReactNode;
   /** Shown on hover. */
   title?: string;
+  /** Listed but not pickable; `title` says why. */
+  disabled?: boolean;
 }
 
 /** Free text the menu also takes (a repo name, a folder path): turns the typed text into a value. */
@@ -179,6 +181,7 @@ function Picker({
   const choose = (i: number) => {
     const row = rows[i];
     if (!row) return;
+    if (row.kind === 'option' && row.option.disabled) return;
     if (row.kind === 'reset') {
       onReset?.();
       close();
@@ -294,6 +297,7 @@ function Picker({
                   data-row={i}
                   role="option"
                   aria-selected={isOn}
+                  aria-disabled={row.kind === 'option' && row.option.disabled ? true : undefined}
                   tabIndex={-1}
                   title={row.kind === 'option' ? row.option.title : undefined}
                   onMouseDown={(e) => e.preventDefault()}
@@ -303,6 +307,9 @@ function Picker({
                   className={cn(
                     'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 select-none',
                     i === active && 'bg-accent',
+                    row.kind === 'option' &&
+                      row.option.disabled &&
+                      'cursor-not-allowed text-muted-foreground opacity-60',
                     row.kind === 'reset' && 'mt-1 border-t pt-2 text-muted-foreground',
                   )}
                 >

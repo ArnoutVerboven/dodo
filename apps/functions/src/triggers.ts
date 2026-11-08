@@ -3,6 +3,7 @@ import {
   type GlobalSettings,
   isApproved,
   isLocalModel,
+  localModelOnRemote,
   type Project,
   paths,
   type Run,
@@ -34,6 +35,15 @@ const DEFAULT_MODEL = 'gemini-3.8-flash';
 
 function resolveModel(choice: string): string {
   return choice === 'auto' ? DEFAULT_MODEL : choice;
+}
+
+/** The task picked Remote and the local model itself: that cannot run anywhere. */
+export const LOCAL_ON_REMOTE =
+  'This task is set to Remote but uses the local model, which only runs on your Mac. Pick another model, or set Device to Auto or your Mac.';
+
+/** The model a run uses: an inherited local model on a Remote task becomes the cloud default. */
+function runModel(ai: { model: string; device: string }, task: Task): string {
+  return localModelOnRemote(ai, task.ai) === 'use-cloud' ? DEFAULT_MODEL : resolveModel(ai.model);
 }
 
 export interface EnqueueOptions {
@@ -103,7 +113,7 @@ export async function enqueueRun(
   const firstAi = resolve(first, firstProject, firstSettings);
   // The browser question is a Gemini call: a local-model task never makes one, and decides
   // from the words in the task instead (the agent can still ask for a browser mid-task).
-  const ask: (() => Promise<boolean>) | undefined = isLocalModel(resolveModel(firstAi.model))
+  const ask: (() => Promise<boolean>) | undefined = isLocalModel(runModel(firstAi, first))
     ? async () => looksLikeBrowserWork(`${first.title}\n${first.description}`)
     : deps.needsBrowser
       ? () =>
@@ -125,7 +135,15 @@ export async function enqueueRun(
       (d) => ({ id: d.id, ...d.data() }) as Device,
     );
     const ai = resolve(task, project, settings);
-    const model = resolveModel(ai.model);
+    if (localModelOnRemote(ai, task.ai) === 'conflict') {
+      t.update(db.doc(paths.task(taskId)), {
+        status: 'needs_input',
+        statusLine: { text: LOCAL_ON_REMOTE, needsYou: true },
+        updatedAt: now,
+      });
+      return undefined;
+    }
+    const model = runModel(ai, task);
     const route =
       (opts.device === 'mac' ? routeToMac(devices) : undefined) ??
       (isLocalModel(model) ? routeLocalModel(ai.device, devices) : undefined) ??
