@@ -486,6 +486,11 @@ export async function setServerToolEnabled(id: string, tool: string, enabled: bo
   });
 }
 
+/** The tools that run without asking: the ones the server labels read-only now, or none. */
+export async function setServerQuietTools(id: string, tools: string[]) {
+  await updateDoc(doc(db, paths.mcpServer(id)), { quietTools: tools, updatedAt: Date.now() });
+}
+
 /** A remote server; its Authorization header goes to the server only. */
 export async function saveRemoteServer(req: McpServerSaveRequest) {
   await httpsCallable(functions, 'mcpServerSave')(clean(req));

@@ -1,4 +1,5 @@
-import { mkdirSync } from 'node:fs';
+import { chownSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { type BrowserClient, connectMcpServer } from '@dodo/agent';
 import type { createConnection as CreateConnection } from '@playwright/mcp';
 import type { BrowserContextOptions } from 'playwright';
@@ -60,6 +61,88 @@ export function parseStorageState(
   }
 }
 
+/**
+ * The user Chromium runs as, apart from the worker (issue #139): set by `DODO_BROWSER_UID` /
+ * `DODO_BROWSER_GID` in the browser image. The browser renders pages from any site the task
+ * opens; as root, a renderer exploit would land next to the run's credential. Unset (tests, a
+ * dev machine): Chromium runs as the worker, as before.
+ */
+export interface BrowserUser {
+  uid: number;
+  gid: number;
+  home: string;
+  /** Runs Chromium as `uid` (apps/worker/chromium-as-browser.sh). */
+  wrapper: string;
+}
+
+export function browserUser(env: NodeJS.ProcessEnv = process.env): BrowserUser | undefined {
+  if (!env.DODO_BROWSER_UID) return undefined;
+  const uid = Number(env.DODO_BROWSER_UID);
+  const gid = Number(env.DODO_BROWSER_GID ?? env.DODO_BROWSER_UID);
+  if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid <= 0) {
+    throw new Error('DODO_BROWSER_UID / DODO_BROWSER_GID must be positive integers');
+  }
+  if (process.getuid?.() !== 0) {
+    throw new Error('DODO_BROWSER_UID is set but the worker is not running as root');
+  }
+  return {
+    uid,
+    gid,
+    home: env.DODO_BROWSER_HOME ?? '/home/browser',
+    wrapper: env.DODO_BROWSER_WRAPPER ?? '/usr/local/bin/chromium-as-browser',
+  };
+}
+
+/**
+ * The headless shell Playwright would launch on its own (`headless: true`), found in the browsers
+ * folder; the full Chromium when there is none.
+ */
+export function headlessShellPath(browsersPath: string | undefined, fallback: string): string {
+  if (!browsersPath || !existsSync(browsersPath)) return fallback;
+  for (const d of readdirSync(browsersPath).sort().reverse()) {
+    if (!d.startsWith('chromium_headless_shell-')) continue;
+    for (const sub of readdirSync(path.join(browsersPath, d))) {
+      for (const bin of ['chrome-headless-shell', 'headless_shell']) {
+        const p = path.join(browsersPath, d, sub, bin);
+        if (existsSync(p)) return p;
+      }
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Only what Chromium needs. Playwright otherwise hands the browser the worker's whole
+ * environment, the run's credential included.
+ */
+export function browserEnv(
+  user: BrowserUser,
+  chromium: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {
+    PATH: env.PATH ?? '/usr/bin:/bin',
+    HOME: user.home,
+    LANG: env.LANG ?? 'C.UTF-8',
+    DODO_CHROMIUM: chromium,
+    DODO_BROWSER_UID: String(user.uid),
+    DODO_BROWSER_GID: String(user.gid),
+  };
+  for (const k of [
+    'TZ',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+  ]) {
+    const v = env[k];
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 export async function startHeadlessBrowser(opts: {
   outputDir: string;
   /** The task's logins from an earlier run, as the control plane handed them back. */
@@ -72,14 +155,41 @@ export async function startHeadlessBrowser(opts: {
     createConnection: typeof CreateConnection;
   };
 
-  const browser = await chromium.launch({
-    headless: true,
-    // The container runs the worker as an unprivileged user without user namespaces.
-    chromiumSandbox: false,
-    // Without this Chromium tells every page it is automated (navigator.webdriver), and login
-    // providers such as itsme refuse the session.
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
+  const user = browserUser();
+  let asUser:
+    | { executablePath: string; downloadsPath: string; env: Record<string, string> }
+    | undefined;
+  if (user) {
+    // Downloads are written by Chromium itself, so into a folder the browser user owns.
+    const downloadsPath = `${opts.outputDir}-downloads`;
+    mkdirSync(downloadsPath, { recursive: true, mode: 0o700 });
+    chownSync(downloadsPath, user.uid, user.gid);
+    const real = headlessShellPath(process.env.PLAYWRIGHT_BROWSERS_PATH, chromium.executablePath());
+    asUser = { executablePath: user.wrapper, downloadsPath, env: browserEnv(user, real) };
+  }
+  const launch = (sandbox: boolean) =>
+    chromium.launch({
+      headless: true,
+      chromiumSandbox: sandbox,
+      // Without this Chromium tells every page it is automated (navigator.webdriver), and login
+      // providers such as itsme refuse the session.
+      args: ['--disable-blink-features=AutomationControlled'],
+      ...asUser,
+    });
+  let browser: Awaited<ReturnType<typeof launch>>;
+  if (user) {
+    // As its own user, Chromium's sandbox works where the kernel lets it make a user namespace.
+    // Where it can't, the browser still runs, as that user, and the log says so.
+    browser = await launch(true).catch(async (err: Error) => {
+      opts.log(
+        `browser: Chromium sandbox unavailable, running without it: ${err.message.split('\n')[0]}`,
+      );
+      return launch(false);
+    });
+  } else {
+    // A dev machine or a test as root: no separate user, no sandbox (it refuses to run as root).
+    browser = await launch(false);
+  }
   const restored = parseStorageState(opts.storageState);
   if (opts.storageState && !restored) opts.log('browser: stored logins unreadable; starting fresh');
   const context = await browser.newContext({

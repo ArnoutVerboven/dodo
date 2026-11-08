@@ -9,7 +9,8 @@ ENV DODO_BROWSER=headless
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq \
   && rm -rf /var/lib/apt/lists/* \
-  && useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin agent
+  && useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin agent \
+  && useradd --uid 10002 --user-group --create-home --shell /usr/sbin/nologin browser
 # Playwright MCP (the version the Mac daemon uses too) and the Chromium its own Playwright
 # wants, with the system libraries it needs. Pinned so the image is reproducible.
 RUN npm init -y >/dev/null \
@@ -18,8 +19,12 @@ RUN npm init -y >/dev/null \
   && rm -rf /var/lib/apt/lists/* /root/.npm \
   && chmod -R a+rX /ms-playwright
 COPY apps/worker/dist/index.js ./index.js
+COPY --chmod=755 apps/worker/chromium-as-browser.sh /usr/local/bin/chromium-as-browser
 # The worker runs as root and holds the run's credential; the agent's commands, git and its
 # file reads and writes run as `agent` (packages/agent/src/agent-user.ts), which cannot read
 # the worker's environment or memory, nor anything else only root may read.
 ENV DODO_AGENT_UID=10001 DODO_AGENT_GID=10001
+# Chromium runs as a third user, `browser`, with its sandbox on (apps/worker/src/headless.ts):
+# a page that breaks out of the renderer can't reach the run's credential or the task folder.
+ENV DODO_BROWSER_UID=10002 DODO_BROWSER_GID=10002
 CMD ["node", "index.js"]

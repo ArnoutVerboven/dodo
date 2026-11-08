@@ -135,19 +135,28 @@ export function wrapClient(client: SdkClient): McpClient {
   };
 }
 
-/** What a call of an MCP tool is for the policy engine. */
-export function mcpClaim(slug: string, tool: McpToolInfo): PolicyClaim {
+/**
+ * What a call of an MCP tool is for the policy engine. A tool runs without asking only when the
+ * owner let it (`quietTools`) and the server still labels it read-only: the label is the server's
+ * own word, so on its own it never lowers the category.
+ */
+export function mcpClaim(
+  slug: string,
+  tool: McpToolInfo,
+  quietTools: readonly string[] = [],
+): PolicyClaim {
+  const quiet = tool.annotations?.readOnlyHint === true && quietTools.includes(tool.name);
   return {
     tool: 'Mcp',
     key: `${slug}:${tool.name}`,
-    category: tool.annotations?.readOnlyHint === true ? 'sandbox' : 'outbound',
+    category: quiet ? 'sandbox' : 'outbound',
   };
 }
 
 /** The tool definitions for one server, filtered to what the run may use. */
 export async function mcpTools(
   client: McpClient,
-  server: Pick<RunMcpServer, 'slug' | 'name' | 'filter'>,
+  server: Pick<RunMcpServer, 'slug' | 'name' | 'filter' | 'quietTools'>,
   taken: Set<string> = new Set(),
 ): Promise<ToolDef[]> {
   const tools: ToolDef[] = [];
@@ -163,7 +172,7 @@ export async function mcpTools(
         description: `[${server.name}] ${summary}`.slice(0, 4000),
         schema: z.record(z.string(), z.unknown()),
         jsonSchema: t.inputSchema,
-        policy: () => mcpClaim(server.slug, t),
+        policy: () => mcpClaim(server.slug, t, server.quietTools),
         async execute(args, ctx) {
           const res = await client.callTool(t.name, args);
           let text =

@@ -322,6 +322,11 @@ describe.skipIf(!enabled)('firestore.rules', () => {
       }),
     );
     await assertFails(updateDoc(doc(device(), 'mcpServers/d1-outlook'), { disabledTools: ['x'] }));
+    // Which tools run without asking is the owner's call, never the Mac's.
+    await assertFails(updateDoc(doc(device(), 'mcpServers/d1-outlook'), { quietTools: ['x'] }));
+    await assertFails(
+      setDoc(doc(device(), 'mcpServers/d1-other'), { ...local, slug: 'other', quietTools: ['x'] }),
+    );
     // Not under another Mac's name, not as a remote server, not for a revoked Mac.
     await assertFails(setDoc(doc(device(), 'mcpServers/d2-outlook'), { ...local, deviceId: 'd2' }));
     await assertFails(setDoc(doc(device(), 'mcpServers/d1-x'), { ...local, runsOn: 'remote' }));

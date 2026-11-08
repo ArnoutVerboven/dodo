@@ -17,7 +17,11 @@ const BASH_TIMEOUT_MS = 120_000;
 const HTTP_TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 5;
 
-/** Commands that only read: allowed without asking in the agent-decides profile. */
+/**
+ * Commands that only read: allowed without asking in the agent-decides profile. `sed` and `find`
+ * are here only without their writing or executing flags (see `readOnlyUse`). Anything that can
+ * run another command (`xargs`, `env`, `awk`) is not.
+ */
 const READ_ONLY_BINS = new Set([
   'ls',
   'cat',
@@ -39,16 +43,13 @@ const READ_ONLY_BINS = new Set([
   'du',
   'df',
   'date',
-  'env',
   'which',
   'tree',
   'jq',
-  'awk',
   'sed',
   'printf',
   'true',
   'test',
-  'xargs',
   'basename',
   'dirname',
   'realpath',
@@ -80,40 +81,168 @@ const NETWORK_SUBCOMMANDS: Record<string, Set<string>> = {
   gcloud: new Set(['*']),
 };
 
-export function classifyCommand(command: string, workdir: string): 'sandbox' | 'write' | 'egress' {
+/**
+ * Commands that run the command after their own options. Policy looks through them: `xargs curl`
+ * is `curl`, `env FOO=1 rm /x` is `rm /x`. The value is the set of options that take an argument.
+ */
+const WRAPPERS: Record<string, Set<string>> = {
+  xargs: new Set([
+    '-I',
+    '-i',
+    '-n',
+    '-P',
+    '-d',
+    '-L',
+    '-l',
+    '-s',
+    '-E',
+    '-e',
+    '-a',
+    '--arg-file',
+    '--delimiter',
+    '--max-args',
+    '--max-procs',
+    '--replace',
+  ]),
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']),
+  nice: new Set(['-n', '--adjustment']),
+  ionice: new Set(['-c', '-n', '-p']),
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  nohup: new Set(),
+  stdbuf: new Set(['-i', '-o', '-e']),
+  setsid: new Set(),
+  time: new Set(['-f', '-o']),
+  command: new Set(),
+  exec: new Set(['-a']),
+  builtin: new Set(),
+  chroot: new Set(),
+};
+/** Shells and interpreters whose `-c` / `-e` string is another command line. */
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
+const AWKS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+/** `find` actions that run a command or change files. */
+const FIND_EXEC = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+const FIND_WRITE = new Set(['-delete', '-fprint', '-fprint0', '-fprintf', '-fls']);
+
+type Category = 'sandbox' | 'write' | 'egress';
+const RANK: Record<Category, number> = { sandbox: 0, write: 1, egress: 2 };
+const worst = (a: Category, b: Category): Category => (RANK[b] > RANK[a] ? b : a);
+const unquote = (t: string) => t.replace(/^['"]+|['"]+$/g, '');
+
+/**
+ * Whether a `sed` call only reads: no in-place edit, and no `w`/`W` (write a file) or `e`
+ * (run a command) in its script, as a command or as an `s///` flag.
+ */
+function sedReadOnly(args: string[]): boolean {
+  for (const a of args) {
+    if (/^-[a-zA-Z]*i/.test(a) || a.startsWith('--in-place')) return false;
+  }
+  const script = args.filter((a) => !a.startsWith('-')).join(' ');
+  return !/(^|[\s;{}'"/\d$!])[wWe](\s|$|['";}])/.test(script);
+}
+
+export function classifyCommand(command: string, workdir: string): Category {
+  // awk's program can run anything (`system()`, `print | "cmd"`, `"cmd" | getline`), and the pipe
+  // inside it would split the line below, so it is checked on the whole line first.
+  if (
+    /\b[gmn]?awk\b/.test(command) &&
+    /system\s*\(|\|\s*getline|\|\s*["']|print[f]?[^;}]*>/.test(command)
+  ) {
+    return 'egress';
+  }
   const segments = command.split(/\s*(?:\|\||&&|;|\||\n)\s*/).filter(Boolean);
-  let category: 'sandbox' | 'write' | 'egress' = 'sandbox';
+  let category: Category = 'sandbox';
+  for (const seg of segments) {
+    category = worst(category, classifyTokens(seg.trim().split(/\s+/), workdir, 0));
+    if (category === 'egress') return category;
+  }
+  return category;
+}
+
+function classifyTokens(tokens: string[], workdir: string, depth: number): Category {
   const outside = (p: string) => {
     const resolved = p.startsWith('/')
       ? path.resolve(p)
       : path.resolve(workdir, p.replace(/^~/, '/home/none'));
     return resolved !== workdir && !resolved.startsWith(`${workdir}${path.sep}`);
   };
-  for (const seg of segments) {
-    const tokens = seg.trim().split(/\s+/);
-    let i = 0;
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] as string)) i++;
-    const bin = path.basename(tokens[i] ?? '');
-    const sub = tokens[i + 1] ?? '';
-    if (NETWORK_BINS.has(bin)) return 'egress';
-    const subs = NETWORK_SUBCOMMANDS[bin];
-    if (subs && (subs.has('*') || subs.has(sub))) return 'egress';
-    if (['sudo', 'su', 'chmod', 'chown', 'mount'].includes(bin)) category = 'write';
-    const readOnly = READ_ONLY_BINS.has(bin);
-    let redirecting = false;
-    for (const t of tokens.slice(i + 1)) {
-      const isRedirectOp = /^(\d?>>?|&>|<)$/.test(t);
-      const inlineRedirect = /^(\d?>>?|&>)(.+)$/.exec(t);
-      const target = inlineRedirect ? (inlineRedirect[2] as string) : t;
-      const isTarget = redirecting || !!inlineRedirect;
-      redirecting = isRedirectOp;
-      if (isRedirectOp) continue;
-      const looksLikePath =
-        target.startsWith('/') || target.startsWith('~') || target.includes('..');
-      if (!looksLikePath || !outside(target)) continue;
-      // Reading outside the folder is fine; writing there (or an unknown binary touching it) is not.
-      if (isTarget || !readOnly) category = 'write';
+  // Too deep a nest of wrappers is not something to reason about: ask.
+  if (depth > 8) return 'egress';
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] as string)) i++;
+  const bin = path.basename(unquote(tokens[i] ?? ''));
+  const args = tokens.slice(i + 1);
+  const sub = unquote(args[0] ?? '');
+  if (!bin) return 'sandbox';
+  if (NETWORK_BINS.has(bin)) return 'egress';
+  const subs = NETWORK_SUBCOMMANDS[bin];
+  if (subs && (subs.has('*') || subs.has(sub))) return 'egress';
+
+  const wrapperOpts = WRAPPERS[bin];
+  if (wrapperOpts) {
+    let j = 0;
+    while (j < args.length) {
+      const a = unquote(args[j] as string);
+      if (a === '--') {
+        j++;
+        break;
+      }
+      if (bin === 'env' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) j++;
+      else if (a.startsWith('-')) j += wrapperOpts.has(a) ? 2 : 1;
+      else break;
     }
+    // timeout's first positional is the duration, chroot's is the new root.
+    if ((bin === 'timeout' || bin === 'chroot') && j < args.length) j++;
+    const inner = args.slice(j);
+    // A wrapper with no command: xargs runs `echo`, env prints the environment.
+    if (inner.length === 0) return 'sandbox';
+    const own = bin === 'chroot' ? 'write' : 'sandbox';
+    return worst(own, classifyTokens(inner, workdir, depth + 1));
+  }
+
+  if (SHELLS.has(bin)) {
+    const c = args.findIndex((a) => /^-[a-zA-Z]*c$/.test(a));
+    if (c >= 0) {
+      const inner = args
+        .slice(c + 1)
+        .map(unquote)
+        .join(' ');
+      return classifyCommand(inner, workdir);
+    }
+  }
+
+  let category: Category = 'sandbox';
+  if (['sudo', 'su', 'chmod', 'chown', 'mount'].includes(bin)) category = 'write';
+  let readOnly = READ_ONLY_BINS.has(bin);
+  if (bin === 'sed' && !sedReadOnly(args)) readOnly = false;
+  if (AWKS.has(bin)) readOnly = false;
+  if (bin === 'find') {
+    for (let k = 0; k < args.length; k++) {
+      const a = args[k] as string;
+      if (FIND_WRITE.has(a)) readOnly = false;
+      if (FIND_EXEC.has(a)) {
+        readOnly = false;
+        let end = k + 1;
+        while (end < args.length && args[end] !== ';' && args[end] !== '\\;' && args[end] !== '+')
+          end++;
+        category = worst(category, classifyTokens(args.slice(k + 1, end), workdir, depth + 1));
+        k = end;
+      }
+    }
+  }
+  let redirecting = false;
+  for (const raw of args) {
+    const t = unquote(raw);
+    const isRedirectOp = /^(\d?>>?|&>|<)$/.test(t);
+    const inlineRedirect = /^(\d?>>?|&>)(.+)$/.exec(t);
+    const target = inlineRedirect ? (inlineRedirect[2] as string) : t;
+    const isTarget = redirecting || !!inlineRedirect;
+    redirecting = isRedirectOp;
+    if (isRedirectOp) continue;
+    const looksLikePath = target.startsWith('/') || target.startsWith('~') || target.includes('..');
+    if (!looksLikePath || !outside(target)) continue;
+    // Reading outside the folder is fine; writing there (or an unknown binary touching it) is not.
+    if (isTarget || !readOnly) category = worst(category, 'write');
   }
   return category;
 }

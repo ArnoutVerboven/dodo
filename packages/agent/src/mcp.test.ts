@@ -47,11 +47,33 @@ describe('mcpTools', () => {
     expect(decl?.parameters).toBeUndefined();
   });
 
-  it('runs read-only tools freely and asks for the rest, keyed Mcp(server:tool)', async () => {
+  it('asks for a tool the server labels read-only until the owner trusts the label', async () => {
+    const policy = new PolicyEngine({ profile: 'agent-decides', allow: [], deny: [] });
+    const ctx = { store: {} as never };
+    const kinds = async (quietTools?: string[]) => {
+      const tools = await mcpTools(client(), {
+        slug: 'outlook',
+        name: 'Outlook',
+        filter: { disabled: [] },
+        ...(quietTools ? { quietTools } : {}),
+      });
+      return tools.map((t) => {
+        const claim = t.policy?.({}, ctx);
+        return claim && policy.decide(claim).kind;
+      });
+    };
+    expect(await kinds()).toEqual(['ask', 'ask', 'ask']);
+    // Trusting a tool the server does not label read-only lowers nothing.
+    expect(await kinds(['send_mail'])).toEqual(['ask', 'ask', 'ask']);
+    expect(await kinds(['list_mail'])).toEqual(['allow', 'ask', 'ask']);
+  });
+
+  it('runs trusted read-only tools freely and asks for the rest, keyed Mcp(server:tool)', async () => {
     const tools = await mcpTools(client(), {
       slug: 'outlook',
       name: 'Outlook',
       filter: { disabled: [] },
+      quietTools: ['list_mail'],
     });
     const policy = new PolicyEngine({ profile: 'agent-decides', allow: [], deny: [] });
     const ctx = { store: {} as never };

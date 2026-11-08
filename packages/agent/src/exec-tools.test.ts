@@ -30,6 +30,36 @@ describe('classifyCommand', () => {
     expect(classifyCommand('echo hi > /tmp/x', W)).toBe('write');
     expect(classifyCommand('cat /etc/hostname', W)).toBe('sandbox');
   });
+  it('looks through commands that run other commands', () => {
+    expect(classifyCommand('cat urls.txt | xargs curl', W)).toBe('egress');
+    expect(classifyCommand('ls | xargs -n 1 -I {} wget {}', W)).toBe('egress');
+    expect(classifyCommand('ls | xargs rm -rf /etc', W)).toBe('write');
+    expect(classifyCommand('env curl https://x.y', W)).toBe('egress');
+    expect(classifyCommand('env -u HOME FOO=1 rm /etc/passwd', W)).toBe('write');
+    expect(classifyCommand('timeout 10 curl https://x.y', W)).toBe('egress');
+    expect(classifyCommand('nice -n 5 nohup git push', W)).toBe('egress');
+    expect(classifyCommand('bash -c "curl https://x.y"', W)).toBe('egress');
+    expect(classifyCommand('ls | xargs echo', W)).toBe('sandbox');
+    expect(classifyCommand('env', W)).toBe('sandbox');
+  });
+  it('allows find and sed only without their writing or executing flags', () => {
+    expect(classifyCommand('find /etc -name "*.conf"', W)).toBe('sandbox');
+    expect(classifyCommand('find /etc -delete', W)).toBe('write');
+    expect(classifyCommand('find . -exec curl https://x.y {} ;', W)).toBe('egress');
+    expect(classifyCommand('find /etc -exec rm {} +', W)).toBe('write');
+    expect(classifyCommand('sed -n 1,5p /etc/hosts', W)).toBe('sandbox');
+    expect(classifyCommand("sed 's/we/x/g' /etc/hosts", W)).toBe('sandbox');
+    expect(classifyCommand('sed -i s/a/b/ /etc/hosts', W)).toBe('write');
+    expect(classifyCommand("sed 's/a/b/w /etc/x' /etc/hosts", W)).toBe('write');
+    expect(classifyCommand("sed '1e id' /etc/hosts", W)).toBe('write');
+  });
+  it('treats awk that can run or write as asking', () => {
+    expect(classifyCommand('awk \'BEGIN{system("curl x")}\'', W)).toBe('egress');
+    expect(classifyCommand('awk \'{print | "sh"}\' f', W)).toBe('egress');
+    expect(classifyCommand('awk \'{print > "/etc/x"}\' f', W)).toBe('egress');
+    expect(classifyCommand("awk '{print $1}' notes.txt", W)).toBe('sandbox');
+    expect(classifyCommand("awk '{print $1}' /etc/passwd", W)).toBe('write');
+  });
 });
 
 describe('file tools', () => {

@@ -40,7 +40,7 @@ Pages and databases can be given by id or by their Notion link. Properties take 
 The Tools view can already add remote MCP servers, and Notion runs one at `https://mcp.notion.com/mcp`. It was not used as the default because:
 
 - **Auth.** The hosted server takes either an interactive OAuth login (short-lived tokens with refresh, which dodo's remote MCP support does not do: it sends one fixed `Authorization` header), or an "MCP token" that needs a Notion **Business or Enterprise** plan. An internal integration token works on every plan and does not expire.
-- **Approvals.** dodo's MCP tools ask for everything not marked read-only and the rule is per tool (`Mcp(notion:notion-update-page)`), not per page. The built-in tools ask per page or database and the control plane enforces the approval again before it writes.
+- **Approvals.** dodo's MCP tools ask for everything unless you let a server's read-only tools run freely in the Tools view and the rule is per tool (`Mcp(notion:notion-update-page)`), not per page. The built-in tools ask per page or database and the control plane enforces the approval again before it writes.
 - **Size.** The hosted server offers some 70 tools (calendar, agents, meeting notes…); six focused tools keep the prompt small.
 
 If your workspace is on Business or Enterprise and you want the hosted server's extra tools anyway: create an MCP token in Notion's developer portal and add a remote server in **Tools › MCP servers** with URL `https://mcp.notion.com/mcp` and header `Bearer <token>`. Both can be on at once; toolsets decide which a task gets.

@@ -46,6 +46,7 @@ import {
   saveToolset,
   setBuiltinEnabled,
   setServerEnabled,
+  setServerQuietTools,
   setServerToolEnabled,
   useDevices,
   useMcpServers,
@@ -199,6 +200,9 @@ function ServerCard({
   const online = s.runsOn === 'remote' || isDeviceOnline(mac?.lastSeen);
   const tools = s.catalog?.tools ?? [];
   const off = tools.filter((t) => s.disabledTools.includes(t.name)).length;
+  const labelled = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name);
+  const quiet = (name: string) => labelled.includes(name) && s.quietTools.includes(name);
+  const allQuiet = labelled.length > 0 && labelled.every(quiet);
   // A refresh asked of a Mac is pending until it answers.
   const waiting =
     s.runsOn === 'local' &&
@@ -345,6 +349,22 @@ function ServerCard({
             <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
             {open ? 'Hide tools' : `Show ${tools.length} tools`}
           </button>
+          {open && labelled.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 basis-56">
+                {allQuiet
+                  ? `The ${labelled.length} tools ${s.name} labels read-only run without asking. A tool it adds or relabels later asks until you look again.`
+                  : `${s.name} labels ${labelled.length} tools read-only. The server decides that itself, so they ask first until you trust it.`}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setServerQuietTools(s.id, allQuiet ? [] : labelled)}
+              >
+                {allQuiet ? 'Ask for every tool' : 'Let read-only tools run without asking'}
+              </Button>
+            </div>
+          )}
           {open && (
             <ul className="divide-y border-t">
               {tools.map((t) => (
@@ -352,7 +372,7 @@ function ServerCard({
                   key={t.name}
                   name={t.name}
                   description={t.description}
-                  badge={<HintBadge tool={t} />}
+                  badge={<HintBadge tool={t} quiet={quiet(t.name)} />}
                   enabled={!s.disabledTools.includes(t.name)}
                   onToggle={(v) => setServerToolEnabled(s.id, t.name, v)}
                   dimmed={!s.enabled}
@@ -378,10 +398,25 @@ function ServerCard({
 
 const detail = (s: McpServer) => s.url ?? [s.command, ...(s.args ?? [])].filter(Boolean).join(' ');
 
-/** Read-only tools run without asking; the rest ask first, as any outbound action does. */
-function HintBadge({ tool }: { tool: McpToolInfo }) {
-  return tool.annotations?.readOnlyHint ? (
-    <Badge className="text-muted-foreground">read-only</Badge>
+/**
+ * Tools run without asking only when the owner trusted the server's read-only label; the rest
+ * ask first, as any outbound action does.
+ */
+function HintBadge({ tool, quiet }: { tool: McpToolInfo; quiet: boolean }) {
+  return quiet ? (
+    <Badge
+      className="text-muted-foreground"
+      title="Labelled read-only by the server, trusted by you"
+    >
+      read-only · runs freely
+    </Badge>
+  ) : tool.annotations?.readOnlyHint ? (
+    <Badge
+      className="text-muted-foreground"
+      title="The server labels it read-only; it asks until you trust that"
+    >
+      read-only · asks first
+    </Badge>
   ) : (
     <Badge className="text-muted-foreground" title="Asks for approval unless always allowed">
       asks first
