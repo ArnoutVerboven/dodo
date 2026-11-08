@@ -253,6 +253,9 @@ export interface CaseResult {
   movedToMac: boolean;
   minutes: number;
   costEur: number;
+  /** From the ledger after the case: model calls and Cloud Run time. */
+  costModelEur?: number;
+  costCloudEur?: number;
   tester: TesterAnswers;
   /** When the case ran, `YYYY-MM-DD HH:MM` (UTC). */
   date?: string;
@@ -367,7 +370,9 @@ export function renderReport(results: CaseResult[], meta: { date: string; note?:
       r.moveAsked ? `asked to move to the Mac: ${r.moveAsked}` : '',
       r.tester.macInput === true ? 'you acted on the Mac' : '',
       `${r.minutes} min`,
-      `€${r.costEur.toFixed(2)}`,
+      r.costModelEur !== undefined
+        ? `€${r.costEur.toFixed(2)} (model €${r.costModelEur.toFixed(2)}, cloud €${(r.costCloudEur ?? 0).toFixed(2)})`
+        : `€${r.costEur.toFixed(2)}`,
       r.date ? `run ${r.date} UTC` : '',
     ].filter(Boolean);
     const notes = r.tester.notes ? ` Notes: ${oneLine(r.tester.notes)}` : '';
@@ -411,4 +416,134 @@ export function caseState(
   }
   if (o.task.status === 'needs_input') return { ended: true };
   return { ended: false };
+}
+
+// ── Cost ────────────────────────────────────────────────────────────────────
+
+/**
+ * Rough cost of one case before anything was measured: a login is some 10–20 model calls with
+ * page snapshots, plus Cloud Run time for the remote browser (more while it waits for you).
+ */
+export const ROUGH_EUR: Record<Env, number> = { local: 0.1, remote: 0.15 };
+
+export interface Estimate {
+  cases: Array<{ id: string; eur: number; measured: boolean }>;
+  total: number;
+  /** The most it can cost: the budget cap of every case. */
+  cap: number;
+}
+
+/** What a run of these cases should cost: the last measured cost of each case, else a rough guess. */
+export function estimateCost(cases: Case[], history: CaseResult[], capEur: number): Estimate {
+  const last = new Map(history.map((r) => [r.id, r]));
+  const rows = cases.map((c) => {
+    const seen = last.get(c.id);
+    const eur = seen && seen.costEur > 0 ? seen.costEur : ROUGH_EUR[c.env];
+    return { id: c.id, eur: Math.min(eur, capEur), measured: !!seen && seen.costEur > 0 };
+  });
+  const total = rows.reduce((s, r) => s + r.eur, 0);
+  return { cases: rows, total: Math.round(total * 100) / 100, cap: capEur * cases.length };
+}
+
+/** Ledger entries of one task, summed: model calls, Cloud Run time, everything else. */
+export function costBreakdown(entries: Array<{ category?: string; actual?: number }>): {
+  model: number;
+  cloud: number;
+  other: number;
+  total: number;
+} {
+  const eur = (micro: number) => Math.round(micro / 10_000) / 100;
+  let model = 0;
+  let cloud = 0;
+  let other = 0;
+  for (const e of entries) {
+    const a = e.actual ?? 0;
+    if (e.category === 'tokens') model += a;
+    else if (e.category === 'infra') cloud += a;
+    else other += a;
+  }
+  return {
+    model: eur(model),
+    cloud: eur(cloud),
+    other: eur(other),
+    total: eur(model + cloud + other),
+  };
+}
+
+export const euro = (n: number) => `€${n.toFixed(2)}`;
+
+// ── Setup: targets.json from your vault ────────────────────────────────────
+
+/** The three logins the test knows, with what each needs besides your vault entry. */
+export const KINDS = [
+  {
+    id: 'itsme',
+    label: 'itsme',
+    extraHosts: ['itsme-id.com'],
+    defaultSite: undefined as string | undefined,
+    mfa: 'itsme: a push to the itsme app after entering my phone number, or a QR code to scan',
+    instructions:
+      'Choose itsme on the login page. Prefer the option with my phone number (from the vault entry or get_personal_info), which sends a push to my itsme app; only use the QR code when there is no other option.',
+  },
+  {
+    id: 'google',
+    label: 'Google',
+    extraHosts: ['google.com'],
+    defaultSite: 'https://myaccount.google.com/',
+    mfa: 'Google 2-step verification: a prompt on my phone (tap Yes, maybe pick a number) or a code',
+    instructions: undefined as string | undefined,
+  },
+  {
+    id: 'password',
+    label: 'Username + password',
+    extraHosts: [] as string[],
+    defaultSite: undefined as string | undefined,
+    mfa: 'a code by email (use get_email_code) or SMS, if the site asks for one',
+    instructions: undefined as string | undefined,
+  },
+] as const;
+
+export type KindId = (typeof KINDS)[number]['id'];
+
+export interface VaultSummary {
+  id: string;
+  name: string;
+  domains: string[];
+  hint?: string;
+}
+
+/** The vault entry that most likely belongs to a login kind, to offer as the default. */
+export function guessEntry(kind: KindId, entries: VaultSummary[]): VaultSummary | undefined {
+  const text = (e: VaultSummary) => `${e.id} ${e.name} ${e.hint ?? ''} ${e.domains.join(' ')}`;
+  if (kind === 'itsme') return entries.find((e) => /itsme/i.test(text(e)));
+  if (kind === 'google') {
+    return entries.find((e) => e.domains.some((d) => /(^|\.)google\.com$/.test(d)));
+  }
+  return entries.find((e) => !/itsme|google/i.test(text(e)));
+}
+
+/** The page a login starts from when you do not name one: the kind's own, else the entry's site. */
+export function defaultSite(kind: KindId, entry: VaultSummary): string {
+  const own = KINDS.find((k) => k.id === kind)?.defaultSite;
+  if (own) return own;
+  const host = entry.domains.find((d) => !/itsme/.test(d)) ?? entry.domains[0] ?? '';
+  return `https://${host.replace(/^\*\./, '')}/`;
+}
+
+/** One method for targets.json, from a kind, the vault entry you picked and the start page. */
+export function methodFor(kind: KindId, entry: VaultSummary, site: string): Method {
+  const k = KINDS.find((x) => x.id === kind);
+  if (!k) throw new Error(kind);
+  const hosts = [
+    ...new Set([...entry.domains.map((d) => d.replace(/^\*\./, '')), ...k.extraHosts]),
+  ];
+  return {
+    id: k.id,
+    label: k.label,
+    site,
+    vault: entry.id,
+    hosts,
+    mfa: k.mfa,
+    ...(k.instructions ? { instructions: k.instructions } : {}),
+  };
 }

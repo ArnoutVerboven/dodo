@@ -78,7 +78,11 @@ const ended = await until(
 );
 console.log('run ended', ended.state, ended.endReason, ended.error ?? '');
 if (ended.state !== 'succeeded') fail(`run state ${ended.state}: ${ended.error}`);
-const t = (await task.get()).data();
+// finish writes the run's end state before the task's, so wait for the task to follow.
+const t = await until('task to reach review', async () => {
+  const d = (await task.get()).data();
+  return d?.status === 'review' ? d : undefined;
+});
 if (!t.summary.includes('Fake summary')) fail(`summary not written: ${JSON.stringify(t.summary)}`);
 if (t.status !== 'review') fail(`task status ${t.status}, expected review`);
 if (t.activeRunId) fail('activeRunId not cleared');

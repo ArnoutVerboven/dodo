@@ -4,21 +4,24 @@ dodo's agent logs in to sites for you in two places: on your Mac, in the dodo Ch
 
 ## Run it
 
-One-time:
+Before the first run, put the logins you want tested in your vault ([Settings › Vault](https://dodo-app.web.app/settings)): one for an itsme site, your Google account (site `google.com`), and a site with a username and password. Then, on your Mac:
 
 ```sh
-gcloud auth application-default login       # the test talks to Firestore as you (the owner)
-cp tests/auth/targets.example.json tests/auth/targets.json
+git pull && pnpm install
+pnpm test:auth
 ```
 
-Then put your own sites in `tests/auth/targets.json` (it is gitignored): for every method, the page to start from, the vault entry with its login (Settings › Vault), the hosts the login passes through, and what the second step looks like. The example has itsme, Google and a username + password login, plus a disabled "Google (stored session)" case.
+The first time, it sets itself up. If it can't reach your dodo data, it offers to run `gcloud auth application-default login`, which signs you in through the browser. Then it lists your vault entries and asks which one to use for itsme, Google and the password login (it guesses one for each, so usually you just press enter) and which page each login starts from. It saves your answers in `tests/auth/targets.json`, which stays on your Mac (gitignored). Then it shows the plan and the expected cost, and asks before it starts.
 
 ```sh
-pnpm test:auth --dry-run                    # free: the plan and the exact task texts
-pnpm test:auth                              # every enabled method, on your Mac and remotely
+pnpm test:auth cost                         # free: what a run will cost, and what auth tests cost this month
+pnpm test:auth --dry-run                    # free: the plan, the exact task texts and the expected cost
 pnpm test:auth --only google --env remote   # one cell of the matrix
+pnpm test:auth setup                        # pick other vault entries or pages
 pnpm test:auth --help                       # all options
 ```
+
+**Cost.** Before it starts, the test shows the expected cost of every case: the cost that case had last time, or a rough guess (about €0.10 on the Mac, €0.15 remotely) until it has run once. It also shows the hard limit (€0.40 per case by default) and what the auth tests have cost so far this month, against the project's €5 monthly cap. After each case it prints what that case cost, split into model calls and Cloud Run time, and at the end the total for the run next to what was expected. The costs also go into the overview.
 
 Have your phone at hand. The test runs one case at a time and prints what happens. When the agent needs you (an itsme push, a Google prompt, a code), you answer in dodo, in the app or on Telegram, as you would for any task. That way the test covers the real MFA path too. After each case it asks you three short things: whether the agent's "signed in" claim is right, whether you had to do anything on the Mac itself, and any notes. Then it closes the test task, which also drops the task's stored logins and codes.
 
