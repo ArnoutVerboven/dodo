@@ -6,12 +6,12 @@ dodo's agent logs in to sites for you in two places: on your Mac, in the dodo Ch
 
 The test always uses the same four logins, fixed in [`tests/auth/src/sites.ts`](../tests/auth/src/sites.ts):
 
-| Id          | Login                                                                        | Vault entry it uses (by its site)                                                                   |
-| ----------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `itsme`     | itsme on [engie.be](https://www.engie.be/nl/login/)                          | `engie.be` (else `itsme-id.com`); none is fine, the phone number then comes from your personal info |
-| `google`    | "Continue with Google" on [booking.com](https://account.booking.com/sign-in) | `google.com`                                                                                        |
-| `password`  | username + password on [overleaf.com](https://www.overleaf.com/login)        | `overleaf.com`                                                                                      |
-| `email-2fa` | email + password, then a code, on [vinted.com](https://www.vinted.com/)      | `vinted.com` or `vinted.be`                                                                         |
+| Id          | Login                                                                        | Vault entry it uses (by its site)                                                                      |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `itsme`     | itsme on [engie.be](https://www.engie.be/nl/login/)                          | optional: `engie.be` (else `itsme-id.com`); without one the phone number comes from your personal info |
+| `google`    | "Continue with Google" on [booking.com](https://account.booking.com/sign-in) | `google.com`                                                                                           |
+| `password`  | username + password on [overleaf.com](https://www.overleaf.com/login)        | `overleaf.com`                                                                                         |
+| `email-2fa` | email, then a code by mail, on [vinted.com](https://www.vinted.com/)         | optional: by default your email address from your personal info, then the code from your mail          |
 
 `google-session` (your stored Google session, remotely) is there too, but only runs with `--only google-session`.
 

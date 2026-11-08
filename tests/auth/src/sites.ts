@@ -12,6 +12,7 @@ export const SITES: Targets = {
       label: 'itsme (engie.be)',
       site: 'https://www.engie.be/nl/login/',
       vaultHosts: ['engie.be', 'itsme-id.com', 'itsme.be'],
+      vaultOptional: true,
       hosts: ['engie.be', 'itsme-id.com', 'itsme.services', 'itsme.be'],
       mfa: 'itsme: a push to the itsme app after entering my phone number, or a QR code to scan',
       instructions:
@@ -42,10 +43,11 @@ export const SITES: Targets = {
       label: 'Email + 2FA (vinted)',
       site: 'https://www.vinted.com/',
       vaultHosts: ['vinted.com', 'vinted.be'],
+      vaultOptional: true,
       hosts: ['vinted.com', 'vinted.be'],
-      mfa: 'a verification code by email (use get_email_code) or SMS (ask me)',
+      mfa: 'a verification code sent to my email (fetch it with get_email_code), or by SMS (ask me)',
       instructions:
-        'Log in with email and password from the vault (choose "Log in", then the email option, not Google, Apple or Facebook). Accept only the cookie choices needed to continue.',
+        'Choose "Log in", then the email option (not Google, Apple or Facebook). Use my email address from get_personal_info, or from the vault entry if there is one; if Vinted asks for a password and there is no vault entry, ask me. Accept only the cookie choices needed to continue.',
     },
     {
       id: 'google-session',

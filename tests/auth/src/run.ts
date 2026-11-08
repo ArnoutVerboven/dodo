@@ -259,6 +259,8 @@ for (const m of new Set(runnable.map((c) => c.method))) {
   if (entry) {
     m.vault = entry.id;
     vaultUse.push(`${m.label}: ${entry.name} (${entry.domains.join(', ')})`);
+  } else if (m.vaultOptional && !named) {
+    vaultUse.push(`${m.label}: no vault entry needed (uses your personal info)`);
   } else {
     const sites = (m.vaultHosts?.length ? m.vaultHosts : m.hosts).join(' or ');
     warnings.push(

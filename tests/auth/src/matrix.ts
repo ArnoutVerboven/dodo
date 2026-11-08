@@ -19,6 +19,8 @@ export interface Method {
   vault?: string;
   /** Without `vault`: use the vault entry for the first of these sites you have one for. */
   vaultHosts?: string[];
+  /** The login works without a vault entry (e.g. only your email or phone number is needed). */
+  vaultOptional?: boolean;
   /** Hosts the login passes through: opened and submitted to without asking. */
   hosts: string[];
   /** What the second step looks like, so the agent and the report know what to expect. */
@@ -91,6 +93,7 @@ export function parseTargets(raw: unknown): Targets {
       vaultHosts: Array.isArray(v.vaultHosts)
         ? v.vaultHosts.filter((h): h is string => typeof h === 'string')
         : undefined,
+      vaultOptional: v.vaultOptional === true,
       hosts: [...new Set([host, ...hosts].filter(Boolean).map((h) => h.toLowerCase()))],
       mfa: str('mfa'),
       instructions: str('instructions'),
