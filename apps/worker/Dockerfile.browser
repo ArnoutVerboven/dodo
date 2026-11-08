@@ -7,7 +7,7 @@ ENV NODE_ENV=production
 ENV DODO_BROWSER=headless
 # Browsers in a shared path, not in a home folder.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq ripgrep \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin agent \
   && useradd --uid 10002 --user-group --create-home --shell /usr/sbin/nologin browser

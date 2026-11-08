@@ -1,11 +1,20 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PolicyEngine } from '@dodo/policy';
 import { describe, expect, it } from 'vitest';
-import { classifyCommand, execTools, htmlToText, privateHost } from './exec-tools.js';
+import {
+  applyEdit,
+  classifyCommand,
+  execTools,
+  htmlToText,
+  OutputBuffer,
+  privateHost,
+  readSlice,
+} from './exec-tools.js';
 import { runAgent } from './loop.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { findTool, type ToolDef, taskTools } from './tools.js';
@@ -70,11 +79,153 @@ describe('file tools', () => {
     const ctx = { store: new MemoryTaskStore(sampleTask()), workdir: dir };
     await write.execute({ path: 'a/b.txt', content: 'hello' }, ctx);
     expect(await readFile(path.join(dir, 'a/b.txt'), 'utf8')).toBe('hello');
-    expect((await read.execute({ path: 'a/b.txt' }, ctx)).result.text).toBe('hello');
+    expect((await read.execute({ path: 'a/b.txt' }, ctx)).result.text).toBe('1\thello');
     await expect(write.execute({ path: '../escape.txt', content: 'x' }, ctx)).rejects.toThrow(
       /outside/,
     );
     await expect(read.execute({ path: '/etc/passwd' }, ctx)).rejects.toThrow(/outside/);
+  });
+});
+
+describe('read_file in parts', () => {
+  it('numbers lines and says where to continue', () => {
+    const text = Array.from({ length: 5 }, (_, i) => `line ${i + 1}`).join('\n');
+    const first = readSlice(text, 1, 2);
+    expect(first.text).toBe('1\tline 1\n2\tline 2');
+    expect(first).toMatchObject({ totalLines: 5, nextOffset: 3 });
+    const rest = readSlice(text, 4);
+    expect(rest.text).toBe('4\tline 4\n5\tline 5');
+    expect(rest.nextOffset).toBeUndefined();
+  });
+
+  it('cuts very long lines and stops before the answer gets too big', () => {
+    const text = Array.from({ length: 100 }, () => 'x'.repeat(3000)).join('\n');
+    const r = readSlice(text);
+    expect(r.text).toContain('[line cut, 3000 chars]');
+    expect(r.text.length).toBeLessThanOrEqual(20_000);
+    expect(r.nextOffset).toBeGreaterThan(1);
+  });
+
+  it('reads through the tool with offset and limit', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'dodo-test-'));
+    await writeFile(path.join(dir, 'f.txt'), 'a\nb\nc\n');
+    const read = findTool(execTools, 'read_file') as ToolDef;
+    const ctx = { store: new MemoryTaskStore(sampleTask()), workdir: dir };
+    expect((await read.execute({ path: 'f.txt', offset: 2, limit: 1 }, ctx)).result).toEqual({
+      text: '2\tb',
+      totalLines: 3,
+      nextOffset: 3,
+    });
+    expect((await read.execute({ path: 'f.txt', offset: 9 }, ctx)).result.error).toMatch(/3 lines/);
+  });
+});
+
+describe('edit_file', () => {
+  it('replaces exactly one match, or every match when asked', () => {
+    expect(applyEdit('a b a', 'b', 'c')).toEqual({ text: 'a c a', replacements: 1, line: 1 });
+    expect(applyEdit('a\nb a', 'a', 'x')).toMatchObject({
+      error: expect.stringMatching(/2 times/),
+    });
+    expect(applyEdit('a\nb a', 'a', 'x', true)).toEqual({
+      text: 'x\nb x',
+      replacements: 2,
+      line: 1,
+    });
+    expect(applyEdit('abc', 'zzz', 'y')).toMatchObject({
+      error: expect.stringMatching(/not found/),
+    });
+    expect(applyEdit('one\ntwo', 'two', '$&$1')).toMatchObject({ text: 'one\n$&$1', line: 2 });
+  });
+
+  it('edits the file in the task folder and refuses paths outside it', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'dodo-test-'));
+    await writeFile(path.join(dir, 'f.ts'), 'const a = 1;\nconst b = 2;\n');
+    const edit = findTool(execTools, 'edit_file') as ToolDef;
+    const ctx = { store: new MemoryTaskStore(sampleTask()), workdir: dir };
+    const r = await edit.execute({ path: 'f.ts', old_text: 'b = 2', new_text: 'b = 3' }, ctx);
+    expect(r.result).toEqual({ ok: true, replacements: 1, line: 2 });
+    expect(await readFile(path.join(dir, 'f.ts'), 'utf8')).toBe('const a = 1;\nconst b = 3;\n');
+    const missing = await edit.execute({ path: 'f.ts', old_text: 'nope', new_text: 'x' }, ctx);
+    expect(missing.result.error).toMatch(/not found/);
+    await expect(edit.execute({ path: '../x', old_text: 'a', new_text: 'b' }, ctx)).rejects.toThrow(
+      /outside/,
+    );
+  });
+});
+
+describe('search tools', () => {
+  async function tree() {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'dodo-test-'));
+    await mkdir(path.join(dir, 'src'), { recursive: true });
+    await mkdir(path.join(dir, 'node_modules/pkg'), { recursive: true });
+    await writeFile(path.join(dir, 'src/a.ts'), 'export const needle = 1;\n');
+    await writeFile(path.join(dir, 'src/b.md'), 'no match here\nNeedle in docs\n');
+    await writeFile(path.join(dir, 'node_modules/pkg/index.ts'), 'needle\n');
+    return { dir, ctx: { store: new MemoryTaskStore(sampleTask()), workdir: dir } };
+  }
+  const grep = findTool(execTools, 'grep') as ToolDef;
+  const find = findTool(execTools, 'find_files') as ToolDef;
+  const ls = findTool(execTools, 'list_dir') as ToolDef;
+
+  async function checks() {
+    const { ctx } = await tree();
+    const hits = String((await grep.execute({ pattern: 'needle' }, ctx)).result.matches);
+    expect(hits).toContain('src/a.ts:1:export const needle = 1;');
+    expect(hits).not.toContain('node_modules');
+    expect(hits).not.toContain('b.md');
+    const both = String(
+      (await grep.execute({ pattern: 'needle', ignore_case: true }, ctx)).result.matches,
+    );
+    expect(both).toContain('src/b.md:2:Needle in docs');
+    const md = String(
+      (await grep.execute({ pattern: 'needle', ignore_case: true, glob: '*.md' }, ctx)).result
+        .matches,
+    );
+    expect(md).not.toContain('a.ts');
+    expect((await grep.execute({ pattern: 'absent' }, ctx)).result).toEqual({
+      matches: '',
+      count: 0,
+    });
+    const files = String((await find.execute({ pattern: '*.ts' }, ctx)).result.files);
+    expect(files).toContain('src/a.ts');
+    expect(files).not.toContain('node_modules');
+    const entries = String((await ls.execute({}, ctx)).result.entries);
+    expect(entries.split('\n')).toEqual(expect.arrayContaining(['src/', 'node_modules/']));
+    await expect(grep.execute({ pattern: 'x', path: '../' }, ctx)).rejects.toThrow(/outside/);
+  }
+
+  it('grep, find_files and list_dir work with ripgrep or without it', async () => {
+    await checks();
+    // Without ripgrep on the PATH: plain grep and find.
+    const bin = await mkdtemp(path.join(os.tmpdir(), 'dodo-bin-'));
+    for (const name of ['grep', 'find', 'ls']) {
+      const real = (process.env.PATH ?? '')
+        .split(path.delimiter)
+        .map((d) => path.join(d, name))
+        .find((p) => existsSync(p));
+      if (real) await symlink(real, path.join(bin, name)).catch(() => {});
+    }
+    const saved = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      await checks();
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});
+
+describe('bash output', () => {
+  it('keeps the start and the end of a long output', () => {
+    const out = new OutputBuffer();
+    out.push('START\n');
+    for (let i = 0; i < 1000; i++) out.push(`${'.'.repeat(99)}\n`);
+    out.push('ERROR at the end');
+    const text = out.text();
+    expect(text.startsWith('START')).toBe(true);
+    expect(text.endsWith('ERROR at the end')).toBe(true);
+    expect(text).toMatch(/chars cut from the middle/);
+    expect(text.length).toBeLessThan(20_200);
   });
 });
 

@@ -195,7 +195,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...checkouts.map(({ repo, dir, note }) =>
       note
         ? `Repository ${repo} is not available: ${note}.`
-        : `Repository ${repo} is checked out in ${dir === '.' ? 'the task folder' : `${dir}/ in the task folder`}; use bash, read_file and write_file on it.`,
+        : `Repository ${repo} is checked out in ${dir === '.' ? 'the task folder' : `${dir}/ in the task folder`}; use read_file, edit_file, grep, find_files and bash on it.`,
     ),
     started.google && !started.google.scopes.includes(GOOGLE_SCOPE.drive)
       ? 'Google Drive is not connected (the Google connection lacks Drive access), so files cannot be saved to Drive.'
