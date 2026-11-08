@@ -233,19 +233,19 @@ describe.skipIf(!enabled)('finish', () => {
 
   it('needs_device on device auto with a Mac online: the work moves to it', async () => {
     await pairMac(Date.now() + 1_000);
-    const out = await end({ reason: 'needs_device', session: [] }, undefined, 'auto');
+    const out = await end({ reason: 'needs_device', session: [] }, 'auto', 'auto');
     expect(out.notices).toHaveLength(0);
     expect(out.next).toHaveLength(1);
     // Other test files share the emulator and may pair a Mac seen later.
     expect(out.next[0]?.device).toMatch(/^mac:/);
     expect(out.next[0]?.browser).toBe(true);
-    expect(out.task.statusLine?.text).toMatch(/^Moving to Studio/);
+    expect(out.task.statusLine?.text).toMatch(/moved to Studio/);
   });
 
   it('needs_device on device auto with the Mac offline: it waits for it and says so', async () => {
     const d = db as NonNullable<typeof db>;
     await pairMac(Date.now() + 2_000);
-    const { taskId, run } = await seed('auto');
+    const { taskId, run } = await seed('auto', 'auto');
     const notices: Parameters<Notify>[0][] = [];
     // An hour from now every Mac has missed its heartbeats; this one is still the latest seen.
     const later = Date.now() + 3_600_000;

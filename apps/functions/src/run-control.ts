@@ -766,6 +766,9 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
     deps.log?.('run moved to the Mac', { taskId: run.taskId, runId: id });
     // An offline Mac: the run waits for it, so say where the task is stuck.
     if (!move.mac.online) {
+      await taskRef.update({
+        statusLine: { text: `Waiting for ${move.mac.name} to come online…`, needsYou: true },
+      });
       const title = (await taskRef.get()).get('title') as string;
       await deps.notify?.({
         kind: 'blocked',
