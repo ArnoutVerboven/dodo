@@ -28,7 +28,7 @@ To pick another model later: `pnpm dodo model set --mlx <repo>`. `pnpm dodo setu
 
 ### The gateway first
 
-This Mac can run a local-LLM gateway (llama-swap under launchd, set up by the [dotfiles](https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md)) at `http://127.0.0.1:8090/v1`. It loads the model on the first request, unloads it after 15 idle minutes, and every app on the Mac shares that one copy. dodo follows the gateway's [client contract](https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md#client-contract):
+This Mac can run a local-LLM gateway (a small launchd service set up by the [dotfiles](https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md)) at `http://127.0.0.1:8090/v1`. It loads the model on the first request, unloads it after 15 idle minutes, and every app on the Mac shares that one copy. dodo follows the gateway's [client contract](https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md#client-contract):
 
 - Before each run the daemon asks `GET <gateway>/models` (2 s timeout). A 200 with a `data` list means it is up: the run talks to it with model `default`, and dodo starts nothing. A task set to `local:<name>` still asks for `<name>`.
 - dodo never starts, stops or unloads the gateway's model.

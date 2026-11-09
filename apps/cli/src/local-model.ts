@@ -18,7 +18,7 @@ export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:8080/v1';
 export const DEFAULT_MLX_MODEL = 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
 
 /**
- * The machine's local-LLM gateway (llama-swap under launchd), shared by every app on this Mac:
+ * The machine's local-LLM gateway (a small launchd service), shared by every app on this Mac:
  * it loads the model on the first request and unloads it when idle, by itself. dodo only talks
  * to it, never starts or stops it. Contract:
  * https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md#client-contract
