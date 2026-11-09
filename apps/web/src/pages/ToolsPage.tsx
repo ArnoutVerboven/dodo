@@ -1141,7 +1141,8 @@ function PermissionsTab() {
       <p className="text-sm text-muted-foreground">
         Rules you answered “Allow always” on an approval. Remove one and the agent asks again next
         time. MCP tools use <code>Mcp(server:tool)</code>; built-ins use rules like{' '}
-        <code>Bash(git push:*)</code> or <code>Browser(navigate:site.com)</code>.
+        <code>Bash(git push:*)</code> or <code>Browser(navigate:site.com)</code>. A site's rule also
+        covers its subdomains.
       </p>
       <AllowedActionsSettings />
     </div>

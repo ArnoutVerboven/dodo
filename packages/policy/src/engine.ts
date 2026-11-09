@@ -108,6 +108,11 @@ export function hostAllowedBy(
         ? hostMatches(host, [value])
         : host.toLowerCase().startsWith(value.toLowerCase());
     }
+    // A site the browser may open: the site and its subdomains, as the engine decides.
+    if (rule.tool === 'Browser' && rule.pattern?.kind === 'exact') {
+      const site = /^navigate:(.+)$/.exec(rule.pattern.value)?.[1];
+      if (site) return hostMatches(host, [site]);
+    }
     return !!rule.pattern && mentionsHost(rule.pattern.value, host);
   };
   if (config.deny.some(names)) return undefined;
