@@ -56,6 +56,44 @@ export const GenerateRequest = z.object({
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 
+/**
+ * A model call in Gemini's own REST form, for a harness that brings its own Gemini client (pi)
+ * and streams through the gateway's `gatewayGemini` endpoint. Only function tools: a built-in
+ * Google tool (search, code execution) would bill outside the budget.
+ */
+export const GeminiRestRequest = z.looseObject({
+  contents: z.array(Content).min(1),
+  systemInstruction: z
+    .union([
+      z.string(),
+      z.looseObject({ parts: z.array(z.looseObject({ text: z.string().optional() })) }),
+    ])
+    .optional(),
+  tools: z
+    .array(
+      z.object(
+        { functionDeclarations: z.array(FunctionDeclaration) },
+        { error: 'Only function tools go through the gateway' },
+      ),
+    )
+    .optional(),
+  toolConfig: z.record(z.string(), z.unknown()).optional(),
+  generationConfig: z
+    .looseObject({
+      maxOutputTokens: z.number().int().positive().optional(),
+      temperature: z.number().min(0).max(2).optional(),
+      thinkingConfig: z
+        .looseObject({
+          thinkingBudget: z.number().int().optional(),
+          thinkingLevel: z.string().optional(),
+          includeThoughts: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+export type GeminiRestRequest = z.infer<typeof GeminiRestRequest>;
+
 export const Usage = z.object({
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
