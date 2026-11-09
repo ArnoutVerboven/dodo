@@ -195,6 +195,7 @@ export async function browserTools(
 ): Promise<ToolDef[]> {
   const available = new Map((await client.listTools()).map((t) => [t.name, t]));
   const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let currentHost = '';
   let tainted = false;
   /** When the agent last did something on the page (a click that may have sent a code). */
@@ -207,7 +208,9 @@ export async function browserTools(
     ctx: ToolContext,
   ): Record<string, unknown> => {
     const url = pageUrlIn(res.text);
-    if (url) {
+    // `unknown`: the browser could not say where it is (agent-browser mid-navigation). The
+    // caller has already asked again and set the host from that.
+    if (url && url !== UNKNOWN_URL) {
       const host = hostOf(url);
       if (name === 'browser_navigate' || host !== currentHost) tainted = false;
       currentHost = host;
@@ -266,6 +269,15 @@ export async function browserTools(
           if (ACTIONS.has(name)) lastActionAt = now();
           let res = await client.callTool(name, callArgs);
           if (PAGE_CHANGES.has(name)) res = await withPage(client, res);
+          if (pageUrlIn(res.text) === UNKNOWN_URL) {
+            // Without this the host would become '' and the next submit would ask for
+            // Browser(submit:) on a site the agent is still on.
+            const host = await settledHost(client, sleep);
+            // A page that got a vault value stays tainted until it is known to have moved on.
+            if (host !== undefined && host !== currentHost) tainted = false;
+            currentHost = host ?? '';
+            ctx.secrets?.setPage?.(currentHost);
+          }
           // The call's echo of its own Playwright code holds the typed text, escaped: the
           // redaction would miss a value with a quote or a backslash in it.
           return { result: afterCall(name, injected ? withoutCode(res) : res, ctx) };
@@ -505,6 +517,26 @@ const carriesSecret = (name: string, args: Record<string, unknown>) =>
   secretTargets(name, args).length > 0;
 
 /** The page the browser is on right now, from a fresh snapshot. */
+/** What agent-browser's Page section says when it could not read the page's URL. */
+const UNKNOWN_URL = 'unknown';
+
+/**
+ * The host the browser is on once the page has settled, after a result that could not say
+ * (the URL was read while the page was still loading). Asks a few times, briefly apart;
+ * undefined when it still cannot tell, so the agent does not act on a guessed site.
+ */
+export async function settledHost(
+  client: BrowserClient,
+  sleep: (ms: number) => Promise<void>,
+): Promise<string | undefined> {
+  for (const ms of [300, 1_000, 2_000]) {
+    await sleep(ms);
+    const page = await livePage(client);
+    if ('host' in page && page.url !== UNKNOWN_URL) return page.host;
+  }
+  return undefined;
+}
+
 export async function livePage(
   client: BrowserClient,
 ): Promise<{ url: string; host: string } | { error: string }> {
