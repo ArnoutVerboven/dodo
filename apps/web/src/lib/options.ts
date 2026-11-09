@@ -1,4 +1,4 @@
-import { LOCAL_MODEL } from '@dodo/core';
+import { isLocalModel, LOCAL_MODEL } from '@dodo/core';
 
 /**
  * Models offered in the UI. Every Gemini model here must also be priced in @dodo/budget; the
@@ -14,3 +14,18 @@ export const MODEL_OPTIONS: { value: string; label: string; title?: string }[] =
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: LOCAL_MODEL, label: 'Local model', title: 'On your Mac, no budget used' },
 ];
+
+/**
+ * The settings patch for picking a device. The local model runs only on a Mac, so picking Remote
+ * while this level picks the local model swaps it for the default cloud model: the inherited
+ * model when that is a cloud one, else Auto.
+ */
+export function pickDevice(
+  device: string,
+  value: { model?: string },
+  inherited: { model?: string } = {},
+): { device: string; model?: string } {
+  if (device !== 'gcp' || !isLocalModel(value.model)) return { device };
+  const model = inherited.model && !isLocalModel(inherited.model) ? undefined : 'auto';
+  return { device, model };
+}
