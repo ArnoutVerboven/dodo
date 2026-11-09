@@ -56,6 +56,7 @@ import { claimRun, egressCheck, onDeviceChanged, registerDevice, releaseRun } fr
 import { dispatch, type Executor } from './dispatcher.js';
 import { emailCodeForRun } from './email-code.js';
 import { DEFAULT_HOURLY_CAP, generateWithBudget } from './gateway.js';
+import { handleGeminiRequest } from './gateway-gemini.js';
 import {
   completeGitHubConnect,
   disconnectGitHub,
@@ -296,6 +297,49 @@ export const gatewayGenerate = onCall(
       logger.error('gateway failed', { runId: run.id, model: req.model, err: String(err) });
       throw new HttpsError('unknown', `Model call failed: ${String(err).slice(0, 500)}`);
     }
+  },
+);
+
+/**
+ * The gateway in Gemini's REST shape (`<url>/v1beta/models/{m}:streamGenerateContent`), for a
+ * harness with its own Gemini client (pi). Public at the HTTP level: the run's ID token, sent
+ * as the API key, is checked before anything else, the same as the callables.
+ */
+export const gatewayGemini = onRequest(
+  {
+    serviceAccount: GATEWAY_SA,
+    memory: '512MiB',
+    timeoutSeconds: 300,
+    maxInstances: 5,
+    invoker: 'public',
+  },
+  async (req, res) => {
+    const db = getFirestore();
+    await handleGeminiRequest(
+      {
+        gateway: {
+          db,
+          costGate: costGateFor(db),
+          provider: provider(),
+          hourlyCap: DEFAULT_HOURLY_CAP,
+        },
+        verifyToken: async (token) => {
+          const t = await getAuth().verifyIdToken(token);
+          return { uid: t.uid, claims: t as unknown as Record<string, unknown> };
+        },
+        loadRun: (c, runId) => loadRunForCaller(db, c, runId),
+        context: (run, model) => ({
+          scopes: scopesForRun(run),
+          taskId: run.taskId,
+          projectId: run.projectId,
+          runId: run.id,
+          description: `model call (${model})`,
+        }),
+        log: logger.error,
+      },
+      req,
+      res,
+    );
   },
 );
 
