@@ -30,6 +30,7 @@ export function runBrowserUse(cfg: {
   maxSteps: number;
   /** The server honours response_format with a JSON schema (OpenAI, Gemini). */
   structuredOutput?: boolean;
+  userAgent?: string;
 }): Promise<FrameworkResult> {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'browser_use_run.py');
   return new Promise((resolve) => {

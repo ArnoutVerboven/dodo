@@ -15,6 +15,11 @@ export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /**
+   * Provider data to send back with the call. Gemini 3 returns a thought signature here
+   * (`extra_content.google.thought_signature`) and refuses the next request without it.
+   */
+  extra?: Record<string, unknown>;
 }
 
 export type Message =
@@ -27,6 +32,7 @@ export type Message =
         id: string;
         type: 'function';
         function: { name: string; arguments: string };
+        extra_content?: Record<string, unknown>;
       }>;
     }
   | { role: 'tool'; tool_call_id: string; content: string };
@@ -93,6 +99,7 @@ export function openAiModel(opts: {
             tool_calls?: Array<{
               id?: string;
               function?: { name?: string; arguments?: string | Record<string, unknown> };
+              extra_content?: Record<string, unknown>;
             }>;
           };
         }>;
@@ -111,7 +118,12 @@ export function openAiModel(opts: {
         } catch {
           args = { _unparsed: raw };
         }
-        return { id: c.id || `call_${Date.now()}_${i}`, name: c.function?.name ?? '', args };
+        return {
+          id: c.id || `call_${Date.now()}_${i}`,
+          name: c.function?.name ?? '',
+          args,
+          ...(c.extra_content ? { extra: c.extra_content } : {}),
+        };
       });
       const u = json.usage;
       const usage: Usage = u?.prompt_tokens

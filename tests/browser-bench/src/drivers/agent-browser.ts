@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { Message, ToolSpec } from '../model.ts';
 import { pruneSnapshots } from './mcp.ts';
-import type { Driver, DriverOptions } from './types.ts';
+import { CLOUD_ARGS, type Driver, type DriverOptions } from './types.ts';
 
 /**
  * Vercel's agent-browser (Rust CLI over CDP), wrapped as tools the same way dodo would wrap
@@ -53,9 +53,16 @@ export async function agentBrowserDriver(opts: DriverOptions): Promise<Driver> {
   const base = [
     '--session',
     session,
-    ...(opts.headed ? ['--headed'] : []),
+    ...(opts.headed && !opts.cloud ? ['--headed'] : []),
     ...(opts.executablePath ? ['--executable-path', opts.executablePath] : []),
-    ...(opts.noSandbox ? ['--args', '--no-sandbox'] : []),
+    ...(opts.cloud ? ['--user-agent', opts.cloud.userAgent] : []),
+    ...((): string[] => {
+      const extra = [
+        ...(opts.noSandbox ? ['--no-sandbox'] : []),
+        ...(opts.cloud ? CLOUD_ARGS : []),
+      ];
+      return extra.length ? ['--args', extra.join(',')] : [];
+    })(),
   ];
   const run = (args: string[], timeoutMs = 45_000) =>
     new Promise<{ text: string; isError: boolean }>((resolve) => {

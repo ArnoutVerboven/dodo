@@ -1,4 +1,4 @@
-import type { DriverOptions } from './drivers/types.ts';
+import { CLOUD_ARGS, type DriverOptions } from './drivers/types.ts';
 
 /**
  * The cached approach (Stagehand's idea, without Stagehand): replay the Playwright code a
@@ -12,16 +12,23 @@ export async function replay(
 ): Promise<{ url: string; text: string; error?: string }> {
   const { chromium } = await import('playwright');
   const launch = {
-    headless: !opts.headed,
+    headless: !opts.headed || Boolean(opts.cloud),
     chromiumSandbox: !opts.noSandbox,
+    ...(opts.cloud ? { args: CLOUD_ARGS } : {}),
     ...(opts.executablePath ? { executablePath: opts.executablePath } : {}),
   };
-  const browser = await chromium
-    .launch(opts.executablePath ? launch : { ...launch, channel: 'chrome' })
-    .catch(() => chromium.launch(launch));
+  const browser =
+    opts.executablePath || opts.cloud
+      ? await chromium.launch(launch)
+      : await chromium
+          .launch({ ...launch, channel: 'chrome' })
+          .catch(() => chromium.launch(launch));
   let error: string | undefined;
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await browser.newPage({
+      viewport: { width: 1280, height: 900 },
+      ...(opts.cloud ? { userAgent: opts.cloud.userAgent } : {}),
+    });
     page.setDefaultTimeout(10_000);
     await page.goto(start);
     const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (

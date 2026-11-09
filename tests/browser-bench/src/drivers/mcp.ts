@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { Message, ToolSpec } from '../model.ts';
-import { type Driver, type DriverOptions, INTERACTIVE } from './types.ts';
+import { CLOUD_ARGS, type Driver, type DriverOptions, INTERACTIVE } from './types.ts';
 
 /**
  * Playwright MCP 0.0.83, the engine dodo uses today, in the ways the bench compares:
@@ -70,15 +70,34 @@ function mcpCli(): string {
 export async function mcpDriver(variant: McpVariant, opts: DriverOptions): Promise<Driver> {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  let config: string[] = [];
+  if (opts.cloud) {
+    const file = path.join(opts.workdir, 'mcp-config.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        browser: {
+          browserName: 'chromium',
+          launchOptions: { headless: true, args: CLOUD_ARGS, chromiumSandbox: !opts.noSandbox },
+          contextOptions: {
+            userAgent: opts.cloud.userAgent,
+            viewport: { width: 1280, height: 900 },
+          },
+        },
+      }),
+    );
+    config = ['--config', file];
+  }
   const args = [
     mcpCli(),
+    ...config,
     '--isolated',
     '--output-dir',
     opts.workdir,
     '--viewport-size',
     '1280,900',
-    ...(opts.headed ? [] : ['--headless']),
-    ...(opts.executablePath ? ['--executable-path', opts.executablePath] : []),
+    ...(opts.headed && !opts.cloud ? [] : ['--headless']),
+    ...(opts.executablePath && !opts.cloud ? ['--executable-path', opts.executablePath] : []),
     ...(opts.noSandbox ? ['--no-sandbox'] : []),
   ];
   const transport = new StdioClientTransport({
@@ -86,6 +105,10 @@ export async function mcpDriver(variant: McpVariant, opts: DriverOptions): Promi
     args,
     stderr: 'ignore',
     cwd: opts.workdir,
+    // The SDK passes only a few variables by default; keep PLAYWRIGHT_BROWSERS_PATH and the rest.
+    env: Object.fromEntries(
+      Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+    ),
   });
   const client = new Client({ name: 'dodo-bench', version: '0.1.0' });
   await client.connect(transport);

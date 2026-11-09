@@ -40,6 +40,8 @@ What to run:
 
 Browser:
   --headed                show the browser window
+  --cloud                 the browser dodo's GCP worker uses: Playwright's headless Chromium with
+                          its anti-detection flag and user agent (your home IP, not Google's)
   --interactive           ask_user asks you in this terminal (do it in the window, then answer)
   --executable-path <p>   Chrome/Chromium binary (default: each tool's own; Chrome on a Mac)
   --no-sandbox            for Linux containers running as root
@@ -104,6 +106,7 @@ async function main() {
       reps: { type: 'string', default: '1' },
       'max-calls': { type: 'string', default: '25' },
       headed: { type: 'boolean', default: false },
+      cloud: { type: 'boolean', default: false },
       interactive: { type: 'boolean', default: false },
       'executable-path': { type: 'string' },
       'no-sandbox': { type: 'boolean', default: false },
@@ -176,9 +179,30 @@ async function main() {
     writeFileSync(path.join(outDir, `${stamp}.md`), summarize(meta, records));
   };
 
+  let cloud: DriverOptions['cloud'];
+  let cloudExecutable: string | undefined;
+  if (v.cloud) {
+    const { chromium } = await import('playwright');
+    const b = await chromium
+      .launch({ headless: true, chromiumSandbox: !v['no-sandbox'] })
+      .catch((e: Error) => {
+        throw new Error(
+          `--cloud needs Playwright's Chromium: run \`pnpm --filter @dodo/browser-bench exec playwright install chromium chromium-headless-shell\` (${e.message.split('\n')[0]})`,
+        );
+      });
+    // The same user agent the worker sets (apps/worker/src/headless.ts chromeUserAgent).
+    const major = b.version().split('.')[0] || '131';
+    cloud = {
+      userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`,
+    };
+    await b.close();
+    cloudExecutable = chromium.executablePath();
+  }
   const driverOpts = (workdir: string): DriverOptions => ({
-    headed: v.headed,
-    executablePath: v['executable-path'],
+    headed: v.headed && !v.cloud,
+    cloud,
+    // agent-browser and browser-use bring their own Chrome; in cloud mode they use Playwright's.
+    executablePath: v['executable-path'] ?? cloudExecutable,
     noSandbox: v['no-sandbox'],
     workdir,
   });
@@ -196,10 +220,11 @@ async function main() {
           url: modelCfg?.url ?? '',
           model: modelCfg?.model ?? '',
           apiKey: modelCfg?.apiKey,
-          headed: v.headed,
-          executablePath: v['executable-path'],
+          headed: v.headed && !v.cloud,
+          executablePath: v['executable-path'] ?? cloudExecutable,
           noSandbox: v['no-sandbox'],
           maxSteps: maxCalls,
+          userAgent: cloud?.userAgent,
           structuredOutput: /googleapis\.com|openai\.com/.test(modelCfg?.url ?? ''),
         });
         rec = base(task, approach, rep, {

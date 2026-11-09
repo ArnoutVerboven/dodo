@@ -33,6 +33,7 @@ async def main() -> None:
 		headless=not cfg.get('headed', False),
 		executable_path=cfg.get('executablePath') or None,
 		chromium_sandbox=not cfg.get('noSandbox', False),
+		user_agent=cfg.get('userAgent') or None,
 		keep_alive=True,
 		user_data_dir=None,
 	)

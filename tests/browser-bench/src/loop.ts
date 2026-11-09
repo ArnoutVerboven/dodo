@@ -96,6 +96,7 @@ export async function runLoop(opts: {
               id: c.id,
               type: 'function' as const,
               function: { name: c.name, arguments: JSON.stringify(c.args) },
+              ...(c.extra ? { extra_content: c.extra } : {}),
             })),
           }
         : {}),

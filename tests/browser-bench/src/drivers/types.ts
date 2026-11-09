@@ -20,7 +20,14 @@ export interface DriverOptions {
   workdir: string;
   /** Linux containers running as root need Chromium's sandbox off. */
   noSandbox?: boolean;
+  /**
+   * Copy dodo's cloud worker (apps/worker/src/headless.ts): Playwright's headless Chromium,
+   * navigator.webdriver hidden, and a user agent without "HeadlessChrome".
+   */
+  cloud?: { userAgent: string };
 }
+
+export const CLOUD_ARGS = ['--disable-blink-features=AutomationControlled'];
 
 /** Roles worth keeping when only the interactive part of a page is shown. */
 export const INTERACTIVE =

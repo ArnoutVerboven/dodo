@@ -29,6 +29,8 @@ pnpm bench:browser --tasks-file my-tasks.json    # your own cases
 pnpm bench:browser --self-test                   # offline check of the plumbing, no model
 ```
 
+`--cloud` runs every approach in the browser dodo's GCP worker uses (Playwright's headless Chromium with its anti-detection flag and user agent; it needs `pnpm --filter @dodo/browser-bench exec playwright install chromium chromium-headless-shell` once). It still browses from your own IP, so sites that block datacenter addresses will treat it more kindly than the real worker.
+
 `--interactive` makes `ask_user` ask you in the terminal, so you can solve a CAPTCHA or log in in the window and let the run go on. `browser-use` needs [uv](https://docs.astral.sh/uv/). Results land in `results/` as JSON and a Markdown table; `--help` lists every option.
 
 Cost is computed at gemini-3.8-flash list prices from the tokens the model reports, so runs on a local model still compare on the money scale that matters in production. dodo's real system prompt is much longer than the bench's, so production runs cost more per call than these; the gaps between approaches carry over.

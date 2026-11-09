@@ -99,3 +99,58 @@ describe('report', () => {
     expect(md).toContain('| agent-browser | 1/1 |');
   });
 });
+
+describe('model', () => {
+  it('sends Gemini thought signatures back with the tool call they came with', async () => {
+    const { openAiModel } = await import('./model.ts');
+    const { runLoop } = await import('./loop.ts');
+    const bodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    const sig = { google: { thought_signature: 'abc' } };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      const name = bodies.length === 1 ? 'browser_navigate' : 'done';
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: `c${bodies.length}`,
+                    type: 'function',
+                    function: { name, arguments: '{}' },
+                    extra_content: sig,
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 1 },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    try {
+      await runLoop({
+        model: openAiModel({ url: 'http://x/v1', model: 'm' }),
+        driver: {
+          tools: [{ name: 'browser_navigate', description: '', parameters: { type: 'object' } }],
+          call: async () => ({ text: 'ok', isError: false }),
+          finalState: async () => ({ url: '', text: '' }),
+          close: async () => {},
+        },
+        goal: 'g',
+        start: 's',
+        maxCalls: 3,
+        interactive: false,
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const assistant = bodies[1]?.messages.find((m) => m.role === 'assistant') as {
+      tool_calls: Array<{ extra_content?: unknown }>;
+    };
+    expect(assistant.tool_calls[0]?.extra_content).toEqual(sig);
+  });
+});
