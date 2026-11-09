@@ -3,7 +3,8 @@
  *   Bash                 every Bash call
  *   Bash(git status)     exactly this command
  *   Bash(git push:*)     commands starting with "git push"
- *   Http(domain:api.github.com)   requests to this host
+ *   Http(domain:github.com)       requests to this host and its subdomains
+ *   Browser(navigate:booking.com) opening this site or any of its subdomains
  *   Browser(navigate:*)  prefix on the action
  *
  * A rule is `Tool` or `Tool(pattern)`. A pattern ending in `:*` is a prefix match on the
@@ -30,11 +31,22 @@ export function parseRule(raw: string): Rule | undefined {
   return { tool, raw, pattern: { kind: 'exact', value: inner } };
 }
 
+/** Keys that name a host: an exact rule for a host also covers its subdomains. */
+const HOST_KEY = /^(domain|navigate):(.+)$/;
+
 export function matches(rule: Rule, tool: string, key: string): boolean {
   if (rule.tool !== tool) return false;
   if (!rule.pattern) return true;
-  if (rule.pattern.kind === 'exact') return key === rule.pattern.value;
-  return key.startsWith(rule.pattern.value);
+  if (rule.pattern.kind === 'prefix') return key.startsWith(rule.pattern.value);
+  if (key === rule.pattern.value) return true;
+  const want = HOST_KEY.exec(rule.pattern.value);
+  const got = HOST_KEY.exec(key);
+  return !!want && !!got && want[1] === got[1] && isSubdomain(got[2] as string, want[2] as string);
+}
+
+/** `account.booking.com` is under `booking.com`; `notbooking.com` is not. */
+export function isSubdomain(host: string, parent: string): boolean {
+  return host.toLowerCase().endsWith(`.${parent.toLowerCase()}`);
 }
 
 /** The rule "Always allow" would add for a call: exact, never a wildcard the user did not ask for. */

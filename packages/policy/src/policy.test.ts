@@ -113,6 +113,46 @@ describe('hostAllowedBy', () => {
   });
 });
 
+describe('host rules cover subdomains', () => {
+  const engine = new PolicyEngine({
+    profile: 'agent-decides',
+    allow: ['Browser(navigate:booking.com)', 'Http(domain:example.com)'],
+    deny: ['Browser(navigate:ads.booking.com)'],
+  });
+  const nav = (host: string) =>
+    engine.decide({ tool: 'Browser', key: `navigate:${host}`, category: 'egress' });
+  it('an approved site lets the browser open its subdomains', () => {
+    expect(nav('booking.com').kind).toBe('allow');
+    expect(nav('account.booking.com')).toEqual({
+      kind: 'allow',
+      by: 'Browser(navigate:booking.com)',
+    });
+    expect(nav('notbooking.com').kind).toBe('ask');
+    expect(nav('booking.com.evil.test').kind).toBe('ask');
+  });
+  it('a denied subdomain stays denied', () => {
+    expect(nav('ads.booking.com').kind).toBe('deny');
+    expect(nav('x.ads.booking.com').kind).toBe('deny');
+  });
+  it('the same for Http rules, and never upward to the parent', () => {
+    const http = (host: string) =>
+      engine.decide({ tool: 'Http', key: `domain:${host}`, category: 'egress' }).kind;
+    expect(http('api.example.com')).toBe('allow');
+    expect(
+      new PolicyEngine({
+        profile: 'agent-decides',
+        allow: ['Http(domain:api.example.com)'],
+        deny: [],
+      }).decide({ tool: 'Http', key: 'domain:example.com', category: 'egress' }).kind,
+    ).toBe('ask');
+  });
+  it('the Mac sandbox lets a subdomain of an approved site through', () => {
+    const config = { allow: ['Browser(navigate:booking.com)'], deny: [], allowedHosts: [] };
+    expect(hostAllowedBy(config, 'account.booking.com')).toBe('Browser(navigate:booking.com)');
+    expect(hostAllowedBy(config, 'notbooking.com')).toBeUndefined();
+  });
+});
+
 describe('browser rules', () => {
   it('lets allowed hosts open in the browser and asks for the rest', () => {
     const engine = new PolicyEngine({
