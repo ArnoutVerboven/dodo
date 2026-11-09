@@ -27,10 +27,7 @@ import {
  * (`claimFor`) before it runs.
  */
 
-/** dodo's own tools these replace: the model sees one set of file tools, not two. */
-export const REPLACED_TOOLS = ['bash', 'read_file', 'write_file', 'edit_file'];
-
-export const BUILTIN_TOOLS = ['read', 'edit', 'write', 'bash'] as const;
+export { BUILTIN_TOOLS, REPLACED_TOOLS } from './names.js';
 
 const BASH_TIMEOUT_S = 120;
 
