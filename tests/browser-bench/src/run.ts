@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +25,8 @@ Model (OpenAI-compatible chat completions with tool calls):
   --model <name>
   --gemini                Gemini through its OpenAI endpoint; key from GEMINI_API_KEY,
                           model gemini-3.8-flash unless --model is given
+  --vertex <project>      Gemini on Vertex AI with your gcloud login (no API key needed);
+                          --region defaults to global; --model as for --gemini
   --api-key <key>         or BENCH_API_KEY
 
 What to run:
@@ -94,6 +96,8 @@ async function main() {
       model: { type: 'string' },
       gemini: { type: 'boolean', default: false },
       'api-key': { type: 'string' },
+      vertex: { type: 'string' },
+      region: { type: 'string', default: 'global' },
       approaches: { type: 'string' },
       tasks: { type: 'string' },
       'tasks-file': { type: 'string' },
@@ -146,7 +150,8 @@ async function main() {
     modelCfg = m.cfg;
     stopModel = m.stop;
     modelCtl = { url: m.cfg.url, restart: m.restart };
-    model = openAiModel({ ...m.cfg, timeoutMs: 900_000 });
+    const cfg = m.cfg;
+    model = openAiModel({ ...cfg, apiKey: () => cfg.apiKey, timeoutMs: 900_000 });
   }
 
   const reps = Math.max(1, Number(v.reps) || 1);
@@ -360,12 +365,32 @@ async function pickModel(v: {
   model?: string;
   gemini: boolean;
   'api-key'?: string;
+  vertex?: string;
+  region?: string;
 }): Promise<{
   cfg: { url: string; model: string; apiKey?: string };
   stop?: () => void;
   restart?: () => Promise<void>;
 }> {
   const apiKey = v['api-key'] ?? process.env.BENCH_API_KEY;
+  if (v.vertex) {
+    // Vertex AI's OpenAI-compatible endpoint, with your gcloud login; tokens last an hour, so
+    // refresh every 45 minutes for long runs.
+    const token = () =>
+      execFileSync('gcloud', ['auth', 'print-access-token'], { encoding: 'utf8' }).trim();
+    const region = v.region ?? 'global';
+    const host =
+      region === 'global' ? 'aiplatform.googleapis.com' : `${region}-aiplatform.googleapis.com`;
+    const cfg = {
+      url: `https://${host}/v1/projects/${v.vertex}/locations/${region}/endpoints/openapi`,
+      model: `google/${(v.model ?? 'gemini-3.8-flash').replace(/^google\//, '')}`,
+      apiKey: token(),
+    };
+    setInterval(() => {
+      cfg.apiKey = token();
+    }, 45 * 60_000).unref();
+    return { cfg };
+  }
   if (v.gemini) {
     const key = apiKey ?? process.env.GEMINI_API_KEY;
     if (!key) throw new Error('--gemini needs GEMINI_API_KEY (or --api-key)');

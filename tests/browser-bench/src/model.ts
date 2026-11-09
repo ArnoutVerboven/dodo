@@ -56,7 +56,8 @@ export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
 export function openAiModel(opts: {
   url: string;
   model: string;
-  apiKey?: string;
+  /** A key, or a function giving the current one (short-lived gcloud tokens). */
+  apiKey?: string | (() => string | undefined);
   timeoutMs?: number;
   temperature?: number;
 }): Model {
@@ -74,11 +75,12 @@ export function openAiModel(opts: {
         temperature: opts.temperature ?? 0,
         stream: false,
       };
+      const key = typeof opts.apiKey === 'function' ? opts.apiKey() : opts.apiKey;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}),
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(opts.timeoutMs ?? 600_000),

@@ -40,6 +40,14 @@ const OUT_PER_M = 3.75;
 export const euro = (r: Pick<RunRecord, 'input' | 'output'>) =>
   (r.input * IN_PER_M + r.output * OUT_PER_M) / 1_000_000;
 
+/** Own prices of models worth benchmarking (USD per 1M tokens, from packages/budget). */
+const OWN: Record<string, [number, number]> = {
+  'gemini-3.8-flash': [0.75, 3.75],
+  'gemini-3.5-flash': [1.5, 9],
+  'gemini-3.5-flash-lite': [0.3, 2.5],
+  'gemini-3.1-flash-lite': [0.25, 1.5],
+};
+
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const fmt = (n: number, d = 0) =>
   n.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -65,6 +73,14 @@ export function summarize(meta: Record<string, unknown>, records: RunRecord[]): 
     const cost = rs.reduce((s, r) => s + euro(r), 0);
     lines.push(
       `| ${a} | ${ok}/${rs.length} | ${fmt(mean(rs.map((r) => r.calls)), 1)} | ${fmt(mean(rs.map((r) => r.input)))} | ${fmt(mean(rs.map((r) => r.output)))} | ${fmt(mean(rs.map((r) => r.maxInput)))} | ${fmt(cost / rs.length, 4)} | ${ok ? fmt(cost / ok, 4) : '–'} | ${fmt(mean(rs.map((r) => r.seconds)), 0)} |`,
+    );
+  }
+  const own = OWN[String(meta.model ?? '').replace(/^google\//, '')];
+  if (own) {
+    const total = ran.reduce((t, r) => t + (r.input * own[0] + r.output * own[1]) / 1_000_000, 0);
+    lines.push(
+      '',
+      `At ${meta.model}'s own price, this whole bench run cost about €${fmt(total, 2)}.`,
     );
   }
   lines.push('');

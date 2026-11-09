@@ -23,6 +23,7 @@ All but `browser-use` share one loop and system prompt (`src/loop.ts`), so diffe
 git pull && pnpm install
 pnpm bench:browser --headed                      # your dodo local model, the live tasks
 pnpm bench:browser --gemini --reps 3             # gemini-3.8-flash (GEMINI_API_KEY)
+pnpm bench:browser --vertex my-gcp-project --model gemini-3.5-flash-lite   # your gcloud login
 pnpm bench:browser --tasks vinted-email-login --approaches dodo-current,agent-browser
 pnpm bench:browser --tasks-file my-tasks.json    # your own cases
 pnpm bench:browser --self-test                   # offline check of the plumbing, no model
