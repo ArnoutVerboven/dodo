@@ -15,7 +15,6 @@ import {
   githubTools,
   googleSessionTool,
   googleTools,
-  harnessFor,
   inheritedEnv,
   LocalModelControlPlane,
   type McpClient,
@@ -49,9 +48,11 @@ import {
   connect,
   FirestoreTaskStore,
   FirestoreTrace,
+  geminiBaseUrl,
   signInAsRun,
   type WorkerEnv,
 } from './adapters.js';
+import { pickHarness } from './harness-choice.js';
 import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
 
 const HEARTBEAT_MS = 15_000;
@@ -109,7 +110,14 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   );
   const clients = connect(app, env);
   await signInAsRun(clients, env.runToken);
-  const control = new CallableControlPlane(clients.functions, env.runId);
+  const control = new CallableControlPlane(clients.functions, env.runId, {
+    baseUrl: geminiBaseUrl(env),
+    idToken: async () => {
+      const user = clients.auth.currentUser;
+      if (!user) throw new Error('The run is not signed in');
+      return user.getIdToken();
+    },
+  });
 
   let started: Awaited<ReturnType<typeof control.start>>;
   try {
@@ -257,7 +265,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   if (started.tools?.toolsets.length)
     console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
 
-  const result = await harnessFor().run(
+  const harness = pickHarness(task.ai.harness ?? project?.defaults.harness, model, started.model);
+  if (harness.id !== 'dodo-loop') console.log(`harness ${harness.id}`);
+  const result = await harness.run(
     {
       runId: env.runId,
       task: taskForRun,
