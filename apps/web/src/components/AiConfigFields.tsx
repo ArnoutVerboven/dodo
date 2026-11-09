@@ -16,7 +16,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Dropdown, type DropdownOption, MultiDropdown } from '@/components/ui/dropdown';
 import { Label } from '@/components/ui/input';
 import { useDevices, useGitHub, useToolsets } from '@/lib/data';
-import { MODEL_OPTIONS } from '@/lib/options';
+import { MODEL_OPTIONS, pickDevice } from '@/lib/options';
 import { cn, formatEur } from '@/lib/utils';
 
 /** The small "only on your Mac" mark next to a local model, device or folder. */
@@ -105,15 +105,14 @@ export function AiConfigFields({
 
   const deviceOptions: DropdownOption[] = [
     { value: 'auto', label: 'Auto', icon: Wand2, title: 'Your Mac when it is online, else remote' },
-    isLocalModel(value.model)
-      ? {
-          value: 'gcp',
-          label: 'Remote',
-          icon: Cloud,
-          title: 'The local model runs only on your Mac: pick another model first',
-          disabled: true,
-        }
-      : { value: 'gcp', label: 'Remote', icon: Cloud, title: 'A sandbox in the cloud' },
+    {
+      value: 'gcp',
+      label: 'Remote',
+      icon: Cloud,
+      title: isLocalModel(value.model)
+        ? 'A sandbox in the cloud. The local model runs only on your Mac, so this switches to the default cloud model'
+        : 'A sandbox in the cloud',
+    },
     ...macs.map((d) => ({ value: `mac:${d.id}`, label: d.name, icon: Laptop })),
   ];
   if (value.device?.startsWith('mac:') && !macs.some((d) => `mac:${d.id}` === value.device))
@@ -167,7 +166,7 @@ export function AiConfigFields({
               ? remote
                 ? isLocalModel(value.model)
                   ? 'The local model runs only on your Mac, but Device is Remote: pick another model, or set Device to Auto or your Mac.'
-                  : 'Remote cannot use the local model, so this runs on the default cloud model (Auto).'
+                  : undefined
                 : 'Runs on your Mac (the one picked under Device, else the one seen last). No budget is used.'
               : undefined
           }
@@ -176,7 +175,11 @@ export function AiConfigFields({
             ariaLabel="Model"
             value={value.model ?? ''}
             options={modelOptions}
-            inherited={optionOf(modelOptions, inherited.model ?? 'auto')}
+            inherited={optionOf(
+              modelOptions,
+              // Remote can't use an inherited local model: the run gets the cloud default.
+              remote && isLocalModel(inherited.model) ? 'auto' : (inherited.model ?? 'auto'),
+            )}
             onChange={(model) => set({ model })}
             onReset={() => set({ model: undefined })}
           />
@@ -187,7 +190,7 @@ export function AiConfigFields({
             value={value.device ?? ''}
             options={deviceOptions}
             inherited={optionOf(deviceOptions, inherited.device ?? 'auto')}
-            onChange={(device) => set({ device })}
+            onChange={(device) => set(pickDevice(device, value, inherited))}
             onReset={() => set({ device: undefined })}
           />
         </Field>

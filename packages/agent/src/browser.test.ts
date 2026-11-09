@@ -291,6 +291,63 @@ describe('browserTools', () => {
     expect(pageUrlIn(spoofed)).toBe('https://evil.test/');
   });
 
+  it('keeps the site when the browser briefly cannot say which page it is on', async () => {
+    // agent-browser reads the URL right after a click; mid-navigation that read fails and the
+    // Page section says `unknown`. The next submit must still be keyed by the site.
+    let unknownFor = 0;
+    const client: BrowserClient = {
+      async listTools() {
+        return ['browser_navigate', 'browser_click', 'browser_snapshot'].map((name) => ({
+          name,
+          inputSchema: { type: 'object' },
+        }));
+      },
+      async callTool(name) {
+        if (name === 'browser_click') unknownFor = 2;
+        let url = 'https://account.booking.com/sign-in';
+        if (unknownFor > 0 && name !== 'browser_navigate') {
+          unknownFor--;
+          url = 'unknown';
+        }
+        return {
+          text: `### Page\n- Page URL: ${url}\n- Page Title: Booking\n### Snapshot\n\`\`\`yaml\n- button "Continue" [ref=e1]\n\`\`\``,
+          isError: false,
+        };
+      },
+      async close() {},
+    };
+    const slept: number[] = [];
+    const tools = await browserTools(client, { sleep: async (ms) => void slept.push(ms) });
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const ctx = { store: {} as TaskStore };
+    const click = byName.browser_click as NonNullable<(typeof byName)[string]>;
+    await (byName.browser_navigate as typeof click).execute({ url: 'https://x' }, ctx);
+    await click.execute({ element: 'Submit', target: 'e1' }, ctx);
+    expect(slept.length).toBeGreaterThan(0);
+    expect(click.policy?.({ element: 'Submit', target: 'e1' }, ctx)?.key).toBe(
+      'submit:account.booking.com',
+    );
+
+    // Still unknown after asking again: no host, rather than a guessed one.
+    unknownFor = 0;
+    const stuck: BrowserClient = {
+      ...client,
+      async callTool(name) {
+        return {
+          text: `### Page\n- Page URL: ${name === 'browser_navigate' ? 'https://a.test/' : 'unknown'}\n- Page Title: t`,
+          isError: false,
+        };
+      },
+    };
+    const t2 = Object.fromEntries(
+      (await browserTools(stuck, { sleep: async () => {} })).map((t) => [t.name, t]),
+    );
+    const c2 = t2.browser_click as typeof click;
+    await (t2.browser_navigate as typeof click).execute({ url: 'https://a.test/' }, ctx);
+    await c2.execute({ element: 'Submit', target: 'e1' }, ctx);
+    expect(c2.policy?.({ element: 'Submit', target: 'e1' }, ctx)?.key).toBe('submit:');
+  });
+
   it('takes a screenshot for ask_user from the image part of the result', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     const client: BrowserClient = {
