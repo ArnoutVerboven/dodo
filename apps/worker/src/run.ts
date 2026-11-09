@@ -23,7 +23,6 @@ import {
   prepareDir,
   requestBrowserTool,
   requestDeviceTool,
-  runAgent,
   type ToolDef,
   takeScreenshot,
   taskTools,
@@ -49,9 +48,11 @@ import {
   connect,
   FirestoreTaskStore,
   FirestoreTrace,
+  geminiBaseUrl,
   signInAsRun,
   type WorkerEnv,
 } from './adapters.js';
+import { pickHarness } from './harness-choice.js';
 import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
 
 const HEARTBEAT_MS = 15_000;
@@ -109,7 +110,14 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   );
   const clients = connect(app, env);
   await signInAsRun(clients, env.runToken);
-  const control = new CallableControlPlane(clients.functions, env.runId);
+  const control = new CallableControlPlane(clients.functions, env.runId, {
+    baseUrl: geminiBaseUrl(env),
+    idToken: async () => {
+      const user = clients.auth.currentUser;
+      if (!user) throw new Error('The run is not signed in');
+      return user.getIdToken();
+    },
+  });
 
   let started: Awaited<ReturnType<typeof control.start>>;
   try {
@@ -195,7 +203,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
     ...checkouts.map(({ repo, dir, note }) =>
       note
         ? `Repository ${repo} is not available: ${note}.`
-        : `Repository ${repo} is checked out in ${dir === '.' ? 'the task folder' : `${dir}/ in the task folder`}; use bash, read_file and write_file on it.`,
+        : `Repository ${repo} is checked out in ${dir === '.' ? 'the task folder' : `${dir}/ in the task folder`}; use read_file, edit_file, grep, find_files and bash on it.`,
     ),
     started.google && !started.google.scopes.includes(GOOGLE_SCOPE.drive)
       ? 'Google Drive is not connected (the Google connection lacks Drive access), so files cannot be saved to Drive.'
@@ -257,7 +265,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   if (started.tools?.toolsets.length)
     console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
 
-  const result = await runAgent(
+  const harness = pickHarness(task.ai.harness ?? project?.defaults.harness, model, started.model);
+  if (harness.id !== 'dodo-loop') console.log(`harness ${harness.id}`);
+  const result = await harness.run(
     {
       runId: env.runId,
       task: taskForRun,

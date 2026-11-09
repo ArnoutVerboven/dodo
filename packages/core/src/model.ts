@@ -69,6 +69,12 @@ export const AiConfig = z.object({
   budget: MicroEur.optional(),
   /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
   profile: z.enum(['agent-decides', 'untrusted']).optional(),
+  /**
+   * The loop that runs the agent: dodo's own (the default) or pi (pi.dev), which brings its own
+   * file and shell tools and compaction. pi needs a Gemini model; a run on the local model
+   * uses dodo's loop.
+   */
+  harness: z.enum(['dodo-loop', 'pi']).optional(),
 });
 export type AiConfig = z.infer<typeof AiConfig>;
 

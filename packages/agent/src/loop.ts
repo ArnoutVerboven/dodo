@@ -7,7 +7,6 @@ import {
   compactionRequest,
   compactThreshold,
   DEFAULT_DRIVE_FOLDER,
-  type HeartbeatResponse,
   headlessRestartedNote,
   isApproved,
   type Part,
@@ -31,7 +30,10 @@ import { GOOGLE_TOOLS } from './google-tools.js';
 import { NOTION_TOOLS } from './notion-tools.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
-import { findTool, type ToolContext, type ToolDef, toDeclarations } from './tools.js';
+import { RunSupervisor } from './supervisor.js';
+import { ToolRuntime, truncate } from './tool-runtime.js';
+import type { ToolContext, ToolDef } from './tools.js';
+import { toDeclarations } from './tools.js';
 
 export interface LoopOptions {
   control: ControlPlane;
@@ -81,17 +83,20 @@ export interface LoopResult {
 }
 
 /**
- * The agent loop: build the request, call the gateway, run the tools it asks for, repeat.
- * Hooks are not bolted on: budget, lease, halt, interrupt and steering are all checked here.
+ * The system prompt for a run: dodo's core rules, a section per tool family the run has, an
+ * optional harness section (how that harness's own tools work), then the project.
  */
-export async function runAgent(input: RunInput, opts: LoopOptions): Promise<LoopResult> {
-  const { control, store, trace, tools } = opts;
-  const maxSteps = opts.maxSteps ?? 40;
-  const log = opts.log ?? (() => {});
-  const session: Content[] = [...input.session];
-  const declarations = toDeclarations(tools);
+export function runSystemPrompt(
+  input: Pick<RunInput, 'task' | 'project'>,
+  opts: Pick<
+    LoopOptions,
+    'tools' | 'browserKind' | 'inputHoldMs' | 'googleFolder' | 'notionWorkspace'
+  >,
+  harness?: string,
+): string {
+  const { tools } = opts;
   const hasBrowser = tools.some((t) => t.name.startsWith('browser_'));
-  const system = systemPrompt(input.task, input.project, {
+  return systemPrompt(input.task, input.project, {
     browser: hasBrowser ? (opts.browserKind ?? 'window') : undefined,
     holdMinutes: hasBrowser && opts.inputHoldMs ? Math.round(opts.inputHoldMs / 60_000) : undefined,
     canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
@@ -105,7 +110,22 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     notion: tools.some((t) => NOTION_TOOLS.includes(t.name as (typeof NOTION_TOOLS)[number]))
       ? { workspace: opts.notionWorkspace }
       : undefined,
+    ...(harness ? { harness } : {}),
   });
+}
+
+/**
+ * The agent loop: build the request, call the gateway, run the tools it asks for, repeat.
+ * Hooks are not bolted on: budget, lease, halt, interrupt and steering are all checked here.
+ */
+export async function runAgent(input: RunInput, opts: LoopOptions): Promise<LoopResult> {
+  const { control, store, trace, tools } = opts;
+  const maxSteps = opts.maxSteps ?? 40;
+  const log = opts.log ?? (() => {});
+  const session: Content[] = [...input.session];
+  const declarations = toDeclarations(tools);
+  const hasBrowser = tools.some((t) => t.name.startsWith('browser_'));
+  const system = runSystemPrompt(input, opts);
   // Vault values never go back to the model, the trace or the task: cut them out of every
   // tool argument and result.
   const redact = <T>(v: T): T => (opts.secrets ? redactDeep(v, opts.secrets.redact) : v);
@@ -153,72 +173,28 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     session.push(user(answerTurn(a.prompt, a.value)));
   }
 
-  // Heartbeat: lease renewal + infra metering + flags + steering. Also on a timer so a long
-  // tool call cannot let the lease expire.
-  let latestFlags: Awaited<ReturnType<ControlPlane['heartbeat']>> | undefined;
-  let heartbeatError: Error | undefined;
-  // The server hands a compaction request over once, possibly to a timer beat: keep it.
-  let compactAsked = false;
-  /** An answer the heartbeat delivered during a hold; kept until the hold takes it. */
-  let heldAnswer: HeartbeatResponse['answer'];
-  // One beat at a time: the timer and the step loop share the call in flight, so the server
-  // never sees two overlapping heartbeats for one run.
-  let inFlight: Promise<void> | undefined;
-  // A failed beat is only fatal once the lease is at risk: one network blip or cold start
-  // must not end the run. A lost lease is fatal at once.
-  const tolerance = opts.heartbeatToleranceMs ?? DEFAULT_HEARTBEAT_TOLERANCE_MS;
-  let lastBeatOk = Date.now();
-  const beatOnce = async () => {
-    try {
-      latestFlags = await control.heartbeat();
-      lastBeatOk = Date.now();
-      if (latestFlags.compact) compactAsked = true;
-      if (latestFlags.answer) heldAnswer = latestFlags.answer;
-    } catch (err) {
-      if (err instanceof LeaseLostError || Date.now() - lastBeatOk >= tolerance) {
-        heartbeatError = err as Error;
-      } else {
-        log('heartbeat failed; trying again', { err: String(err) });
-      }
-    }
-  };
-  const beat = (): Promise<void> => {
-    inFlight ??= beatOnce().finally(() => {
-      inFlight = undefined;
-    });
-    return inFlight;
-  };
-  const timer = opts.heartbeatMs ? setInterval(beat, opts.heartbeatMs) : undefined;
-  const seenMessages = new Set<string>();
+  // Heartbeat: lease renewal + infra metering + flags + steering, on a timer too.
+  const supervisor = new RunSupervisor(control, {
+    heartbeatMs: opts.heartbeatMs,
+    heartbeatToleranceMs: opts.heartbeatToleranceMs,
+    log,
+  });
+  supervisor.start();
+  const runtime = new ToolRuntime({
+    tools,
+    store,
+    trace,
+    policy: opts.policy,
+    workdir: opts.workdir,
+    secrets: opts.secrets,
+    screenshot: opts.screenshot,
+    log,
+  });
 
   // Tokens the conversation held at the last model call: the task's figure for a restored one.
   const window = input.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   let contextTokens = input.session.length ? (input.task.context?.tokens ?? 0) : 0;
   let autoCompact = true;
-  /**
-   * ask_user with a hold: post the question, then poll the heartbeat until the answer comes,
-   * the hold runs out, or the run is told to stop (flags are read by the main loop after).
-   */
-  async function holdForAnswer(
-    req: Parameters<ControlPlane['requestInput']>[0],
-    holdMs: number,
-  ): Promise<NonNullable<RunInput['answer'] & { messageId: string }> | undefined> {
-    const posted = await control.requestInput(req);
-    const messageId = posted && 'messageId' in posted ? posted.messageId : undefined;
-    const until = Date.now() + holdMs;
-    const every = opts.heartbeatMs || 1000;
-    while (Date.now() < until) {
-      await new Promise((r) => setTimeout(r, Math.min(every, Math.max(0, until - Date.now()))));
-      await beat();
-      if (heartbeatError || (latestFlags && !latestFlags.ok)) return undefined;
-      const a = heldAnswer;
-      if (a && (!messageId || a.messageId === messageId)) {
-        heldAnswer = undefined;
-        return a;
-      }
-    }
-    return undefined;
-  }
 
   let steps = 0;
   let nudges = 0;
@@ -238,29 +214,14 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
 
   try {
     while (!end) {
-      await beat();
-      if (heartbeatError) {
-        finishWith(heartbeatError instanceof LeaseLostError ? 'lease_lost' : 'error', {
-          error: heartbeatError.message,
-        });
-        break;
-      }
-      if (latestFlags && !latestFlags.ok) {
-        finishWith(
-          latestFlags.reason === 'halted'
-            ? 'halted'
-            : latestFlags.reason === 'interrupted'
-              ? 'interrupted'
-              : latestFlags.reason === 'budget_exhausted'
-                ? 'budget_exhausted'
-                : 'lease_lost',
-        );
+      await supervisor.beat();
+      const stop = supervisor.stopReason();
+      if (stop) {
+        finishWith(stop.reason, stop.error ? { error: stop.error } : {});
         break;
       }
       // Steering: comments posted during the run go in before the next model call.
-      for (const m of latestFlags?.pendingMessages ?? []) {
-        if (seenMessages.has(m.id)) continue;
-        seenMessages.add(m.id);
+      for (const m of supervisor.takeSteering()) {
         session.push(user(steerTurn(m.body)));
         await trace.emit({
           type: 'steer',
@@ -274,12 +235,11 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       }
 
       // Compaction: on request, or before the conversation grows past the threshold.
-      const asked = compactAsked;
+      const asked = supervisor.takeCompactRequest();
       if (
         (asked || (autoCompact && contextTokens >= compactThreshold(window))) &&
         session.length > 1
       ) {
-        compactAsked = false;
         const before = contextTokens;
         const replaced = session.length;
         let summary = '';
@@ -391,176 +351,54 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       const responses: Part[] = [];
       for (const part of calls) {
         const fc = part.functionCall as NonNullable<Part['functionCall']>;
-        const tool = findTool(tools, fc.name);
-        await trace.emit({
-          type: 'tool_call',
-          summary: `${fc.name}(${truncate(JSON.stringify(fc.args ?? {}), 100)})`,
-          data: { name: fc.name, args: fc.args ?? {} },
-        });
-        let result: Record<string, unknown>;
-        let cost: number | undefined;
-        if (!tool) {
-          result = { error: `Unknown tool ${fc.name}` };
-        } else {
-          const parsed = tool.schema.safeParse(fc.args ?? {});
-          if (!parsed.success) {
-            result = {
-              error: `Invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-            };
-          } else {
-            try {
-              const ctx = {
-                store,
-                policy: opts.policy,
-                workdir: opts.workdir,
-                secrets: opts.secrets,
-                screenshot: opts.screenshot,
-              };
-              const claim = tool.policy?.(parsed.data, ctx);
-              const decision = claim
-                ? (opts.policy?.decide(claim) ?? { kind: 'deny' as const, by: 'no policy engine' })
-                : { kind: 'allow' as const };
-              if (decision.kind === 'deny') {
-                result = { error: `Not allowed (${decision.by}).` };
-                responses.push(functionResponse(fc, result));
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: `${fc.name} denied by ${decision.by}`,
-                  data: { name: fc.name },
-                });
-                continue;
-              }
-              if (decision.kind === 'ask') {
-                result = {
-                  ok: false,
-                  note: 'Needs approval; the run pauses until the user answers.',
-                };
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: responses });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: `${fc.name} needs approval: ${decision.suggestedRule}`,
-                  data: { name: fc.name },
-                });
-                pendingInput = {
-                  kind: 'approval',
-                  prompt: `Allow \`${decision.suggestedRule}\`? ${decision.reason}`,
-                  suggestedRule: decision.suggestedRule,
-                  session,
-                };
-                finishWith('waiting_input');
-                break;
-              }
-              const outcome = await tool.execute(parsed.data, { ...ctx, decision });
-              result = redact(outcome.result);
-              cost = outcome.cost;
-              if ('askUser' in outcome) {
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: [...responses] });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: `ask_user: ${truncate(outcome.askUser.prompt, 80)}${outcome.askUser.image ? ' (with screenshot)' : ''}`,
-                  data: { name: fc.name },
-                });
-                const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
-                if (holdMs) {
-                  // Post the question now and wait here for the answer, lease kept by the
-                  // heartbeat. No answer in time: park the run exactly as without a hold.
-                  const answer = await holdForAnswer(
-                    { ...outcome.askUser, session, holdMs },
-                    holdMs,
-                  );
-                  // The tool responses are already in the session; the answer is the next turn.
-                  responses.length = 0;
-                  if (answer) {
-                    takeAnswer(answer);
-                    await trace.emit({
-                      type: 'steer',
-                      summary: `Answer: ${truncate(answer.value, 80)}`,
-                      data: { messageId: answer.messageId },
-                    });
-                  } else if (!heartbeatError && latestFlags?.ok !== false) {
-                    parkRun = true;
-                    finishWith('waiting_input');
-                  }
-                  // A stop flag during the hold is handled at the top of the loop.
-                  break;
-                }
-                pendingInput = { ...outcome.askUser, session };
-                finishWith('waiting_input');
-                break;
-              }
-              if ('needsDevice' in outcome) {
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: responses });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: "request_device: moving to the user's Mac",
-                  data: { name: fc.name },
-                });
-                finishWith('needs_device');
-                break;
-              }
-              if ('needsBrowser' in outcome) {
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: responses });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: 'request_browser: restarting with a browser',
-                  data: { name: fc.name },
-                });
-                finishWith('needs_browser');
-                break;
-              }
-              if ('finish' in outcome) {
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: responses });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: `finish: ${outcome.finish.outcome}`,
-                  data: { name: fc.name },
-                });
-                finishWith('finished', { outcome: outcome.finish.outcome });
-                break;
-              }
-            } catch (err) {
-              // A paid tool the budget, the kill switch or a lost lease refused ends the run
-              // the way a refused model call does (a budget end offers the top-up).
-              const stop =
-                err instanceof GatewayBudgetError
-                  ? ('budget_exhausted' as const)
-                  : err instanceof GatewayHaltedError
-                    ? ('halted' as const)
-                    : err instanceof LeaseLostError
-                      ? ('lease_lost' as const)
-                      : undefined;
-              if (stop) {
-                result = { error: `Not run: ${(err as Error).message}` };
-                responses.push(functionResponse(fc, result));
-                session.push({ role: 'user', parts: responses });
-                await trace.emit({
-                  type: 'tool_result',
-                  summary: `${fc.name} refused: ${truncate((err as Error).message, 100)}`,
-                  data: { name: fc.name },
-                });
-                finishWith(
-                  stop,
-                  stop === 'budget_exhausted' ? { error: (err as Error).message } : {},
-                );
-                break;
-              }
-              log('tool failed', { tool: fc.name, err: String(err) });
-              result = redact({ error: `Tool failed: ${(err as Error).message}` });
-            }
-          }
+        const step = await runtime.run(fc.name, fc.args);
+        responses.push(functionResponse(fc, step.result));
+        if (step.kind === 'continue') continue;
+        // Every other step ends the run (or holds it): the tool responses so far go in first.
+        session.push({ role: 'user', parts: [...responses] });
+        responses.length = 0;
+        if (step.kind === 'approval') {
+          pendingInput = {
+            kind: 'approval',
+            prompt: step.prompt,
+            suggestedRule: step.suggestedRule,
+            session,
+          };
+          finishWith('waiting_input');
+          break;
         }
-        responses.push(functionResponse(fc, result));
-        await trace.emit({
-          type: 'tool_result',
-          summary: `${fc.name} → ${truncate(JSON.stringify(result), 100)}`,
-          data: { name: fc.name, result: truncateValue(result) },
-          ...(cost !== undefined ? { cost } : {}),
+        if (step.kind === 'ask_user') {
+          const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
+          if (holdMs) {
+            // Post the question now and wait here for the answer, lease kept by the
+            // heartbeat. No answer in time: park the run exactly as without a hold.
+            const answer = await supervisor.holdForAnswer(
+              { ...step.askUser, session, holdMs },
+              holdMs,
+            );
+            if (answer) {
+              takeAnswer(answer);
+              await trace.emit({
+                type: 'steer',
+                summary: `Answer: ${truncate(answer.value, 80)}`,
+                data: { messageId: answer.messageId },
+              });
+            } else if (!supervisor.stopReason()) {
+              parkRun = true;
+              finishWith('waiting_input');
+            }
+            // A stop flag during the hold is handled at the top of the loop.
+            break;
+          }
+          pendingInput = { ...step.askUser, session };
+          finishWith('waiting_input');
+          break;
+        }
+        finishWith(step.reason, {
+          ...(step.outcome ? { outcome: step.outcome } : {}),
+          ...(step.error ? { error: step.error } : {}),
         });
+        break;
       }
       if (end) break;
       if (responses.length) session.push({ role: 'user', parts: responses });
@@ -570,7 +408,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     await trace.emit({ type: 'error', summary: truncate((err as Error).message, 200), data: {} });
     finishWith('error', { error: (err as Error).message });
   } finally {
-    if (timer) clearInterval(timer);
+    supervisor.stop();
   }
 
   const final = end as {
@@ -601,9 +439,6 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   return { reason: final.reason, steps, session };
 }
 
-/** The lease is 60 s (functions/src/runtime.ts): stop trusting failed beats well before it. */
-export const DEFAULT_HEARTBEAT_TOLERANCE_MS = 40_000;
-
 /** Every current Gemini model takes 1M input tokens. */
 const DEFAULT_CONTEXT_WINDOW = 1_048_576;
 
@@ -614,15 +449,6 @@ function functionResponse(
   response: Record<string, unknown>,
 ): Part {
   return { functionResponse: { ...(fc.id ? { id: fc.id } : {}), name: fc.name, response } };
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
-
-function truncateValue(v: Record<string, unknown>): Record<string, unknown> {
-  const json = JSON.stringify(v);
-  return json.length > 4000 ? { truncated: truncate(json, 4000) } : v;
 }
 
 /** Time a hold leaves before the worker's deadline, to park the run and stop the browser. */

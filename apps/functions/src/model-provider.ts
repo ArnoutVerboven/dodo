@@ -10,6 +10,26 @@ export interface ModelRequest {
   maxOutputTokens: number;
   thinkingBudget?: number;
   temperature?: number;
+  /** Streamed calls only: Gemini's function-calling mode, passed through. */
+  toolConfig?: Record<string, unknown>;
+  /** Streamed calls only: send thought summaries back. */
+  includeThoughts?: boolean;
+}
+
+/** One chunk of a streamed reply, in Gemini's REST form (candidates, usageMetadata). */
+export type StreamChunk = Record<string, unknown> & { usageMetadata?: unknown };
+
+/** Gemini's usage block as dodo counts it; thinking is billed as output. */
+export function usageFromGemini(u: unknown): Usage | undefined {
+  if (!u || typeof u !== 'object') return undefined;
+  const m = u as Record<string, number | undefined>;
+  const thinking = m.thoughtsTokenCount ?? 0;
+  return {
+    inputTokens: m.promptTokenCount ?? 0,
+    outputTokens: (m.candidatesTokenCount ?? 0) + thinking,
+    thinkingTokens: thinking,
+    cachedInputTokens: m.cachedContentTokenCount ?? 0,
+  };
 }
 
 export interface ModelResult {
@@ -23,6 +43,8 @@ export interface ModelProvider {
     req: Pick<ModelRequest, 'model' | 'contents' | 'systemInstruction' | 'tools'>,
   ): Promise<number>;
   generate(req: ModelRequest): Promise<ModelResult>;
+  /** The reply as Gemini streams it; a backend without it cannot serve a streaming harness. */
+  generateStream?(req: ModelRequest): Promise<AsyncIterable<StreamChunk>>;
 }
 
 /** A grounded search: one Gemini call with Google Search as its only tool. */
@@ -147,6 +169,36 @@ export class VertexProvider implements ModelProvider, SearchProvider, Transcribe
         cachedInputTokens: u?.cachedContentTokenCount ?? 0,
       },
     };
+  }
+
+  async generateStream(req: ModelRequest): Promise<AsyncIterable<StreamChunk>> {
+    // Only opening the stream is retried: once chunks flow, a retry would bill twice.
+    const stream = await retryVertex(() =>
+      this.ai.models.generateContentStream({
+        model: req.model,
+        contents: req.contents,
+        config: {
+          systemInstruction: req.systemInstruction,
+          tools: req.tools?.length ? [{ functionDeclarations: req.tools }] : undefined,
+          toolConfig: req.toolConfig,
+          maxOutputTokens: req.maxOutputTokens,
+          temperature: req.temperature,
+          thinkingConfig:
+            req.thinkingBudget !== undefined || req.includeThoughts
+              ? {
+                  ...(req.thinkingBudget !== undefined
+                    ? { thinkingBudget: req.thinkingBudget }
+                    : {}),
+                  ...(req.includeThoughts ? { includeThoughts: true } : {}),
+                }
+              : undefined,
+        },
+      }),
+    );
+    return (async function* () {
+      // The SDK's response class: keep its data fields, as Gemini's REST API sends them.
+      for await (const chunk of stream) yield JSON.parse(JSON.stringify(chunk)) as StreamChunk;
+    })();
   }
 
   async transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
@@ -340,5 +392,21 @@ export class FakeProvider implements ModelProvider, SearchProvider, TranscribePr
       finishReason: 'STOP',
       usage: { inputTokens, outputTokens: 50, thinkingTokens: 0, cachedInputTokens: 0 },
     };
+  }
+
+  /** The same reply as `generate`, in two chunks: the parts, then the usage. */
+  async generateStream(req: ModelRequest): Promise<AsyncIterable<StreamChunk>> {
+    const r = await this.generate(req);
+    return (async function* () {
+      yield { candidates: [{ content: r.content, index: 0 }] };
+      yield {
+        candidates: [{ content: { role: 'model', parts: [] }, finishReason: 'STOP', index: 0 }],
+        usageMetadata: {
+          promptTokenCount: r.usage.inputTokens,
+          candidatesTokenCount: r.usage.outputTokens,
+          totalTokenCount: r.usage.inputTokens + r.usage.outputTokens,
+        },
+      };
+    })();
   }
 }

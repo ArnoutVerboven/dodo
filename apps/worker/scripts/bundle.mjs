@@ -16,7 +16,8 @@ await build({
   // @playwright/mcp and playwright are installed in the browser image only, resolved at runtime.
   external: ['firebase-admin', '@playwright/mcp', 'playwright'],
   banner: {
-    js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+    // Aliased: a bundled dependency (pi) imports createRequire itself.
+    js: "import { createRequire as __dodoCreateRequire } from 'node:module'; const require = __dodoCreateRequire(import.meta.url);",
   },
 });
 console.log('worker bundled to dist/');

@@ -18,10 +18,11 @@ import {
   isLocalModel,
   type MicroEur,
   paths,
+  type Usage,
 } from '@dodo/core';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
-import type { ModelProvider } from './model-provider.js';
+import { type ModelProvider, type ModelRequest, usageFromGemini } from './model-provider.js';
 
 /**
  * The model gateway: the only path to Vertex AI. reserve → call → settle around every call,
@@ -113,11 +114,25 @@ export interface GatewayContext {
   description: string;
 }
 
-export async function generateWithBudget(
+/** A call the budget has room for: its clamped limits and the money held for it. */
+interface OpenCall {
+  inputTokens: number;
+  available: MicroEur;
+  maxOutputTokens: number;
+  thinkingBudget: number;
+  reservation: { id: string; amount: MicroEur };
+  takenAt: number;
+}
+
+/**
+ * Everything before the provider is called: price check, output cap sized to the remaining
+ * budget, the hourly governor and the reservation. The caller must `closeCall` it.
+ */
+async function openCall(
   deps: GatewayDeps,
   ctx: GatewayContext,
   req: Omit<GenerateRequest, 'runId'>,
-): Promise<GenerateResponse> {
+): Promise<OpenCall> {
   const now = deps.now ?? Date.now;
   if (isLocalModel(req.model)) {
     // The worker on the Mac calls its own server; reaching the gateway means it has none.
@@ -162,9 +177,8 @@ export async function generateWithBudget(
   const takenAt = now();
   await takeGovernor(deps, reserveAmount, takenAt);
 
-  let reservation: { id: string; amount: MicroEur };
   try {
-    reservation = await deps.costGate.reserve({
+    const reservation = await deps.costGate.reserve({
       scopes: ctx.scopes,
       category: 'tokens',
       amount: reserveAmount,
@@ -174,6 +188,7 @@ export async function generateWithBudget(
       runId: ctx.runId,
       model: req.model,
     });
+    return { inputTokens, available, maxOutputTokens, thinkingBudget, reservation, takenAt };
   } catch (err) {
     await returnGovernor(deps, reserveAmount, takenAt);
     if (err instanceof BudgetExceededError) {
@@ -182,60 +197,127 @@ export async function generateWithBudget(
     if (err instanceof HaltedError) throw new HttpsError('unavailable', 'halted');
     throw err;
   }
+}
 
-  let actual = reservation.amount; // a failed call is charged in full: safe and visible
-  try {
-    const result = await deps.provider.generate({
-      model: req.model,
-      systemInstruction: req.systemInstruction,
-      contents: req.contents,
-      tools: req.tools,
-      maxOutputTokens,
-      thinkingBudget,
-      temperature: req.temperature,
+/** What the call cost, written to the run (spend, steps) and the task (context size). */
+async function recordUsage(
+  deps: GatewayDeps,
+  ctx: GatewayContext,
+  req: Omit<GenerateRequest, 'runId'>,
+  usage: Usage,
+): Promise<MicroEur> {
+  const now = deps.now ?? Date.now;
+  const actual = tokenCost(
+    req.model,
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.cachedInputTokens,
+  );
+  if (ctx.runId) {
+    await deps.db.doc(paths.run(ctx.runId)).update({
+      spent: FieldValue.increment(actual),
+      steps: FieldValue.increment(1),
+      updatedAt: now(),
     });
-    actual = tokenCost(req.model, result.usage.inputTokens, result.usage.outputTokens);
-    const remaining = Math.max(0, available - actual);
-    if (ctx.runId) {
-      await deps.db.doc(paths.run(ctx.runId)).update({
-        spent: FieldValue.increment(actual),
-        steps: FieldValue.increment(1),
-        updatedAt: now(),
-      });
-    }
-    if (ctx.runId && ctx.taskId) {
-      // An agent step's conversation (not a title): what the next call carries is this
-      // request plus the reply that joins it. A summary call says nothing of that size.
-      const usage =
-        req.purpose === 'compact'
-          ? { 'context.compactedAt': now() }
-          : {
-              'context.tokens': result.usage.inputTokens + result.usage.outputTokens,
-              'context.max': contextWindow(req.model),
-              'context.model': req.model,
-              'context.breakdown': contextBreakdown(
-                req,
-                result.usage.inputTokens,
-                result.usage.outputTokens,
-              ),
-              'context.updatedAt': now(),
-            };
-      // A display value: never fail a paid-for call over it.
-      await deps.db
-        .doc(paths.task(ctx.taskId))
-        .update(usage)
-        .catch(() => undefined);
-    }
+  }
+  if (ctx.runId && ctx.taskId) {
+    // An agent step's conversation (not a title): what the next call carries is this
+    // request plus the reply that joins it. A summary call says nothing of that size.
+    const fields =
+      req.purpose === 'compact'
+        ? { 'context.compactedAt': now() }
+        : {
+            'context.tokens': usage.inputTokens + usage.outputTokens,
+            'context.max': contextWindow(req.model),
+            'context.model': req.model,
+            'context.breakdown': contextBreakdown(req, usage.inputTokens, usage.outputTokens),
+            'context.updatedAt': now(),
+          };
+    // A display value: never fail a paid-for call over it.
+    await deps.db
+      .doc(paths.task(ctx.taskId))
+      .update(fields)
+      .catch(() => undefined);
+  }
+  return actual;
+}
+
+/** Settle the reservation at what the call cost and give the rest back to the hour. */
+async function closeCall(deps: GatewayDeps, open: OpenCall, actual: MicroEur) {
+  await deps.costGate.settle(open.reservation.id, actual);
+  await returnGovernor(deps, open.reservation.amount - actual, open.takenAt);
+}
+
+const modelRequest = (req: Omit<GenerateRequest, 'runId'>, open: OpenCall): ModelRequest => ({
+  model: req.model,
+  systemInstruction: req.systemInstruction,
+  contents: req.contents,
+  tools: req.tools,
+  maxOutputTokens: open.maxOutputTokens,
+  thinkingBudget: open.thinkingBudget,
+  temperature: req.temperature,
+});
+
+export async function generateWithBudget(
+  deps: GatewayDeps,
+  ctx: GatewayContext,
+  req: Omit<GenerateRequest, 'runId'>,
+): Promise<GenerateResponse> {
+  const open = await openCall(deps, ctx, req);
+  let actual = open.reservation.amount; // a failed call is charged in full: safe and visible
+  try {
+    const result = await deps.provider.generate(modelRequest(req, open));
+    actual = await recordUsage(deps, ctx, req, result.usage);
     return {
       content: result.content,
       finishReason: result.finishReason,
       usage: result.usage,
       cost: actual,
-      remaining,
+      remaining: Math.max(0, open.available - actual),
     };
   } finally {
-    await deps.costGate.settle(reservation.id, actual);
-    await returnGovernor(deps, reservation.amount - actual, takenAt);
+    await closeCall(deps, open, actual);
+  }
+}
+
+/** Extra Gemini settings a streamed call passes through untouched. */
+export interface StreamExtras {
+  toolConfig?: Record<string, unknown>;
+  includeThoughts?: boolean;
+}
+
+/**
+ * The same reserve → call → settle as `generateWithBudget`, for a harness that speaks
+ * Gemini's own streaming API (pi): each chunk goes to `onChunk` as Gemini sent it, and the
+ * usage on the last chunk settles the call. A stream that breaks off is charged in full.
+ */
+export async function streamWithBudget(
+  deps: GatewayDeps,
+  ctx: GatewayContext,
+  req: Omit<GenerateRequest, 'runId'> & StreamExtras,
+  onChunk: (chunk: Record<string, unknown>) => void | Promise<void>,
+): Promise<{ usage: Usage; cost: MicroEur; remaining: MicroEur }> {
+  const stream = deps.provider.generateStream;
+  if (!stream) throw new HttpsError('unimplemented', 'This model backend cannot stream.');
+  const open = await openCall(deps, ctx, req);
+  let actual = open.reservation.amount;
+  try {
+    let usage: Usage | undefined;
+    const chunks = await stream.call(deps.provider, {
+      ...modelRequest(req, open),
+      toolConfig: req.toolConfig,
+      includeThoughts: req.includeThoughts,
+    });
+    for await (const chunk of chunks) {
+      usage = usageFromGemini(chunk.usageMetadata) ?? usage;
+      await onChunk(chunk);
+    }
+    // No usage at all: we cannot tell what it cost, so it stays charged in full.
+    if (!usage) throw new Error('The model stream ended without usage');
+    actual = await recordUsage(deps, ctx, req, usage);
+    return { usage, cost: actual, remaining: Math.max(0, open.available - actual) };
+  } finally {
+    await closeCall(deps, open, actual);
   }
 }
 

@@ -2,7 +2,7 @@
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl jq ripgrep \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin agent
 COPY apps/worker/dist/index.js ./index.js

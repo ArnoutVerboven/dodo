@@ -99,6 +99,46 @@ if (!archived?.sessionPath || !archived?.tracePath) fail('session/trace not arch
 const events = await db.collection(`runs/${run}/events`).get();
 if (!events.empty) fail('events not cleaned up after archival');
 
+// 1b. The same task on the pi harness: pi's own Gemini client streams through gatewayGemini with
+//     the run's token, runs dodo's tools, and the run ends, is charged and archived the same way.
+const piTask = await db.collection('tasks').add({
+  title: 'E2E: summarise notes with pi',
+  titleSource: 'user',
+  description: 'Summarise these notes: the meeting agreed to ship on Friday.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true, harness: 'pi' },
+  summary: '',
+  externalRefs: {},
+  createdAt: now,
+  updatedAt: now,
+});
+const piRun = await until('pi run enqueued', async () => (await piTask.get()).data()?.activeRunId);
+const piEnded = await until(
+  'pi run to end',
+  async () => {
+    const r = (await db.doc(`runs/${piRun}`).get()).data();
+    return ['succeeded', 'failed', 'interrupted', 'budget_exhausted'].includes(r?.state)
+      ? r
+      : undefined;
+  },
+  120_000,
+);
+console.log('pi run ended', piEnded.state, piEnded.endReason, piEnded.error ?? '');
+if (piEnded.state !== 'succeeded') fail(`pi run state ${piEnded.state}: ${piEnded.error}`);
+const piDone = await until('pi task to reach review', async () => {
+  const d = (await piTask.get()).data();
+  return d?.status === 'review' ? d : undefined;
+});
+if (!piDone.summary.includes('Fake summary')) fail(`pi summary not written: ${piDone.summary}`);
+if (!(piEnded.spent > 0) || !(piEnded.steps >= 3)) {
+  fail(`pi run not charged per call: spent ${piEnded.spent}, steps ${piEnded.steps}`);
+}
+const piArchived = (await db.doc(`runs/${piRun}`).get()).data();
+if (!piArchived?.sessionPath) fail('pi session not archived');
+console.log(`pi run: ${piEnded.steps} model calls, ${piEnded.spent} micro-EUR`);
+
 // 2. A task that asks a question parks, and the answer resumes it to completion.
 const ask = await db.collection('tasks').add({
   title: 'E2E: ask me',

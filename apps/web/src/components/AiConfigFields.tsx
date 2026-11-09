@@ -9,6 +9,7 @@ import {
   Plus,
   RotateCcw,
   Sparkles,
+  Terminal,
   Wand2,
 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -129,6 +130,16 @@ export function AiConfigFields({
     },
   ];
 
+  const harnessOptions: DropdownOption[] = [
+    { value: 'dodo-loop', label: 'dodo', icon: Sparkles, title: "dodo's own agent loop" },
+    {
+      value: 'pi',
+      label: 'pi (experimental)',
+      icon: Terminal,
+      title: "pi.dev's loop, with its own file and shell tools and compaction",
+    },
+  ];
+
   const repoOptions: DropdownOption[] = (github?.repos ?? []).map((r) => ({
     value: r.fullName,
     label: r.fullName,
@@ -188,6 +199,24 @@ export function AiConfigFields({
             inherited={optionOf(browserOptions, inherited.browser ?? 'none')}
             onChange={(browser) => set({ browser: browser as AiConfig['browser'] })}
             onReset={() => set({ browser: undefined })}
+          />
+        </Field>
+        <Field
+          label="Harness"
+          hint={
+            (value.harness ?? inherited.harness) === 'pi' &&
+            isLocalModel(value.model ?? inherited.model)
+              ? "pi needs a Gemini model: on the local model the run uses dodo's loop."
+              : undefined
+          }
+        >
+          <Dropdown
+            ariaLabel="Harness"
+            value={value.harness ?? ''}
+            options={harnessOptions}
+            inherited={optionOf(harnessOptions, inherited.harness ?? 'dodo-loop')}
+            onChange={(harness) => set({ harness: harness as AiConfig['harness'] })}
+            onReset={() => set({ harness: undefined })}
           />
         </Field>
         <Field label="Budget">
