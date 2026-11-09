@@ -34,10 +34,17 @@ import {
   checkLocalModel,
   DEFAULT_IDLE_MINUTES,
   DEFAULT_LOCAL_MODEL_URL,
-  DEFAULT_SHARED_PORT,
+  DEFAULT_MLX_MODEL,
   detectLocalModel,
+  GATEWAY_MODEL,
+  gatewayUp,
+  gatewayUrl,
   isLoopback,
+  type LocalModelConfig,
+  ModelServer,
+  mlxServerCommand,
   normaliseBaseUrl,
+  spawnModelServer,
 } from './local-model.js';
 import {
   connectLocal,
@@ -78,14 +85,15 @@ const HELP = `dodo ${VERSION}: run dodo tasks on this Mac
   dodo browser connect <token>
                          the extension's token, so Chrome never asks to allow the agent
   dodo browser use window|extension
-  dodo model             the local model tasks can use (Model: Local model, your Mac)
+  dodo model             the local model tasks can use (Model: Local model, your Mac): this
+                         Mac's local-LLM gateway when it answers ($LOCAL_LLM_URL, default
+                         http://127.0.0.1:8090/v1), else the server set here
   dodo model set         the best MLX model in your Hugging Face cache, on demand (installs
                          mlx-lm when missing)
   dodo model set --mlx <repo>
-                         an MLX model from the Hugging Face cache, started on demand: the
-                         daemon runs mlx_lm.server on the first request and stops it when idle
-                         (--idle <minutes>, default 10); other apps can share it at
-                         http://localhost:${DEFAULT_SHARED_PORT}/v1
+                         an MLX model from the Hugging Face cache, started on demand when
+                         there is no gateway: the daemon runs mlx_lm.server on a run's first
+                         request and stops it when idle (--idle <minutes>, default ${DEFAULT_IDLE_MINUTES})
   dodo model set [url] [--model <name>] [-- <command>]
                          any OpenAI-compatible server on this Mac (default
                          ${DEFAULT_LOCAL_MODEL_URL}); with a command, started on demand too
@@ -410,7 +418,7 @@ async function model(
       if (!found) return;
       config.localModel = found;
       writeConfig(config);
-      describeModel(found);
+      await describeModel(found);
       if (agentInstalled()) {
         restartAgent();
         console.log('Restarted the background daemon so it picks this up.');
@@ -420,22 +428,25 @@ async function model(
     const mlx = str(flags.mlx);
     const port = new URL(base).port || '8080';
     const command = mlx
-      ? ['mlx_lm.server', '--model', mlx, '--port', port]
+      ? mlxServerCommand('mlx_lm.server', mlx, port)
       : rest.length
         ? rest
         : undefined;
     const name = str(flags.model) ?? mlx;
     const idle = Number(str(flags.idle));
-    const shared = Number(str(flags.port));
+    if (flags.port !== undefined)
+      console.log('--port is gone: the local-LLM gateway shares the model with other apps now.');
+    // A gateway setting you made by hand stays.
+    const gateway = config.localModel?.gateway;
     config.localModel = {
       url: base,
       ...(name ? { model: name } : {}),
       ...(command ? { command: resolveProgram(command) } : {}),
       ...(idle > 0 ? { idleMinutes: idle } : {}),
-      ...(shared > 0 ? { port: shared } : {}),
+      ...(gateway !== undefined ? { gateway } : {}),
     };
     writeConfig(config);
-    describeModel(config.localModel);
+    await describeModel(config.localModel);
     if (agentInstalled()) {
       restartAgent();
       console.log('Restarted the background daemon so it picks this up.');
@@ -449,29 +460,45 @@ async function model(
     return;
   } else if (action !== undefined && action !== 'test') {
     throw new Error(
-      'Usage: dodo model [set [url] [--model <name>] [--mlx <repo> | -- <command>] [--idle <min>] [--port <n>]|test|off]',
+      'Usage: dodo model [set [url] [--model <name>] [--mlx <repo> | -- <command>] [--idle <min>]|test|off]',
     );
   }
   if (!config.localModel) {
     console.log(
-      'No local model set up. For an MLX model in your Hugging Face cache:\n  dodo model set --mlx mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit\n(see docs/LOCAL_MODEL.md)',
+      `No local model set up. For an MLX model in your Hugging Face cache:\n  dodo model set --mlx ${DEFAULT_MLX_MODEL}\n(see docs/LOCAL_MODEL.md)`,
     );
     return;
   }
-  if (action !== 'test') describeModel(config.localModel);
-  // On demand: test through the daemon's endpoint, which starts the server if it must.
-  const target = config.localModel.command?.length
-    ? {
-        ...config.localModel,
-        url: `http://localhost:${config.localModel.port ?? DEFAULT_SHARED_PORT}/v1`,
-      }
-    : config.localModel;
-  console.log(`Checking ${target.url} (the first call loads the model, which can take a minute)…`);
-  const r = await checkLocalModel(target);
+  const gatewayIsUp =
+    action === undefined
+      ? await describeModel(config.localModel)
+      : await gatewayAnswers(config.localModel);
+  const local = config.localModel;
+  // What a run would talk to now: the gateway, else dodo's own server (started here for the
+  // test when it is not up, and stopped again), else yours.
+  const gateway = gatewayUrl(local);
+  const own =
+    !gatewayIsUp && local.command?.length
+      ? new ModelServer(local, { spawn: spawnModelServer, log: (m) => console.log(`  ${m}`) })
+      : undefined;
+  const target: LocalModelConfig =
+    gatewayIsUp && gateway ? { url: gateway, model: GATEWAY_MODEL } : local;
+  const which = gatewayIsUp ? 'the gateway' : own ? "dodo's own server" : 'your server';
+  console.log(
+    `Checking ${which} at ${normaliseBaseUrl(target.url)} (the first call loads the model, which can take a minute)…`,
+  );
+  if (own && !(await own.acquire())) {
+    console.log("  not working: dodo's own server did not start (see ~/.dodo/model.log)");
+    return;
+  }
+  const r = await checkLocalModel(target).finally(() => {
+    own?.done();
+    own?.stop(); // only a server this command started
+  });
   if (r.models.length) console.log(`  the server lists: ${r.models.join(', ')}`);
   if (!r.ok) {
     console.log(
-      `  not working: ${r.problem}${config.localModel.command?.length ? ' (is the daemon running? see ~/.dodo/model.log)' : ''}`,
+      `  not working: ${r.problem}${local.command?.length ? ' (see ~/.dodo/model.log)' : ''}`,
     );
     return;
   }
@@ -482,16 +509,31 @@ async function model(
   );
 }
 
-function describeModel(m: NonNullable<CliConfig['localModel']>) {
-  console.log(`Local model: ${m.model ?? "the server's default"} at ${m.url}`);
+async function gatewayAnswers(m: LocalModelConfig): Promise<boolean> {
+  const gateway = gatewayUrl(m);
+  return !!gateway && (await gatewayUp(gateway));
+}
+
+/** What is set, and which server runs use right now. Returns whether the gateway is up. */
+async function describeModel(m: LocalModelConfig): Promise<boolean> {
+  const gateway = gatewayUrl(m);
+  const up = await gatewayAnswers(m);
+  console.log(
+    gateway
+      ? up
+        ? `Local model: the gateway at ${gateway} (model "${GATEWAY_MODEL}"); in use, dodo starts nothing`
+        : `Local model: no gateway answers at ${gateway}; runs use the server below`
+      : 'Local model: gateway off; runs use the server below',
+  );
+  console.log(
+    `${up ? '  without the gateway' : '  in use'}: ${m.model ?? "the server's default"} at ${m.url}`,
+  );
   if (m.command?.length) {
     console.log(
-      `  on demand: the daemon starts \`${m.command.join(' ')}\` on the first request and stops it after ${m.idleMinutes ?? DEFAULT_IDLE_MINUTES} idle minutes`,
+      `  dodo's own server, on demand: the daemon starts \`${m.command.join(' ')}\` on a run's first request and stops it after ${m.idleMinutes ?? DEFAULT_IDLE_MINUTES} idle minutes`,
     );
-    console.log(
-      `  shared endpoint for dodo and other apps: http://localhost:${m.port ?? DEFAULT_SHARED_PORT}/v1`,
-    );
-  } else console.log('  you keep the server running yourself');
+  } else console.log('  you keep that server running yourself');
+  return up;
 }
 
 /** Open a page in the user's default browser (macOS only; elsewhere the URL is printed). */
@@ -556,13 +598,16 @@ async function doctor(): Promise<boolean> {
     }`,
   );
   // Optional too: only tasks set to the local model need it.
-  if (config.localModel?.command?.length) {
+  const gateway = config.localModel ? gatewayUrl(config.localModel) : undefined;
+  if (config.localModel && gateway && (await gatewayUp(gateway))) {
+    console.log(`ok   local model: the gateway at ${gateway} (dodo model test checks tool calls)`);
+  } else if (config.localModel?.command?.length) {
     // On demand: not started here (it holds the model in memory); `dodo model test` does.
     const program = config.localModel.command[0] as string;
     ok(
       `local model on demand (${program.split('/').pop()})`,
       !program.includes('/') || existsSync(program),
-      'dodo model test starts it and checks tool calls',
+      `no gateway answers${gateway ? ` at ${gateway}` : ' (off)'}; dodo model test starts it and checks tool calls`,
     );
   } else if (config.localModel) {
     const r = await checkLocalModel(config.localModel);

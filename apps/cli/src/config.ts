@@ -20,17 +20,20 @@ export interface CliConfig {
   /** MCP servers this Mac runs for the agent (`dodo mcp add`); env values never leave the Mac. */
   mcp?: LocalMcpConfig[];
   /**
-   * The local model (`dodo model set`): an OpenAI-compatible server on this Mac that tasks set
-   * to the local model talk to. `model` is the name to ask it for, when it serves several.
-   * With `command`, the daemon serves a shared endpoint on `port` (default 8090) that starts
-   * the server on the first request and stops it after `idleMinutes` (default 10) without
-   * one, so the model's memory is free in between; other apps can use that endpoint too.
+   * The local model (`dodo model set`). Runs use this Mac's local-LLM gateway when it answers
+   * (`gateway`: its URL, or `false` for none; default `$LOCAL_LLM_URL`, else
+   * `http://127.0.0.1:8090/v1`), with model `default`. Otherwise they use the OpenAI-compatible
+   * server at `url`, asking for `model` when it serves several. With `command`, the daemon
+   * starts that server on a run's first request and stops it after `idleMinutes` (default 15)
+   * without one, so the model's memory is free in between.
    */
   localModel?: {
     url: string;
     model?: string;
     command?: string[];
     idleMinutes?: number;
+    gateway?: string | false;
+    /** @deprecated The port of dodo's old shared endpoint; ignored (the gateway shares now). */
     port?: number;
   };
 }

@@ -1,13 +1,84 @@
-import type { CliConfig } from './config.js';
+import { spawn as spawnChild } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { type CliConfig, home } from './config.js';
 
 /**
- * The local model this Mac offers its runs: any server with the OpenAI chat completions API
- * on this machine. dodo does not start it; `dodo model set` only says where it is.
+ * The local model this Mac offers its runs: the machine's local-LLM gateway when one answers,
+ * else any server with the OpenAI chat completions API on this machine (started on demand by
+ * the daemon when the config has a `command`).
  */
 export type LocalModelConfig = NonNullable<CliConfig['localModel']>;
 
-/** mlx_lm.server's default port; LM Studio uses 1234, Ollama 11434. */
-export const DEFAULT_LOCAL_MODEL_URL = 'http://localhost:8080/v1';
+/**
+ * Where dodo's own server listens (mlx_lm.server's default port); LM Studio uses 1234, Ollama
+ * 11434. `127.0.0.1`, not `localhost`: node tries `::1` first, and mlx_lm.server is on IPv4.
+ */
+export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:8080/v1';
+/** The model dodo sets up when it finds it in the cache; the same one the gateway serves. */
+export const DEFAULT_MLX_MODEL = 'mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit';
+
+/**
+ * The machine's local-LLM gateway (llama-swap under launchd), shared by every app on this Mac:
+ * it loads the model on the first request and unloads it when idle, by itself. dodo only talks
+ * to it, never starts or stops it. Contract:
+ * https://github.com/ArnoutVerboven/dotfiles/blob/main/llm/README.md#client-contract
+ */
+export const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:8090/v1';
+/** The gateway's name for whichever model it serves by default. */
+export const GATEWAY_MODEL = 'default';
+
+/**
+ * The gateway to try: `localModel.gateway` in the config (`false` or `""`: none), else
+ * `$LOCAL_LLM_URL` (empty: none), else the default. Undefined when there is none to try, or it
+ * is not on this Mac (the run's sandbox reaches only loopback).
+ */
+export function gatewayUrl(
+  config: Pick<LocalModelConfig, 'gateway'> | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const raw =
+    config?.gateway !== undefined
+      ? config.gateway
+      : env.LOCAL_LLM_URL !== undefined
+        ? env.LOCAL_LLM_URL
+        : DEFAULT_GATEWAY_URL;
+  if (raw === false || !raw.trim()) return undefined;
+  try {
+    const base = normaliseBaseUrl(raw);
+    return isLoopback(base) ? base : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is the gateway up? A 200 with a JSON `data` list from its model list (this loads nothing). */
+export async function gatewayUp(url: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const r = await fetchFn(`${normaliseBaseUrl(url)}/models`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (r.status !== 200) return false;
+    const body = (await r.json()) as { data?: unknown };
+    return Array.isArray(body?.data);
+  } catch {
+    return false;
+  }
+}
+
+/** The command dodo's own mlx_lm.server runs with, as the gateway contract has it. */
+export function mlxServerCommand(program: string, model: string, port: string): string[] {
+  return [
+    program,
+    '--model',
+    model,
+    '--host',
+    '127.0.0.1',
+    '--port',
+    port,
+    '--chat-template-args',
+    '{"enable_thinking":false}',
+  ];
+}
 
 /** `http://localhost:8080` → `http://localhost:8080/v1`; a `/v1` already there stays. */
 export function normaliseBaseUrl(url: string): string {
@@ -105,10 +176,8 @@ export async function checkLocalModel(
   }
 }
 
-/** Stop the server after this long without a request. */
-export const DEFAULT_IDLE_MINUTES = 10;
-/** Where the on-demand endpoint listens: runs and other apps on this Mac call it. */
-export const DEFAULT_SHARED_PORT = 8090;
+/** Stop the server after this long without a request (the gateway's idle time too). */
+export const DEFAULT_IDLE_MINUTES = 15;
 /** Loading a 30B model from disk takes a while; give up after this. */
 const START_TIMEOUT_MS = 5 * 60_000;
 
@@ -122,6 +191,20 @@ export async function serverUp(url: string, fetchFn: typeof fetch = fetch): Prom
   } catch {
     return false;
   }
+}
+
+/** Has the server dodo started finished loading? `/health` (mlx_lm.server, llama.cpp), else the model list. */
+async function serverReady(url: string, fetchFn: typeof fetch): Promise<boolean> {
+  const base = normaliseBaseUrl(url);
+  try {
+    const r = await fetchFn(`${base.replace(/\/v\d+$/, '')}/health`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (r.ok) return true;
+  } catch {
+    // not up yet, or no /health: try the model list
+  }
+  return serverUp(base, fetchFn);
 }
 
 export interface ServerProcess {
@@ -210,7 +293,7 @@ export class ModelServer {
         this.proc = undefined;
         return false;
       }
-      if (await serverUp(this.config.url, fetchFn)) {
+      if (await serverReady(this.config.url, fetchFn)) {
         this.deps.log('local model: ready');
         return true;
       }
@@ -219,6 +302,11 @@ export class ModelServer {
     this.deps.log('local model: not ready after 5 minutes; stopping it');
     this.stop();
     return false;
+  }
+
+  /** Running a server dodo started, with no request in flight. */
+  idleOwnServer(): boolean {
+    return !!this.proc && this.inFlight === 0 && !this.starting;
   }
 
   stop() {
@@ -230,18 +318,18 @@ export class ModelServer {
 }
 
 /**
- * The shared endpoint (`http://localhost:8090/v1` by default): an OpenAI-compatible front for
- * the model server that starts it on the first request and stops it when idle. dodo's runs use
- * it, and so can any other app on this Mac, so they share one copy of the model in memory.
- * It forwards `/v1/*` as it is, one request at a time (a laptop runs one generation well).
+ * The on-demand endpoint for dodo's own runs when there is no gateway: an OpenAI-compatible
+ * front for dodo's own model server that starts it on the first request and stops it when idle,
+ * so a run that never calls the model never loads it. Private to the daemon's runs: it listens
+ * on a free port of `127.0.0.1` (never the gateway's 8090), and sharing the model with other
+ * apps is the gateway's job. It forwards `/v1/*` as it is, one request at a time.
  */
-export async function startSharedEndpoint(
+export async function startOnDemandEndpoint(
   config: LocalModelConfig,
   server: ModelServer,
   log: (message: string) => void,
 ): Promise<{ url: string; close(): Promise<void> }> {
   const { createServer } = await import('node:http');
-  const port = config.port ?? DEFAULT_SHARED_PORT;
   const upstream = new URL(normaliseBaseUrl(config.url));
   let queue: Promise<unknown> = Promise.resolve();
   const http = createServer((req, res) => {
@@ -285,14 +373,14 @@ export async function startSharedEndpoint(
   });
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
-    http.listen(port, 'localhost', () => resolve());
+    http.listen(0, '127.0.0.1', () => resolve());
   });
   // Generations can be long; node's defaults would cut them off.
   http.requestTimeout = 0;
   http.headersTimeout = 0;
   const address = http.address();
-  const url = `http://localhost:${typeof address === 'object' && address ? address.port : port}/v1`;
-  log(`local model: on demand at ${url} (starts on the first request)`);
+  const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/v1`;
+  log(`local model: dodo's own server on demand at ${url} (starts on the first request)`);
   return {
     url,
     close: () =>
@@ -300,6 +388,103 @@ export async function startSharedEndpoint(
         http.close(() => resolve());
         http.closeAllConnections();
       }),
+  };
+}
+
+/** Which server a run talks to: the gateway, dodo's own (on demand), or one you run yourself. */
+export type LocalModelVia = 'gateway' | 'own' | 'yours';
+
+export interface LocalModelRoute {
+  url: string;
+  model?: string;
+  via: LocalModelVia;
+}
+
+/**
+ * The daemon's local model. For each run it asks again whether the gateway is up (it can come
+ * up, or go away, while the daemon runs): if so, the run talks to it with model `default` and
+ * dodo starts nothing. Otherwise the run gets dodo's own server, on demand when the config has a
+ * start command, or the server at the configured URL as it is.
+ */
+export class LocalModelHost {
+  readonly server: ModelServer | undefined;
+  private front: Promise<{ url: string; close(): Promise<void> } | undefined> | undefined;
+  private readonly fetchFn: typeof fetch;
+  private readonly env: NodeJS.ProcessEnv;
+
+  constructor(
+    private readonly config: LocalModelConfig,
+    private readonly deps: ModelServerDeps & { env?: NodeJS.ProcessEnv },
+  ) {
+    this.fetchFn = deps.fetchFn ?? fetch;
+    this.env = deps.env ?? process.env;
+    this.server = config.command?.length ? new ModelServer(config, deps) : undefined;
+  }
+
+  /** The gateway this host tries, if any. */
+  gateway(): string | undefined {
+    return gatewayUrl(this.config, this.env);
+  }
+
+  async forRun(): Promise<LocalModelRoute> {
+    const gateway = this.gateway();
+    if (gateway && (await gatewayUp(gateway, this.fetchFn))) {
+      // Two copies of the model would not fit: free dodo's own once nothing uses it.
+      if (this.server?.idleOwnServer()) {
+        this.deps.log("local model: the gateway is up; stopping dodo's own server");
+        this.server.stop();
+      }
+      return { url: gateway, model: GATEWAY_MODEL, via: 'gateway' };
+    }
+    const server = this.server;
+    if (server) {
+      this.front ??= startOnDemandEndpoint(this.config, server, this.deps.log).catch(
+        (err: Error) => {
+          this.deps.log(`local model: on-demand endpoint not started (${err.message})`);
+          this.front = undefined;
+          return undefined;
+        },
+      );
+      const front = await this.front;
+      if (front) return { url: front.url, model: this.config.model, via: 'own' };
+    }
+    return { url: normaliseBaseUrl(this.config.url), model: this.config.model, via: 'yours' };
+  }
+
+  async close() {
+    this.server?.stop();
+    const front = await this.front;
+    this.front = undefined;
+    await front?.close();
+  }
+}
+
+/** The model server, as you and outside the sandbox (like local MCP servers); output to a log. */
+export function spawnModelServer(command: string[]): ServerProcess {
+  mkdirSync(home(), { recursive: true, mode: 0o700 });
+  const out = openSync(`${home()}/model.log`, 'a');
+  const child = spawnChild(command[0] as string, command.slice(1), {
+    stdio: ['ignore', out, out],
+    env: process.env,
+  });
+  closeSync(out);
+  let alive = true;
+  const exited = new Promise<void>((resolve) => {
+    const done = () => {
+      alive = false;
+      resolve();
+    };
+    child.on('exit', done);
+    child.on('error', done);
+  });
+  return {
+    running: () => alive,
+    stop: () => {
+      if (!alive) return;
+      child.kill('SIGTERM');
+      const force = setTimeout(() => child.kill('SIGKILL'), 10_000);
+      void exited.then(() => clearTimeout(force));
+    },
   };
 }
 
@@ -340,7 +525,10 @@ export async function findMlxModels(hub = hubCache()): Promise<string[]> {
       }
     })
     .map(({ repo }) => repo);
-  const score = (r: string) => (/instruct|chat|-it\b/i.test(r) ? 2 : 0) + (/qwen/i.test(r) ? 1 : 0);
+  const score = (r: string) =>
+    (r === DEFAULT_MLX_MODEL ? 4 : 0) +
+    (/instruct|chat|-it\b/i.test(r) ? 2 : 0) +
+    (/qwen/i.test(r) ? 1 : 0);
   return repos.sort((a, b) => score(b) - score(a) || a.localeCompare(b));
 }
 
@@ -418,6 +606,6 @@ export async function detectLocalModel(
   return {
     url: DEFAULT_LOCAL_MODEL_URL,
     model,
-    command: [server, '--model', model, '--port', new URL(DEFAULT_LOCAL_MODEL_URL).port],
+    command: mlxServerCommand(server, model, new URL(DEFAULT_LOCAL_MODEL_URL).port),
   };
 }
