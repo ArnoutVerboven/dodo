@@ -17,7 +17,7 @@ export const MODEL_OPTIONS: { value: string; label: string; title?: string }[] =
 
 /**
  * The settings patch for picking a device. The local model runs only on a Mac, so picking Remote
- * while this level picks the local model swaps it for the default cloud model: the inherited
+ * while the local model applies (picked here or inherited) switches the model: to the inherited
  * model when that is a cloud one, else Auto.
  */
 export function pickDevice(
@@ -25,7 +25,7 @@ export function pickDevice(
   value: { model?: string },
   inherited: { model?: string } = {},
 ): { device: string; model?: string } {
-  if (device !== 'gcp' || !isLocalModel(value.model)) return { device };
+  if (device !== 'gcp' || !isLocalModel(value.model ?? inherited.model)) return { device };
   const model = inherited.model && !isLocalModel(inherited.model) ? undefined : 'auto';
   return { device, model };
 }

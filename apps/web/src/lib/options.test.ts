@@ -11,6 +11,14 @@ describe('pickDevice', () => {
     });
   });
 
+  it('also switches an inherited local model to Auto', () => {
+    expect(pickDevice('gcp', {}, { model: 'local' })).toEqual({ device: 'gcp', model: 'auto' });
+    expect(pickDevice('gcp', {}, { model: 'local:qwen3' })).toEqual({
+      device: 'gcp',
+      model: 'auto',
+    });
+  });
+
   it('falls back to an inherited cloud model', () => {
     const patch = pickDevice('gcp', { model: 'local' }, { model: 'gemini-3.5-flash' });
     expect(patch).toEqual({ device: 'gcp', model: undefined });
