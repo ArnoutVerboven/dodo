@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81",
+    "@dodo/browser-engine": "workspace:*",
     "@dodo/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/mcp": "0.0.83",
+    "agent-browser": "0.41.2",
     "firebase": "^13.1.0"
   },
   "devDependencies": {

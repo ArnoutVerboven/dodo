@@ -76,7 +76,7 @@ export const GROUPS: Record<BuiltinGroup, { label: string; note: string; toolset
   },
   browser: {
     label: 'Browser',
-    note: 'Follows the task’s Browser setting. Mac: your Chrome window. Remote: headless Chromium.',
+    note: 'Follows the task’s Browser setting. Mac: a Chrome window on your screen, so you can step in for a login. Remote: headless Chromium; a step only you can do comes to you as a question with a screenshot.',
     toolsets: false,
   },
 };
@@ -174,9 +174,20 @@ export const Toolset = z.object({
 });
 export type Toolset = z.infer<typeof Toolset>;
 
+/**
+ * What drives the browser. agent-browser (the default) answers every action with the page it
+ * led to, interactive elements only, which takes about half the model calls and a fraction of
+ * the tokens (tests/browser-bench); Playwright MCP is the earlier engine, kept as an
+ * alternative, and the only one that drives your everyday Chrome through its extension.
+ */
+export const BrowserEngine = z.enum(['agent-browser', 'playwright']);
+export type BrowserEngine = z.infer<typeof BrowserEngine>;
+export const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'agent-browser';
+
 /** settings/tools */
 export const ToolSettings = z.object({
   disabledBuiltins: z.array(z.string()).default([]),
+  browserEngine: BrowserEngine.default(DEFAULT_BROWSER_ENGINE),
 });
 export type ToolSettings = z.infer<typeof ToolSettings>;
 
@@ -233,6 +244,8 @@ export interface RunToolAccess {
   mcp: RunMcpServer[];
   /** Names of the toolsets that narrowed this run, for the trace. */
   toolsets: string[];
+  /** The engine of the run's browser, when it gets one. */
+  browserEngine?: BrowserEngine;
 }
 
 /**
@@ -241,7 +254,7 @@ export interface RunToolAccess {
  * own settings), and the union of what the toolsets name. Local servers only on their own Mac.
  */
 export function resolveToolAccess(input: {
-  settings: ToolSettings;
+  settings: Pick<ToolSettings, 'disabledBuiltins'> & { browserEngine?: BrowserEngine };
   servers: McpServer[];
   toolsets: Toolset[];
   /** The run's device: `gcp` or `mac:{id}`. */
@@ -299,7 +312,12 @@ export function resolveToolAccess(input: {
         },
       ];
     });
-  return { builtins, mcp, toolsets: input.toolsets.map((t) => t.name) };
+  return {
+    builtins,
+    mcp,
+    toolsets: input.toolsets.map((t) => t.name),
+    browserEngine: input.settings.browserEngine ?? DEFAULT_BROWSER_ENGINE,
+  };
 }
 
 /** The function name the model sees for an MCP tool: Gemini allows [A-Za-z0-9_.-], 64 chars. */

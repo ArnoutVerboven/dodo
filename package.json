@@ -25,7 +25,8 @@
     "seed": "node scripts/seed-emulator.mjs",
     "dev": "pnpm --filter @dodo/core build && pnpm --filter @dodo/web dev:emulators",
     "dodo": "node apps/cli/dist/index.js",
-    "mac": "pnpm install --silent && pnpm -s build && node apps/cli/dist/index.js"
+    "mac": "pnpm install --silent && pnpm -s build && node apps/cli/dist/index.js",
+    "bench:browser": "pnpm --filter @dodo/browser-bench bench"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",

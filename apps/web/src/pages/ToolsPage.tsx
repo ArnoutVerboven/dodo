@@ -1,4 +1,5 @@
 import {
+  type BrowserEngine,
   BUILTIN_TOOLS,
   type BuiltinGroup,
   type BuiltinTool,
@@ -44,6 +45,7 @@ import {
   refreshServer,
   saveRemoteServer,
   saveToolset,
+  setBrowserEngine,
   setBuiltinEnabled,
   setServerEnabled,
   setServerQuietTools,
@@ -670,6 +672,7 @@ function BuiltinTab({ onInspect }: { onInspect: (t: Inspected) => void }) {
               </div>
               <Availability group={g} />
             </div>
+            {g === 'browser' && <EnginePicker value={toolSettings.browserEngine} />}
             <ul className="divide-y border-t">
               {tools.map((t) => {
                 const core = CORE_TOOLS.includes(t.name);
@@ -708,14 +711,61 @@ function Availability({ group }: { group: BuiltinGroup }) {
     return (
       <span className="flex gap-1">
         <Badge>
-          <Laptop className="h-3 w-3" /> Mac: your Chrome
+          <Laptop className="h-3 w-3" /> Mac: Chrome window
         </Badge>
         <Badge>
-          <Cloud className="h-3 w-3" /> Remote: headless
+          <Cloud className="h-3 w-3" /> Remote: headless Chromium
         </Badge>
       </span>
     );
   return <span className="flex gap-1">{both}</span>;
+}
+
+const ENGINES: Array<{ id: BrowserEngine; label: string; note: string }> = [
+  {
+    id: 'agent-browser',
+    label: 'agent-browser',
+    note: 'Default. Each click or entry answers with the page it led to, showing only what can be clicked or filled in: about half the steps and a fraction of the tokens.',
+  },
+  {
+    id: 'playwright',
+    label: 'Playwright MCP',
+    note: 'The earlier engine, now also answering each step with the page. Your everyday Chrome (the Playwright Extension) always uses it.',
+  },
+];
+
+/** What drives the browser, on the Mac and remotely; the tools and their rules stay the same. */
+function EnginePicker({ value }: { value: BrowserEngine }) {
+  const current = ENGINES.find((e) => e.id === value) ?? ENGINES[0];
+  return (
+    <div className="border-t px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium">Engine</span>
+        <div className="flex gap-1">
+          {ENGINES.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              aria-pressed={e.id === current?.id}
+              onClick={() => void setBrowserEngine(e.id)}
+              className={cn(
+                'rounded-full border px-2.5 py-0.5 text-xs',
+                e.id === current?.id
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'hover:bg-accent',
+              )}
+            >
+              {e.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {current?.note} Applies from the next run; the tools below and their approvals are the same
+        with either.
+      </p>
+    </div>
+  );
 }
 
 const inspectBuiltin = (t: BuiltinTool): Inspected => ({

@@ -53,7 +53,8 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.token.run is string && isLiveRun(request.auth.token.run);
     }
 
-    // Tools view: built-ins turned off globally. Runs get their tools through runStart.
+    // Tools view: built-ins turned off globally, and the browser engine. Runs get their tools
+    // through runStart.
     match /settings/tools {
       allow read, write: if isOwner();
     }

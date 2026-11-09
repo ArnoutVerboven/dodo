@@ -1,4 +1,5 @@
-# The worker with a browser: the same bundle, plus Playwright MCP and headless Chromium.
+# The worker with a browser: the same bundle, plus agent-browser, Playwright MCP and headless
+# Chromium.
 # Built by the deploy workflow after `pnpm build`; expects apps/worker/dist/index.js.
 FROM node:22-slim
 WORKDIR /app
@@ -18,6 +19,13 @@ RUN npm init -y >/dev/null \
   && ./node_modules/.bin/playwright install --with-deps chromium \
   && rm -rf /var/lib/apt/lists/* /root/.npm \
   && chmod -R a+rX /ms-playwright
+# agent-browser, the default engine (Tools › Browser), drives that same Chromium through the
+# worker (headless.ts). Its package ships a binary per platform; only this one is kept. Its
+# postinstall would download what is already there.
+RUN npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts agent-browser@0.41.2 \
+  && find node_modules/agent-browser/bin -name 'agent-browser-*' ! -name "agent-browser-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" -delete \
+  && chmod 755 node_modules/agent-browser/bin/agent-browser-linux-* \
+  && rm -rf /root/.npm
 COPY apps/worker/dist/index.js ./index.js
 COPY --chmod=755 apps/worker/chromium-as-browser.sh /usr/local/bin/chromium-as-browser
 # The worker runs as root and holds the run's credential; the agent's commands, git and its

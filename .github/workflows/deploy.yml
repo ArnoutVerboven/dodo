@@ -52,7 +52,7 @@ jobs:
           [ "$(hit "$ALL")" = true ] && { echo "Shared input changed: deploying everything"; everything; }
           FB='^firebase\.json$'
           {
-            echo "worker=$(hit '^(apps/worker/|packages/(agent|policy)/|apps/web/\.env\.production$)')"
+            echo "worker=$(hit '^(apps/worker/|packages/(agent|browser-engine|harness-pi|policy)/|apps/web/\.env\.production$)')"
             echo "functions=$(hit "^(apps/functions/|packages/(agent|budget|policy|jobs)/)|$FB")"
             echo "hosting=$(hit "^(apps/web/|packages/jobs/)|$FB")"
             echo "firestore=$(hit "^firestore\.(rules|indexes\.json)$|$FB")"

@@ -1,0 +1,21 @@
+{
+  "name": "@dodo/browser-bench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node --experimental-strip-types --no-warnings=ExperimentalWarning src/run.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@playwright/mcp": "0.0.83",
+    "agent-browser": "0.41.2",
+    "playwright": "1.64.0-alpha-1790635538000"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^3.2.0"
+  }
+}

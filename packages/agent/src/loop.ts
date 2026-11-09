@@ -16,6 +16,7 @@ import {
   summaryText,
 } from '@dodo/core';
 import type { PolicyEngine } from '@dodo/policy';
+import { pruneOldPages } from './browser.js';
 import {
   type ControlPlane,
   GatewayBudgetError,
@@ -285,6 +286,8 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         summary: `Model call ${steps}`,
         data: { turns: session.length },
       });
+      // Pages the model has moved on from go out of the conversation (browser.ts).
+      pruneOldPages(session);
       let response: Awaited<ReturnType<ControlPlane['generate']>>;
       try {
         response = await control.generate({

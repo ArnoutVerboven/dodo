@@ -1,7 +1,7 @@
 // Checks that each deploy target in .github/workflows/deploy.yml redeploys when any workspace
 // package it depends on (directly or not) changes. A missing package means a change there
 // ships to one side and not the other (the worker and the functions then run different code).
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const TARGETS = { worker: 'apps/worker', functions: 'apps/functions', hosting: 'apps/web' };
 
@@ -10,7 +10,7 @@ const pkg = (dir) => JSON.parse(readFileSync(`${dir}/package.json`, 'utf8'));
 
 // Workspace packages by name, to their folder.
 const dirs = new Map();
-for (const name of ['agent', 'budget', 'core', 'jobs', 'policy']) {
+for (const name of readdirSync('packages')) {
   dirs.set(pkg(`packages/${name}`).name, `packages/${name}`);
 }
 for (const dir of Object.values(TARGETS)) dirs.set(pkg(dir).name, dir);

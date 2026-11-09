@@ -1,6 +1,19 @@
-import { chownSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { type BrowserClient, connectMcpServer } from '@dodo/agent';
+import {
+  AgentBrowser,
+  AgentBrowserTools,
+  type BrowserEngine,
+  browserCookies,
+  type CdpBridge,
+  cdpCookies,
+  launchChromeBridge,
+  mcpServer,
+  restoreState,
+  type StorageState,
+} from '@dodo/browser-engine';
 import type { createConnection as CreateConnection } from '@playwright/mcp';
 import type { BrowserContextOptions } from 'playwright';
 
@@ -143,12 +156,21 @@ export function browserEnv(
   return out;
 }
 
-export async function startHeadlessBrowser(opts: {
+export interface HeadlessOptions {
   outputDir: string;
   /** The task's logins from an earlier run, as the control plane handed them back. */
   storageState?: StorageStateJson;
+  /** What drives it (Tools › Browser); agent-browser by default. */
+  engine?: BrowserEngine;
   log: (message: string) => void;
-}): Promise<HeadlessBrowser> {
+}
+
+export function startHeadlessBrowser(opts: HeadlessOptions): Promise<HeadlessBrowser> {
+  return opts.engine === 'playwright' ? startPlaywright(opts) : startAgentBrowser(opts);
+}
+
+/** Playwright MCP in this process, on a context the worker owns. */
+async function startPlaywright(opts: HeadlessOptions): Promise<HeadlessBrowser> {
   mkdirSync(opts.outputDir, { recursive: true, mode: 0o700 });
   const { chromium } = await import('playwright');
   const { createConnection } = (await import('@playwright/mcp')) as {
@@ -238,6 +260,153 @@ export async function startHeadlessBrowser(opts: {
       await server.close().catch(() => undefined);
       await context.close().catch(() => undefined);
       await browser.close().catch(() => undefined);
+    },
+  };
+}
+
+/** `Google Chrome for Testing 153.0.8010.12` → `153.0.8010.12`; undefined when it won't say. */
+function chromiumVersion(binary: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(binary, ['--version'], { timeout: 10_000 }, (err, out) =>
+      resolve(err ? undefined : /(\d+\.\d+\.\d+\.\d+)/.exec(String(out))?.[1]),
+    );
+  });
+}
+
+/**
+ * agent-browser on headless Chromium. The worker launches Chromium itself, as the browser user,
+ * with DevTools on a pipe only it holds, and agent-browser reaches it through the bridge's
+ * secret WebSocket (packages/browser-engine/src/cdp-bridge.ts): agent-browser launching Chrome
+ * on its own would open a DevTools port on localhost, which the agent's commands, running as
+ * another user on this machine, could reach.
+ */
+async function startAgentBrowser(opts: HeadlessOptions): Promise<HeadlessBrowser> {
+  mkdirSync(opts.outputDir, { recursive: true, mode: 0o700 });
+  const { chromium } = await import('playwright');
+  const real = headlessShellPath(process.env.PLAYWRIGHT_BROWSERS_PATH, chromium.executablePath());
+  const userAgent = chromeUserAgent((await chromiumVersion(real)) ?? '131');
+  const user = browserUser();
+  const profile = `${opts.outputDir}-profile`;
+  mkdirSync(profile, { recursive: true, mode: 0o700 });
+  if (user) chownSync(profile, user.uid, user.gid);
+  const args = [
+    '--headless',
+    // Without this Chromium tells every page it is automated (navigator.webdriver), and login
+    // providers such as itsme refuse the session.
+    '--disable-blink-features=AutomationControlled',
+    `--user-agent=${userAgent}`,
+    `--user-data-dir=${profile}`,
+    '--window-size=1280,900',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--password-store=basic',
+    '--use-mock-keychain',
+    '--disable-background-networking',
+    '--disable-dev-shm-usage',
+    'about:blank',
+  ];
+  const plainEnv: Record<string, string> = {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: profile,
+  };
+  for (const k of [
+    'LANG',
+    'TZ',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+  ]) {
+    const v = process.env[k];
+    if (v !== undefined) plainEnv[k] = v;
+  }
+  const launch = (sandbox: boolean) =>
+    launchChromeBridge({
+      executablePath: user ? user.wrapper : real,
+      args: sandbox ? args : ['--no-sandbox', ...args],
+      env: user ? browserEnv(user, real) : plainEnv,
+    });
+  let bridge: CdpBridge;
+  if (user) {
+    bridge = await launch(true).catch(async (err: Error) => {
+      opts.log(
+        `browser: Chromium sandbox unavailable, running without it: ${err.message.split('\n')[0]}`,
+      );
+      return launch(false);
+    });
+  } else {
+    bridge = await launch(false);
+  }
+
+  const restored = parseStorageState(opts.storageState) as StorageState | undefined;
+  if (opts.storageState && !restored) opts.log('browser: stored logins unreadable; starting fresh');
+  if (restored) {
+    await restoreState(bridge, restored).then(
+      () => opts.log('browser: logins from an earlier run restored'),
+      (err: Error) => opts.log(`browser: logins not restored: ${err.message}`),
+    );
+  }
+
+  // agent-browser's own files (its socket, its daemon's state) in a folder only root can enter.
+  const home = `${opts.outputDir}-agent-browser`;
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const ab = new AgentBrowser({
+    session: 'dodo',
+    env: {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: home,
+      LANG: process.env.LANG ?? 'C.UTF-8',
+      AGENT_BROWSER_SOCKET_DIR: path.join(home, 'run'),
+      AGENT_BROWSER_CDP: bridge.wsUrl,
+      AGENT_BROWSER_NO_VERSION_CHECK: '1',
+      AGENT_BROWSER_DEFAULT_TIMEOUT: '15000',
+    },
+  });
+  // Its daemon's live view of the page goes off before the agent gets the browser.
+  try {
+    await ab.start();
+  } catch (err) {
+    await ab.one(['close'], 10_000).catch(() => undefined);
+    await bridge.close();
+    throw err;
+  }
+  const tools = new AgentBrowserTools(ab, { outputDir: opts.outputDir });
+  const client = await connectMcpServer(mcpServer(tools));
+
+  let stopped = false;
+  return {
+    client,
+    async storageState() {
+      const cookies = await browserCookies(bridge);
+      // Local storage of the pages open now, as agent-browser saves it.
+      const file = path.join(home, 'state.json');
+      let origins: unknown[] = [];
+      const saved = await ab.one(['state', 'save', file]);
+      if (saved.ok) {
+        try {
+          const v = JSON.parse(readFileSync(file, 'utf8')) as { origins?: unknown };
+          if (Array.isArray(v.origins)) origins = v.origins;
+        } catch {}
+        rmSync(file, { force: true });
+      }
+      return JSON.stringify({ cookies, origins });
+    },
+    async addState(json) {
+      const state = parseStorageState(json) as StorageState | undefined;
+      const cookies = cdpCookies(state?.cookies ?? []);
+      if (!cookies.length) return false;
+      await bridge.call('Storage.setCookies', { cookies });
+      return true;
+    },
+    lastUrl: () => tools.lastUrl(),
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      await client.close().catch(() => undefined);
+      await ab.one(['close'], 10_000).catch(() => undefined);
+      await bridge.close().catch(() => undefined);
     },
   };
 }
