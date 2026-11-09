@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chmodSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { createRequire as moduleRequire } from 'node:module';
 import path from 'node:path';
 
 /**
@@ -12,7 +12,7 @@ import path from 'node:path';
 
 /** The native binary the npm package ships for this machine. */
 export function agentBrowserBinary(): string {
-  const require = createRequire(import.meta.url);
+  const require = moduleRequire(import.meta.url);
   const dir = path.dirname(require.resolve('agent-browser/package.json'));
   const os = process.platform === 'win32' ? 'win32' : process.platform;
   const file = path.join(
