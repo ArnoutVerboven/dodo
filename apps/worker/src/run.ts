@@ -183,6 +183,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       // Not in the task folder: page snapshots there can show what was typed into a field.
       outputDir: path.join(os.tmpdir(), `dodo-browser-${env.runId}`),
       storageState: stored.state,
+      engine: started.tools?.browserEngine,
       log: (m) => console.log(m),
     }).catch((err: Error) => {
       console.log(`headless browser unavailable: ${err.message}`);

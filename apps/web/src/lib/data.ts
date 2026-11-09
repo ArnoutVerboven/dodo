@@ -1,6 +1,7 @@
 import {
   ApiToken,
   Artifact,
+  type BrowserEngine,
   Device,
   eur,
   GitHubConnection,
@@ -473,6 +474,11 @@ export async function setBuiltinEnabled(name: string, enabled: boolean) {
     { disabledBuiltins: enabled ? arrayRemove(name) : arrayUnion(name) },
     { merge: true },
   );
+}
+
+/** What drives the browser, for every run from the next one on. */
+export async function setBrowserEngine(engine: BrowserEngine) {
+  await setDoc(doc(db, paths.toolSettings()), { browserEngine: engine }, { merge: true });
 }
 
 export async function setServerEnabled(id: string, enabled: boolean) {

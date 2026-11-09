@@ -48,6 +48,8 @@ export const DeviceClaimResponse = z.object({
   timeoutSeconds: z.number().int(),
   /** The task asked for the user's Chrome and the daemon offered it: start the browser server. */
   browser: z.boolean().optional(),
+  /** With `browser`: the engine to drive it with (Tools › Browser); absent means the default. */
+  browserEngine: z.enum(['agent-browser', 'playwright']).optional(),
 });
 export type DeviceClaimResponse = z.infer<typeof DeviceClaimResponse>;
 

@@ -18,7 +18,8 @@
     "@dodo/core": "workspace:*",
     "firebase": "^13.1.0",
     "@dodo/policy": "workspace:*",
-    "@dodo/harness-pi": "workspace:*"
+    "@dodo/harness-pi": "workspace:*",
+    "@dodo/browser-engine": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

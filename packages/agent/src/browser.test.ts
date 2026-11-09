@@ -8,8 +8,10 @@ import {
   browserClaim,
   browserTools,
   pageUrlIn,
+  pruneOldPages,
   takeScreenshot,
   uploadPaths,
+  withPage,
 } from './browser.js';
 import type { TaskStore } from './control-plane.js';
 import { createSecretResolver } from './secrets.js';
@@ -175,7 +177,8 @@ describe('browserTools', () => {
     });
     expect(calls).toEqual([]);
     await upload?.execute({ paths: ['cv.pdf'] }, ctx);
-    expect(calls).toEqual(['browser_file_upload']);
+    // The upload, then the page it led to.
+    expect(calls).toEqual(['browser_file_upload', 'browser_snapshot']);
   });
 
   it('reads the page url out of a snapshot', () => {
@@ -254,7 +257,7 @@ describe('browserTools', () => {
 
     const args = { target: 'e1', text: '{{vault:energy.phone}}' };
     const out = await run('browser_type', args);
-    expect(calls.at(-1)).toEqual(['browser_type', { target: 'e1', text: '+32470111222' }]);
+    expect(typed().at(-1)).toEqual(['browser_type', { target: 'e1', text: '+32470111222' }]);
     expect(args.text).toBe('{{vault:energy.phone}}');
     expect(JSON.stringify(out)).not.toContain('+32470111222');
     expect(JSON.stringify(out)).toContain('(hidden: it held a secret value)');
@@ -264,7 +267,7 @@ describe('browserTools', () => {
         { name: 'pw', target: 'e3', value: '{{vault:energy.password}}' },
       ],
     });
-    expect(calls.at(-1)?.[1]).toEqual({
+    expect(typed().at(-1)?.[1]).toEqual({
       fields: [
         { name: 'user', target: 'e2', value: 'arnout' },
         { name: 'pw', target: 'e3', value: "pw'1\\23" },
@@ -444,5 +447,58 @@ describe('browserTools', () => {
       });
       expect(t.map((x) => x.name)).toEqual(['browser_type']);
     });
+  });
+});
+
+describe('pages in the conversation', () => {
+  const page = (url: string, yaml: string) =>
+    `### Page\n- Page URL: ${url}\n### Snapshot\n\`\`\`yaml\n${yaml}\n\`\`\``;
+
+  it('answers a Playwright action with its page, interactive elements only', async () => {
+    const client: BrowserClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {
+          text: page(
+            'https://a.test/',
+            '- heading "Shop" [ref=e1]\n- paragraph: Welcome\n- button "Buy" [ref=e2]',
+          ),
+          isError: false,
+        };
+      },
+      async close() {},
+    };
+    const res = await withPage(client, {
+      text: '### Result\nClicked\n### Page\n- Page URL: https://a.test/\n### Snapshot\n- [Snapshot](page-1.yml)',
+      isError: false,
+    });
+    expect(res.text).toContain('- button "Buy" [ref=e2]');
+    expect(res.text).toContain('- heading "Shop" [ref=e1]');
+    expect(res.text).not.toContain('Welcome');
+    expect(res.text).not.toContain('page-1.yml');
+    expect(pageUrlIn(res.text)).toBe('https://a.test/');
+    // A result that already shows the page (agent-browser) is left alone.
+    const shown = { text: page('https://a.test/', '- button "Buy" [ref=e2]'), isError: false };
+    expect(await withPage(client, shown)).toBe(shown);
+  });
+
+  it('keeps only the latest page snapshot in the conversation', () => {
+    const fr = (name: string, text: string) => ({
+      role: 'user',
+      parts: [{ functionResponse: { name, response: { text } } }],
+    });
+    const session = [
+      fr('browser_navigate', page('https://a.test/', '- link "Next" [ref=e1]')),
+      fr('read_file', '```yaml\nkept: true\n```'),
+      fr('browser_click', page('https://a.test/b', '- button "Buy" [ref=e2]')),
+    ];
+    pruneOldPages(session);
+    const texts = session.map((c) => c.parts[0]?.functionResponse.response.text);
+    expect(texts[0]).toContain('[older page snapshot removed]');
+    expect(texts[0]).toContain('- Page URL: https://a.test/');
+    expect(texts[1]).toContain('kept: true');
+    expect(texts[2]).toContain('- button "Buy" [ref=e2]');
   });
 });

@@ -30,6 +30,7 @@ import {
   type BrowserServer,
   browserReport,
   endedWaitingInput,
+  engineFor,
   focusBrowserWindow,
   startBrowserServer,
 } from './browser.js';
@@ -291,16 +292,24 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
               log('browser: the server is gone; starting it again');
               browserServer = undefined;
             }
+            // Tools › Browser switched engines: the old one lets go of the profile first.
+            const engine = engineFor(browser.mode, claimed.browserEngine);
+            if (browserServer && browserServer.engine !== engine) {
+              log(`browser: switching to ${engine}`);
+              await browserServer.stop().catch(() => {});
+              browserServer = undefined;
+            }
             if (!browserServer) {
               try {
                 browserServer = await startBrowserServer({
                   mode: browser.mode,
+                  engine,
                   token: config.browser?.token,
                   outputDir: path.join(workRoot(), 'browser'),
                   profileDir: chromeProfile(),
                   log,
                 });
-                log(`browser: Playwright MCP (${browser.mode}) at ${browserServer.url}`);
+                log(`browser: ${engine} (${browser.mode}) ready`);
               } catch (err) {
                 log(`run ${runId}: ${(err as Error).message}; running without the browser`);
               }

@@ -1,4 +1,6 @@
 import {
+  type BrowserEngine,
+  DEFAULT_BROWSER_ENGINE,
   DEVICE_PROTOCOL,
   DEVICE_RUN_TIMEOUT_S,
   type Device,
@@ -14,6 +16,7 @@ import {
   isApproved,
   paths,
   type Run,
+  ToolSettings,
 } from '@dodo/core';
 import { hostAllowedBy } from '@dodo/policy';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
@@ -143,14 +146,23 @@ export async function claimRun(
     taskId: claimed.taskId,
     generation: claimed.generation,
   });
+  // The run says whether it wants a browser (the setting, the router or a step-up decided).
+  const browser = req.browser === true && claimed.browser;
   return {
     token,
     taskId: claimed.taskId,
     generation: claimed.generation,
     timeoutSeconds: DEVICE_RUN_TIMEOUT_S,
-    // The run says whether it wants a browser (the setting, the router or a step-up decided).
-    browser: req.browser === true && claimed.browser,
+    browser,
+    ...(browser ? { browserEngine: await browserEngineSetting(deps.db) } : {}),
   };
+}
+
+/** The engine Tools › Browser picked; the default when unset or unreadable. */
+async function browserEngineSetting(db: Firestore): Promise<BrowserEngine> {
+  const snap = await db.doc(paths.toolSettings()).get();
+  const parsed = ToolSettings.safeParse(snap.data() ?? {});
+  return parsed.success ? parsed.data.browserEngine : DEFAULT_BROWSER_ENGINE;
 }
 
 /** The run, when the caller is the approved device it is addressed to; an error otherwise. */

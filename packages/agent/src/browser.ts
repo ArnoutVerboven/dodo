@@ -264,7 +264,8 @@ export async function browserTools(
             callArgs = resolved.args;
           }
           if (ACTIONS.has(name)) lastActionAt = now();
-          const res = await client.callTool(name, callArgs);
+          let res = await client.callTool(name, callArgs);
+          if (PAGE_CHANGES.has(name)) res = await withPage(client, res);
           // The call's echo of its own Playwright code holds the typed text, escaped: the
           // redaction would miss a value with a quote or a backslash in it.
           return { result: afterCall(name, injected ? withoutCode(res) : res, ctx) };
@@ -288,6 +289,85 @@ export async function browserTools(
       }),
     );
   return tools;
+}
+
+/** Calls after which the model needs to see the page again. */
+const PAGE_CHANGES = new Set([
+  ...BROWSER_TOOLS.filter(
+    (n) =>
+      ![
+        'browser_snapshot',
+        'browser_find',
+        'browser_tabs',
+        'browser_evaluate',
+        'browser_take_screenshot',
+      ].includes(n),
+  ),
+]);
+
+/** Roles kept when a page is shown by its interactive elements only. */
+const INTERACTIVE =
+  /^\s*- (button|link|textbox|searchbox|combobox|checkbox|radio|switch|tab|menuitem|option|slider|spinbutton|heading|dialog|alertdialog|alert)\b/;
+
+/** The interactive elements and headings of a snapshot, with the text that names them. */
+export function interactiveOnly(yaml: string): string {
+  return yaml
+    .split('\n')
+    .filter((l) => INTERACTIVE.test(l))
+    .join('\n');
+}
+
+/**
+ * An action's result with the page it led to. agent-browser's results already carry it;
+ * Playwright MCP's do not (they point to a snapshot file), so the model would spend a second
+ * call on browser_snapshot after every step. Here the page is fetched right away and shown by
+ * its interactive elements; browser_snapshot still gives the whole page.
+ */
+export async function withPage(
+  client: BrowserClient,
+  res: { text: string; isError: boolean; images?: ImageUpload[] },
+): Promise<{ text: string; isError: boolean; images?: ImageUpload[] }> {
+  if (/^```yaml$/m.test(res.text)) return res;
+  const snap = await client.callTool('browser_snapshot', {}).catch(() => undefined);
+  const yaml =
+    snap && !snap.isError ? /^```yaml\n([\s\S]*?)\n```$/m.exec(snap.text)?.[1] : undefined;
+  if (yaml === undefined) return res;
+  const text = res.text.replace(/^### Snapshot\n- [^\n]*\.yml\)?\n?/m, '');
+  return {
+    ...res,
+    text: `${text.trimEnd()}\n### Snapshot (interactive elements; browser_snapshot shows the whole page)\n\`\`\`yaml\n${interactiveOnly(yaml) || '(none)'}\n\`\`\``,
+  };
+}
+
+const STALE_PAGE = '[older page snapshot removed]';
+
+/**
+ * Only the latest page stays in the conversation: older browser results keep their text but
+ * lose their snapshot, which the model no longer acts on (its refs are stale). Without this
+ * every step re-sends every page seen so far.
+ */
+export function pruneOldPages(
+  session: Array<{
+    parts: Array<{ functionResponse?: { name?: string; response?: Record<string, unknown> } }>;
+  }>,
+): void {
+  let seenLatest = false;
+  for (let i = session.length - 1; i >= 0; i--) {
+    const parts = session[i]?.parts ?? [];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const fr = parts[j]?.functionResponse;
+      if (!fr?.name?.startsWith('browser_') || !fr.response) continue;
+      for (const key of ['text', 'error'] as const) {
+        const v = fr.response[key];
+        if (typeof v !== 'string' || !v.includes('```yaml\n')) continue;
+        if (!seenLatest) {
+          seenLatest = true;
+          continue;
+        }
+        fr.response[key] = v.replace(/```yaml\n[\s\S]*?\n```/g, STALE_PAGE);
+      }
+    }
+  }
 }
 
 /** Calls that may make a site send a code (or a new one). */

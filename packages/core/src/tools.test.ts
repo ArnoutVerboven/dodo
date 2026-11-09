@@ -5,6 +5,7 @@ import {
   mcpToolName,
   refMatches,
   resolveToolAccess,
+  ToolSettings,
   type Toolset,
   toolAllowed,
 } from './tools.js';
@@ -52,6 +53,20 @@ const outlook = server({
 });
 
 describe('resolveToolAccess', () => {
+  it('passes the browser engine on, agent-browser unless Playwright was picked', () => {
+    const base = { servers: [], toolsets: [], device: 'gcp' };
+    expect(resolveToolAccess({ ...base, settings: { disabledBuiltins: [] } }).browserEngine).toBe(
+      'agent-browser',
+    );
+    expect(
+      resolveToolAccess({
+        ...base,
+        settings: { disabledBuiltins: [], browserEngine: 'playwright' },
+      }).browserEngine,
+    ).toBe('playwright');
+    expect(ToolSettings.parse({}).browserEngine).toBe('agent-browser');
+  });
+
   it('gives every enabled tool when no toolset is attached', () => {
     const r = resolveToolAccess({
       settings: { disabledBuiltins: ['bash', 'finish'] },

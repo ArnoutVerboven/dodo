@@ -3,13 +3,19 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  AgentBrowser,
+  AgentBrowserTools,
+  type BrowserEngine,
+  serveHttp,
+} from '@dodo/browser-engine';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 /**
- * The agent's browser on a Mac is a real Chrome window on your screen, driven by Playwright MCP,
- * which the daemon runs as a small server on localhost. The worker reaches it over MCP from
- * inside the sandbox; nothing else on the machine listens for it. Two ways to get that window:
+ * The agent's browser on a Mac is a real Chrome window on your screen, headed, so you can take
+ * over when a login needs you. The daemon runs the browser tools as a small MCP server on
+ * localhost; the worker reaches it from inside the sandbox. Two ways to get that window:
  *
  *   window      (default, nothing to install) dodo's own Chrome window, with its own profile
  *               under ~/.dodo/chrome. Log in to a site there once; the session stays.
@@ -18,6 +24,10 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
  *               `dodo browser connect <token>` with the extension's token skips that.
  *
  * The extension is used when it is installed, unless `dodo browser use window` says otherwise.
+ *
+ * What drives the window is the engine chosen in Tools › Browser: agent-browser by default
+ * (packages/browser-engine), or Playwright MCP. The extension only works with Playwright MCP,
+ * so extension mode always uses it.
  */
 
 export const EXTENSION_ID = 'mmlmfjhmonkocbjadbfplnigmagldckm';
@@ -125,6 +135,8 @@ export function browserReport(config: { browser?: BrowserConfig }): BrowserRepor
 export interface BrowserServer {
   /** The MCP endpoint the worker connects to, on localhost. */
   url: string;
+  /** What drives the window. */
+  engine: BrowserEngine;
   /** False once the server process is gone; the next run starts a fresh one. */
   running(): boolean;
   /**
@@ -149,6 +161,8 @@ const START_TIMEOUT_MS = 15_000;
 
 export interface BrowserServerOptions {
   mode: BrowserMode;
+  /** agent-browser by default; extension mode is always Playwright MCP. */
+  engine?: BrowserEngine;
   token?: string;
   /** Where files the agent saves land. */
   outputDir: string;
@@ -197,12 +211,65 @@ class KeepAlive {
   }
 }
 
+/** The engine that will drive a window in this mode. */
+export const engineFor = (mode: BrowserMode, engine: BrowserEngine | undefined): BrowserEngine =>
+  mode === 'extension' ? 'playwright' : (engine ?? 'agent-browser');
+
+/** Start the browser server for the mode and engine, and open the window. */
+export function startBrowserServer(opts: BrowserServerOptions): Promise<BrowserServer> {
+  return engineFor(opts.mode, opts.engine) === 'agent-browser'
+    ? startAgentBrowserWindow(opts)
+    : startPlaywrightServer(opts);
+}
+
+/**
+ * dodo's own Chrome window driven by agent-browser: its daemon launches Chrome headed on the
+ * profile and keeps it open between runs (and across a restart of this daemon, which finds the
+ * session again by its name); the tools are served here over MCP.
+ */
+async function startAgentBrowserWindow({
+  outputDir,
+  profileDir,
+  log,
+}: BrowserServerOptions): Promise<BrowserServer> {
+  mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+  );
+  const ab = new AgentBrowser({
+    session: 'dodo-window',
+    headed: true,
+    executablePath: chromeExecutable(),
+    profileDir,
+    env: { ...env, AGENT_BROWSER_NO_VERSION_CHECK: '1', AGENT_BROWSER_DEFAULT_TIMEOUT: '15000' },
+  });
+  await ab.start();
+  const tools = new AgentBrowserTools(ab, { outputDir });
+  const http = await serveHttp(tools);
+  let stopped = false;
+  log('browser: agent-browser drives the window');
+  return {
+    url: http.url,
+    engine: 'agent-browser',
+    running: () => !stopped,
+    // Opens the window again if you closed it, and keeps the live view off.
+    hold: () => ab.start(),
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      await http.close();
+      await ab.one(['close'], 10_000);
+    },
+  };
+}
+
 /**
  * Start Playwright MCP on a free localhost port and take a seat at the browser: dodo's own
  * window opens, or the extension's connect page does and either connects on the token or waits
  * for you to click Allow.
  */
-export function startBrowserServer({
+function startPlaywrightServer({
   mode,
   token,
   outputDir,
@@ -263,6 +330,7 @@ export function startBrowserServer({
         const keepAlive = new KeepAlive(url, log);
         const server: BrowserServer = {
           url,
+          engine: 'playwright',
           running: () => child.exitCode === null && child.signalCode === null,
           hold: () => keepAlive.hold(),
           stop: async () => {

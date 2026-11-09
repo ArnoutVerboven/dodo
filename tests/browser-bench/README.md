@@ -2,6 +2,8 @@
 
 Runs the same navigation tasks once per approach, with one model, and puts success, model calls, tokens, cost and time side by side. Tasks stop before any password or account change, so runs are safe to repeat.
 
+Manual only: CI runs its offline unit tests, never a model or a live site. Run it again before changing dodo's browser engine (Tools › Browser, `packages/browser-engine`); agent-browser became the default from its results. `dodo-current` here is the Playwright MCP setup dodo had before that change.
+
 ## Approaches
 
 | Approach            | What the model sees                                                                                               |

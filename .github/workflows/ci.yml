@@ -61,8 +61,14 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Headless Chromium for the browser engine tests
+        run: pnpm --filter @dodo/worker exec playwright install --with-deps chromium-headless-shell
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
       - name: Unit, emulator and security rules tests
         run: pnpm test:emulator
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
       - name: End-to-end on the emulators (fake model)
         run: pnpm test:e2e
 

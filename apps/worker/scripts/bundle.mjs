@@ -13,8 +13,16 @@ await build({
   format: 'esm',
   sourcemap: true,
   // firebase-admin is only used by the dev loop and stays external (installed in the workspace);
-  // @playwright/mcp and playwright are installed in the browser image only, resolved at runtime.
-  external: ['firebase-admin', '@playwright/mcp', 'playwright'],
+  // @playwright/mcp, playwright and agent-browser are installed in the browser image only and
+  // resolved at runtime; ws's optional native helpers are not used.
+  external: [
+    'firebase-admin',
+    '@playwright/mcp',
+    'playwright',
+    'agent-browser',
+    'bufferutil',
+    'utf-8-validate',
+  ],
   banner: {
     // Aliased: a bundled dependency (pi) imports createRequire itself.
     js: "import { createRequire as __dodoCreateRequire } from 'node:module'; const require = __dodoCreateRequire(import.meta.url);",

@@ -29,6 +29,9 @@ importers:
       '@anthropic-ai/sandbox-runtime':
         specifier: 0.0.81
         version: 0.0.81
+      '@dodo/browser-engine':
+        specifier: workspace:*
+        version: link:../../packages/browser-engine
       '@dodo/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -38,6 +41,9 @@ importers:
       '@playwright/mcp':
         specifier: 0.0.83
         version: 0.0.83
+      agent-browser:
+        specifier: 0.41.2
+        version: 0.41.2
       firebase:
         specifier: ^13.1.0
         version: 13.1.0
@@ -155,6 +161,9 @@ importers:
       '@dodo/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@dodo/browser-engine':
+        specifier: workspace:*
+        version: link:../../packages/browser-engine
       '@dodo/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -199,6 +208,25 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
+
+  packages/browser-engine:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.2
+        version: 1.32.2(zod@4.6.7)
+      agent-browser:
+        specifier: 0.41.2
+        version: 0.41.2
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      '@types/ws':
+        specifier: ^8.5.0
+        version: 8.18.2
 
   packages/budget:
     dependencies:
@@ -1897,6 +1925,9 @@ packages:
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
@@ -6601,6 +6632,10 @@ snapshots:
   '@types/unist@2.0.11': {}
 
   '@types/unist@3.0.3': {}
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 22.20.5
 
   '@ungap/structured-clone@1.4.0': {}
 
