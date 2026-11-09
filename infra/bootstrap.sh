@@ -115,6 +115,8 @@ bind_workflow() {
     --role=roles/iam.workloadIdentityUser --member="${POOL}/attribute.workflow/$2"
 }
 bind_workflow "$DEPLOY_SA" Deploy
+# CI runs deploy.yml as a reusable workflow; its token names the caller, CI.
+bind_workflow "$DEPLOY_SA" CI
 bind_workflow "$TF_SA" terraform-apply
 bind_workflow "$PLAN_SA" terraform-plan
 # Remove the repository-wide binding an earlier version of this script created: with

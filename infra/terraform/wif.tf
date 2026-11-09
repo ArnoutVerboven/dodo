@@ -30,9 +30,14 @@ locals {
   wif_principal_set = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.github.workload_identity_pool_id}"
 }
 
-# Authoritative for this role: only the Deploy workflow may act as the deployer.
+# Authoritative for this role: only the Deploy workflow may act as the deployer. CI calls
+# deploy.yml as a reusable workflow, and its token then names the caller ("CI"), so CI is
+# bound too. The provider only takes main for either, so a PR run never gets the deployer.
 resource "google_service_account_iam_binding" "deployer_wif" {
   service_account_id = google_service_account.deployer.name
   role               = "roles/iam.workloadIdentityUser"
-  members            = ["${local.wif_principal_set}/attribute.workflow/Deploy"]
+  members = [
+    "${local.wif_principal_set}/attribute.workflow/Deploy",
+    "${local.wif_principal_set}/attribute.workflow/CI",
+  ]
 }
