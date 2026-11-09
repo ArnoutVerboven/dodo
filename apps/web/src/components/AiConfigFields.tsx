@@ -166,7 +166,7 @@ export function AiConfigFields({
               ? remote
                 ? isLocalModel(value.model)
                   ? 'The local model runs only on your Mac, but Device is Remote: pick another model, or set Device to Auto or your Mac.'
-                  : 'Remote cannot use the local model, so this runs on the default cloud model (Auto).'
+                  : undefined
                 : 'Runs on your Mac (the one picked under Device, else the one seen last). No budget is used.'
               : undefined
           }
@@ -175,7 +175,11 @@ export function AiConfigFields({
             ariaLabel="Model"
             value={value.model ?? ''}
             options={modelOptions}
-            inherited={optionOf(modelOptions, inherited.model ?? 'auto')}
+            inherited={optionOf(
+              modelOptions,
+              // Remote can't use an inherited local model: the run gets the cloud default.
+              remote && isLocalModel(inherited.model) ? 'auto' : (inherited.model ?? 'auto'),
+            )}
             onChange={(model) => set({ model })}
             onReset={() => set({ model: undefined })}
           />
