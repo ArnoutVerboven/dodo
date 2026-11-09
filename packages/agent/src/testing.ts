@@ -1,3 +1,4 @@
+import http from 'node:http';
 import type {
   Artifact,
   Content,
@@ -13,7 +14,15 @@ import type {
   Task,
   VaultEntry,
 } from '@dodo/core';
-import type { ControlPlane, TaskStore, TraceSink } from './control-plane.js';
+import {
+  type ControlPlane,
+  GatewayBudgetError,
+  GatewayHaltedError,
+  GatewayRateLimitError,
+  LeaseLostError,
+  type TaskStore,
+  type TraceSink,
+} from './control-plane.js';
 
 /** A scripted model: each entry is one response, in order. Used by tests and the local dry run. */
 export type ScriptedTurn =
@@ -60,6 +69,75 @@ export class FakeControlPlane implements ControlPlane {
       remaining: 400_000,
     };
   }
+  private server: Promise<string> | undefined;
+
+  /**
+   * The same script behind a Gemini-shaped endpoint, for a harness with its own Gemini client:
+   * each request is recorded in `requests` (in the gateway's form) and answered as Gemini
+   * streams. A scripted error comes back the way the gateway sends that refusal.
+   */
+  geminiEndpoint(): Promise<{ baseUrl: string; token: string }> {
+    this.server ??= new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => {
+          body += c;
+        });
+        req.on('end', () => void this.answerGemini(req.url ?? '', body, res));
+      });
+      server.unref();
+      server.listen(0, '127.0.0.1', () => {
+        const { port } = server.address() as { port: number };
+        resolve(`http://127.0.0.1:${port}/v1beta`);
+      });
+    });
+    return this.server.then((baseUrl) => ({ baseUrl, token: 'run-token' }));
+  }
+
+  private async answerGemini(url: string, raw: string, res: http.ServerResponse) {
+    const body = JSON.parse(raw || '{}') as {
+      contents: Content[];
+      systemInstruction?: { parts: Array<{ text?: string }> };
+      tools?: Array<{ functionDeclarations: GenerateRequest['tools'] }>;
+    };
+    const model = /\/models\/([^:/]+):/.exec(url)?.[1] ?? 'unknown';
+    try {
+      const r = await this.generate({
+        model,
+        systemInstruction: body.systemInstruction?.parts.map((p) => p.text ?? '').join('\n'),
+        contents: body.contents,
+        tools: body.tools?.flatMap((t) => t.functionDeclarations ?? []),
+      });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = {
+        candidates: [{ content: r.content, finishReason: 'STOP', index: 0 }],
+        usageMetadata: {
+          promptTokenCount: r.usage.inputTokens,
+          candidatesTokenCount: r.usage.outputTokens,
+          totalTokenCount: r.usage.inputTokens + r.usage.outputTokens,
+        },
+      };
+      res.end(`data: ${JSON.stringify(chunk)}\r\n\r\n`);
+    } catch (err) {
+      const [code, status] =
+        err instanceof GatewayBudgetError || err instanceof GatewayRateLimitError
+          ? [429, 'RESOURCE_EXHAUSTED']
+          : err instanceof GatewayHaltedError
+            ? [503, 'UNAVAILABLE']
+            : err instanceof LeaseLostError
+              ? [400, 'FAILED_PRECONDITION']
+              : [500, 'INTERNAL'];
+      const message =
+        err instanceof GatewayRateLimitError
+          ? `rate_governor: ${err.message}`
+          : err instanceof GatewayHaltedError
+            ? 'halted'
+            : (err as Error).message;
+      res.writeHead(code, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { code, message, status } }));
+    }
+  }
+
   async heartbeat(): Promise<HeartbeatResponse> {
     this.heartbeats++;
     const err = this.heartbeatErrors.shift();

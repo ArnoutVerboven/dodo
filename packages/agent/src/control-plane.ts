@@ -27,6 +27,12 @@ export interface ControlPlane {
     req: Omit<RequestInputRequest, 'runId'>,
   ): Promise<{ messageId?: string } | undefined>;
   finish(req: Omit<FinishRequest, 'runId'>): Promise<void>;
+  /**
+   * The gateway in Gemini's own REST shape, for a harness with its own Gemini client (pi):
+   * the base URL (ending in /v1beta) and the run's token to send as the API key. Asked before
+   * every model call, so a token near its expiry is replaced. Absent: no such harness here.
+   */
+  geminiEndpoint?(): Promise<{ baseUrl: string; token: string }>;
 }
 
 export interface TaskStore {

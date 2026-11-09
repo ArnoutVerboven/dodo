@@ -95,6 +95,14 @@ export function connect(app: FirebaseApp, env: WorkerEnv): Clients {
   return { auth, db, functions };
 }
 
+/** Where `gatewayGemini` answers: the emulator's URL locally, the function's URL in the cloud. */
+export function geminiBaseUrl(env: Pick<WorkerEnv, 'emulatorHost' | 'firebase' | 'region'>) {
+  const { projectId } = env.firebase;
+  return env.emulatorHost
+    ? `http://${env.emulatorHost}:5001/${projectId}/${env.region}/gatewayGemini/v1beta`
+    : `https://${env.region}-${projectId}.cloudfunctions.net/gatewayGemini/v1beta`;
+}
+
 export async function signInAsRun(clients: Clients, token: string) {
   await signInWithCustomToken(clients.auth, token);
 }
@@ -169,7 +177,15 @@ export class CallableControlPlane implements ControlPlane {
   constructor(
     private readonly fns: Functions,
     private readonly runId: string,
-  ) {}
+    /** The Gemini-shaped gateway (`gatewayGemini`) and the run's ID token, for the pi harness. */
+    private readonly gemini?: { baseUrl: string; idToken: () => Promise<string> },
+  ) {
+    if (!gemini) this.geminiEndpoint = undefined;
+  }
+  geminiEndpoint?: () => Promise<{ baseUrl: string; token: string }> = async () => {
+    const g = this.gemini as NonNullable<typeof this.gemini>;
+    return { baseUrl: g.baseUrl, token: await g.idToken() };
+  };
   /**
    * `retry` only for calls that are safe to repeat: start, heartbeat and finish are (the
    * server checks the run's state), a model call is not (it may already have been charged).

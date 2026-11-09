@@ -83,17 +83,20 @@ export interface LoopResult {
 }
 
 /**
- * The agent loop: build the request, call the gateway, run the tools it asks for, repeat.
- * Hooks are not bolted on: budget, lease, halt, interrupt and steering are all checked here.
+ * The system prompt for a run: dodo's core rules, a section per tool family the run has, an
+ * optional harness section (how that harness's own tools work), then the project.
  */
-export async function runAgent(input: RunInput, opts: LoopOptions): Promise<LoopResult> {
-  const { control, store, trace, tools } = opts;
-  const maxSteps = opts.maxSteps ?? 40;
-  const log = opts.log ?? (() => {});
-  const session: Content[] = [...input.session];
-  const declarations = toDeclarations(tools);
+export function runSystemPrompt(
+  input: Pick<RunInput, 'task' | 'project'>,
+  opts: Pick<
+    LoopOptions,
+    'tools' | 'browserKind' | 'inputHoldMs' | 'googleFolder' | 'notionWorkspace'
+  >,
+  harness?: string,
+): string {
+  const { tools } = opts;
   const hasBrowser = tools.some((t) => t.name.startsWith('browser_'));
-  const system = systemPrompt(input.task, input.project, {
+  return systemPrompt(input.task, input.project, {
     browser: hasBrowser ? (opts.browserKind ?? 'window') : undefined,
     holdMinutes: hasBrowser && opts.inputHoldMs ? Math.round(opts.inputHoldMs / 60_000) : undefined,
     canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
@@ -107,7 +110,22 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
     notion: tools.some((t) => NOTION_TOOLS.includes(t.name as (typeof NOTION_TOOLS)[number]))
       ? { workspace: opts.notionWorkspace }
       : undefined,
+    ...(harness ? { harness } : {}),
   });
+}
+
+/**
+ * The agent loop: build the request, call the gateway, run the tools it asks for, repeat.
+ * Hooks are not bolted on: budget, lease, halt, interrupt and steering are all checked here.
+ */
+export async function runAgent(input: RunInput, opts: LoopOptions): Promise<LoopResult> {
+  const { control, store, trace, tools } = opts;
+  const maxSteps = opts.maxSteps ?? 40;
+  const log = opts.log ?? (() => {});
+  const session: Content[] = [...input.session];
+  const declarations = toDeclarations(tools);
+  const hasBrowser = tools.some((t) => t.name.startsWith('browser_'));
+  const system = runSystemPrompt(input, opts);
   // Vault values never go back to the model, the trace or the task: cut them out of every
   // tool argument and result.
   const redact = <T>(v: T): T => (opts.secrets ? redactDeep(v, opts.secrets.redact) : v);
