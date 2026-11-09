@@ -1,3 +1,4 @@
-# Only the bundled worker goes into the image (see apps/worker/Dockerfile).
+# Only the bundled worker (and the browser image's Chromium launcher) go into the image.
 *
 !apps/worker/dist/index.js
+!apps/worker/chromium-as-browser.sh
