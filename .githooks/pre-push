@@ -3,6 +3,9 @@
 # about 30-40 seconds, no emulators, no network). CI runs these again plus the emulator suites.
 # Skip once with `git push --no-verify`, or for a session with DODO_SKIP_HOOKS=1.
 [ "$DODO_SKIP_HOOKS" = 1 ] && exit 0
+# Git runs hooks with GIT_DIR and friends set to this repo; a test that runs git in a temp repo
+# would then write here instead (it once made this repo bare and committed to the pushed branch).
+for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
 # Pushing only a branch deletion has nothing to check.
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
   case "$local_sha" in 0000000000000000000000000000000000000000) ;; *) exec pnpm -s check ;; esac

@@ -10,15 +10,20 @@ import { MemoryTaskStore, sampleTask } from './testing.js';
 import { findTool, type ToolDef } from './tools.js';
 
 const exec = promisify(execFile);
+// Without GIT_* variables: inside a git hook (the pre-push `pnpm check`) GIT_DIR and friends point
+// at dodo's own repo, and git would then init, configure and commit there instead of in `cwd`.
+const cleanEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
+);
 const git = (cwd: string, ...args: string[]) =>
-  exec('git', args, { cwd, env: { ...process.env, HOME: cwd } });
+  exec('git', args, { cwd, env: { ...cleanEnv, HOME: cwd } });
 
 async function setup() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dodo-gh-'));
   const bare = path.join(root, 'remote.git');
   const work = path.join(root, 'work');
-  await exec('git', ['init', '--bare', '--quiet', bare]);
-  await exec('git', ['init', '--quiet', '-b', 'main', work]);
+  await git(root, 'init', '--bare', '--quiet', bare);
+  await git(root, 'init', '--quiet', '-b', 'main', work);
   await git(work, 'config', 'user.email', 't@example.com');
   await git(work, 'config', 'user.name', 'T');
   await writeFile(path.join(work, 'a.txt'), 'hi');
@@ -64,7 +69,7 @@ describe('github tools', () => {
     expect(calls).toEqual([]);
     const ok = await push.execute({ branch: 'dodo/fix' }, { store, workdir: work });
     expect(ok.result).toMatchObject({ ok: true });
-    const { stdout } = await exec('git', ['branch', '--list'], { cwd: bare });
+    const { stdout } = await git(bare, 'branch', '--list');
     expect(stdout).toContain('dodo/fix');
   });
 
