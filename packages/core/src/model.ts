@@ -70,13 +70,16 @@ export const AiConfig = z.object({
   /** `untrusted`: nothing beyond the task tools runs without approval (ingest tasks). */
   profile: z.enum(['agent-decides', 'untrusted']).optional(),
   /**
-   * The loop that runs the agent: dodo's own (the default) or pi (pi.dev), which brings its own
-   * file and shell tools and compaction. pi needs a Gemini model; a run on the local model
+   * The loop that runs the agent: pi (pi.dev, the default), which brings its own file and shell
+   * tools and compaction, or dodo's own. pi needs a Gemini model; a run on the local model
    * uses dodo's loop.
    */
   harness: z.enum(['dodo-loop', 'pi']).optional(),
 });
 export type AiConfig = z.infer<typeof AiConfig>;
+
+/** The harness a task uses when neither it nor its project picks one. */
+export const DEFAULT_HARNESS: NonNullable<AiConfig['harness']> = 'pi';
 
 export const StatusLine = z.object({
   text: z.string(),

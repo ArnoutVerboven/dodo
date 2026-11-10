@@ -1,4 +1,11 @@
-import { type AiConfig, isLocalModel, LOCAL_MODEL, RepoName, repoList } from '@dodo/core';
+import {
+  type AiConfig,
+  DEFAULT_HARNESS,
+  isLocalModel,
+  LOCAL_MODEL,
+  RepoName,
+  repoList,
+} from '@dodo/core';
 import {
   Ban,
   Cloud,
@@ -133,7 +140,7 @@ export function AiConfigFields({
     { value: 'dodo-loop', label: 'dodo', icon: Sparkles, title: "dodo's own agent loop" },
     {
       value: 'pi',
-      label: 'pi (experimental)',
+      label: 'pi',
       icon: Terminal,
       title: "pi.dev's loop, with its own file and shell tools and compaction",
     },
@@ -207,7 +214,7 @@ export function AiConfigFields({
         <Field
           label="Harness"
           hint={
-            (value.harness ?? inherited.harness) === 'pi' &&
+            (value.harness ?? inherited.harness ?? DEFAULT_HARNESS) === 'pi' &&
             isLocalModel(value.model ?? inherited.model)
               ? "pi needs a Gemini model: on the local model the run uses dodo's loop."
               : undefined
@@ -217,7 +224,7 @@ export function AiConfigFields({
             ariaLabel="Harness"
             value={value.harness ?? ''}
             options={harnessOptions}
-            inherited={optionOf(harnessOptions, inherited.harness ?? 'dodo-loop')}
+            inherited={optionOf(harnessOptions, inherited.harness ?? DEFAULT_HARNESS)}
             onChange={(harness) => set({ harness: harness as AiConfig['harness'] })}
             onReset={() => set({ harness: undefined })}
           />

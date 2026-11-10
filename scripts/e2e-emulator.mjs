@@ -46,7 +46,7 @@ await db.doc('settings/global').set(
   { merge: true },
 );
 
-// 1. A plain AI task runs to completion.
+// 1. A plain AI task runs to completion on dodo's own loop.
 const task = await db.collection('tasks').add({
   title: 'E2E: summarise notes',
   titleSource: 'user',
@@ -54,7 +54,7 @@ const task = await db.collection('tasks').add({
   status: 'todo',
   priority: 'none',
   tags: ['e2e'],
-  ai: { enabled: true },
+  ai: { enabled: true, harness: 'dodo-loop' },
   summary: '',
   externalRefs: {},
   createdAt: now,
@@ -99,7 +99,7 @@ if (!archived?.sessionPath || !archived?.tracePath) fail('session/trace not arch
 const events = await db.collection(`runs/${run}/events`).get();
 if (!events.empty) fail('events not cleaned up after archival');
 
-// 1b. The same task on the pi harness: pi's own Gemini client streams through gatewayGemini with
+// 1b. The same task on the pi harness (the default): pi's own Gemini client streams through gatewayGemini with
 //     the run's token, runs dodo's tools, and the run ends, is charged and archived the same way.
 const piTask = await db.collection('tasks').add({
   title: 'E2E: summarise notes with pi',
