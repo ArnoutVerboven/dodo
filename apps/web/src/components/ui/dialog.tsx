@@ -38,7 +38,7 @@ export function Dialog({
       ref={ref}
       onClose={onClose}
       className={cn(
-        'm-auto w-[min(640px,calc(100vw-32px))] rounded-lg border bg-card p-0 text-foreground shadow-xl backdrop:bg-black/40',
+        'm-auto max-h-[calc(100dvh-32px)] w-[min(640px,calc(100vw-32px))] overflow-y-auto overscroll-contain rounded-lg border bg-card p-0 text-foreground shadow-xl backdrop:bg-black/40',
         className,
       )}
     >

@@ -169,12 +169,8 @@ export function AiConfigFields({
         <Field
           label="Model"
           hint={
-            isLocalModel(value.model ?? inherited.model)
-              ? remote
-                ? isLocalModel(value.model)
-                  ? 'The local model runs only on your Mac, but Device is Remote: pick another model, or set Device to Auto or your Mac.'
-                  : undefined
-                : 'Runs on your Mac (the one picked under Device, else the one seen last). No budget is used.'
+            remote && isLocalModel(value.model)
+              ? 'The local model runs only on your Mac, but Device is Remote: pick another model, or set Device to Auto or your Mac.'
               : undefined
           }
         >
@@ -229,16 +225,9 @@ export function AiConfigFields({
             onReset={() => set({ harness: undefined })}
           />
         </Field>
-        <Field label="Budget">
-          <BudgetField
-            value={value.budget}
-            inherited={inherited.budget}
-            onChange={(budget) => set({ budget })}
-          />
-        </Field>
         <Field
           label="Repos"
-          className="@md:col-span-2"
+          className="min-w-0"
           hint={
             !github?.installation
               ? 'Public repos only until you connect GitHub in Settings.'
@@ -263,6 +252,28 @@ export function AiConfigFields({
             }}
             empty="No connected repos. Type owner/name."
             onChange={(repos) => set({ repo: undefined, repos: repos.length ? repos : undefined })}
+          />
+        </Field>
+        <Field
+          label={
+            <>
+              Folder <LocalOnly />
+            </>
+          }
+          className="min-w-0"
+        >
+          <FolderField
+            value={value.folder}
+            inherited={inherited.folder}
+            folders={[...new Set(macs.flatMap((d) => d.folders))]}
+            onChange={(folder) => set({ folder })}
+          />
+        </Field>
+        <Field label="Budget">
+          <BudgetField
+            value={value.budget}
+            inherited={inherited.budget}
+            onChange={(budget) => set({ budget })}
           />
         </Field>
         {toolsets.length > 0 && (
@@ -295,21 +306,6 @@ export function AiConfigFields({
             </span>
           </div>
         )}
-        <Field
-          label={
-            <>
-              Folder <LocalOnly />
-            </>
-          }
-          className="@md:col-span-2"
-        >
-          <FolderField
-            value={value.folder}
-            inherited={inherited.folder}
-            folders={[...new Set(macs.flatMap((d) => d.folders))]}
-            onChange={(folder) => set({ folder })}
-          />
-        </Field>
       </div>
     </div>
   );

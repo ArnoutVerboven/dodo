@@ -61,13 +61,17 @@ function GoogleCard() {
       />
       <CardBody className="text-sm">
         {connected ? (
-          <p className="flex items-center gap-2">
-            <SourceIcon source={{ kind: 'gmail' }} />
-            Connected as <b>{connector.email ?? 'your account'}</b>
-            <span className="text-xs text-muted-foreground">
-              · Jobs read the inbox, write drafts and read your free/busy time
-            </span>
-          </p>
+          <div className="flex items-start gap-2">
+            <SourceIcon source={{ kind: 'gmail' }} className="mt-0.5" />
+            <div className="min-w-0">
+              <p className="break-all">
+                Connected as <b>{connector.email ?? 'your account'}</b>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Jobs read the inbox, write drafts and read your free/busy time.
+              </p>
+            </div>
+          </div>
         ) : (
           <p className="text-muted-foreground">
             {connector?.error ??
@@ -377,7 +381,10 @@ const DECISION_LABEL: Record<RunEntry['decision'], string> = {
   error: 'Failed',
 };
 
+const RUNS_SHOWN = 5;
+
 function RunList({ runs }: { runs: JobRun[] }) {
+  const [shown, setShown] = useState(RUNS_SHOWN);
   if (!runs.length) return <p className="text-xs text-muted-foreground">No runs yet.</p>;
   return (
     <div>
@@ -385,10 +392,20 @@ function RunList({ runs }: { runs: JobRun[] }) {
         Recent runs
       </h4>
       <ul className="divide-y rounded-md border">
-        {runs.map((r) => (
+        {runs.slice(0, shown).map((r) => (
           <RunRow key={r.id} run={r} />
         ))}
       </ul>
+      {runs.length > shown && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="mt-1 text-muted-foreground"
+          onClick={() => setShown((n) => n + 10)}
+        >
+          Show more
+        </Button>
+      )}
     </div>
   );
 }
@@ -414,9 +431,11 @@ function RunRow({ run }: { run: JobRun }) {
         aria-expanded={open}
       >
         <ChevronRight className={cn('h-3 w-3 transition', open && 'rotate-90')} />
-        <span className="w-16 text-muted-foreground">{timeAgo(run.startedAt)}</span>
-        {run.dryRun && <span className="rounded bg-muted px-1">dry run</span>}
-        <span className={cn(run.state === 'failed' && 'text-danger')}>
+        <span className="w-14 shrink-0 text-muted-foreground">{timeAgo(run.startedAt)}</span>
+        {run.dryRun && (
+          <span className="shrink-0 rounded bg-muted px-1 whitespace-nowrap">dry run</span>
+        )}
+        <span className={cn('min-w-0', run.state === 'failed' && 'text-danger')}>
           {run.state === 'running'
             ? 'Running…'
             : run.state === 'succeeded'
@@ -424,10 +443,12 @@ function RunRow({ run }: { run: JobRun }) {
               : `${run.state.replace('_', ' ')} · `}
           {run.state !== 'running' && (parts.length ? parts.join(', ') : 'nothing new')}
         </span>
-        <span className="ml-auto text-muted-foreground">{formatEur(run.spent, 3)}</span>
+        <span className="ml-auto shrink-0 pl-2 text-muted-foreground">
+          {formatEur(run.spent, 3)}
+        </span>
       </button>
       {open && (
-        <div className="mt-2 space-y-2 pl-5 text-xs">
+        <div className="mt-2 space-y-2 pl-5 text-xs [overflow-wrap:anywhere]">
           {run.error && <p className="text-danger">{run.error}</p>}
           {run.entries.length === 0 && !run.error && (
             <p className="text-muted-foreground">No messages needed a look.</p>

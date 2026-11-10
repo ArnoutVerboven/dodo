@@ -52,12 +52,46 @@
 * {
   border-color: var(--border);
 }
+/* The page itself never pans sideways or zooms on a phone: only marked areas, such as the
+   board's columns, scroll horizontally. */
+html,
+body {
+  overflow-x: clip;
+  overscroll-behavior-x: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html {
+  touch-action: pan-x pan-y;
+}
+/* iOS zooms into any field under 16px when it gets focus; keep fields at 16px on phones. Unlayered,
+   so it wins over the text-sm utility. */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Long links, paths and code in Markdown wrap instead of widening the page. */
+.prose-sm {
+  overflow-wrap: anywhere;
+}
+.prose-sm pre {
+  overflow-x: auto;
+  white-space: pre;
+}
+.prose-sm table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
 .prose-sm h1,
 .prose-sm h2,
 .prose-sm h3 {
