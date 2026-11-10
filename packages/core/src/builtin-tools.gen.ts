@@ -968,7 +968,7 @@ export const catalog: unknown[] = [
   {
     "name": "request_device",
     "group": "browser",
-    "description": "Move this task to the user's Mac when a login cannot be finished in this cloud browser: itsme or another phone-app QR login (its code changes every few seconds, so nobody can scan it from here: move as soon as the page offers it), a passkey, a login bound to their device, a site that refuses this browser (Google's 'this browser or app may not be secure', a CAPTCHA that keeps coming back), or a login that still fails after one fresh try. Try passwords and codes here first: they usually work. This run ends either way; depending on the user's device setting the task moves at once or after they agree, and continues on the Mac in its Chrome window with your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline.",
+    "description": "Move this task to the user's Mac when a login cannot be done in this cloud browser. Only a login with the site's vault entry works here (with its emailed, SMS or authenticator code). Call this for everything else, as soon as it is clear: a site without a vault entry (signing in with Google or with only an email address), any Google sign-in page, itsme or another phone-app QR code, a passkey, a CAPTCHA, a site that refuses this browser, or a vault login that still fails after one fresh try. This run ends either way; depending on the user's device setting the task moves at once or after they agree, and continues on the Mac in its Chrome window with your conversation so far, on a blank page: open the site again there and continue. It waits for the Mac when it is offline.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1018,7 +1018,7 @@ export const catalog: unknown[] = [
   {
     "name": "use_google_session",
     "group": "browser",
-    "description": "Switch this browser to the user's own Google account, when a site offers 'Continue with Google' / 'Sign in with Google' or a Google sign-in page appears. Loads their saved Google session, so the Google step goes through without a password; then click the Google button again (or reload the page). When no session is saved yet, sign in once on accounts.google.com with the Google entry from the vault and ask the user to confirm on their phone; that sign-in is saved for later tasks.",
+    "description": "Load the user's saved Google session into this cloud browser. Use it only when the task or the user asks for the saved Google session by name: by default a Google sign-in is not done in the cloud browser, and a site that needs one moves to the user's Mac with request_device. After loading, click the site's Google button again (or reload the page).",
     "inputSchema": {
       "type": "object",
       "properties": {

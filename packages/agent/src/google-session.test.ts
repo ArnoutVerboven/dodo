@@ -19,7 +19,7 @@ describe('use_google_session', () => {
     expect(loads).toBe(1);
   });
 
-  it('explains the one-time sign-in when nothing is saved, and reports failures', async () => {
+  it('sends a missing session to the Mac, and reports failures', async () => {
     const none = await googleSessionTool({ load: async () => false }).execute({ reason: 'x' }, ctx);
     expect(none.result).toMatchObject({ note: expect.stringContaining('No Google session') });
     const broken = await googleSessionTool({

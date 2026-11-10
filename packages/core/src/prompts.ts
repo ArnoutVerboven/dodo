@@ -38,7 +38,7 @@ export const AGENT_SYSTEM = [
 
 /** Browser section: a visible Chrome window on the user's Mac. */
 export const AGENT_BROWSER_WINDOW =
-  "Browser: the browser_* tools drive a real Chrome window on the user's own computer, visible on their screen, with a profile that keeps logins from one task to the next. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. When a page needs the user (a password, a code from their phone, itsme or another app on their phone, a QR code), do not guess and do not give up: leave the page open, bring it up with browser_tabs select, and tell them in ask_user to log in in the dodo Chrome window on their screen, naming the site (never a tab number, which means nothing to them); wait for the answer, then continue in the same tab. The login then stays for later tasks. A QR code from a phone app (itsme, a bank app) changes every few seconds, so a picture of it is useless: for those, bring the page to the front and ask them to scan it on the Mac's screen, without a screenshot (see phone app logins). For anything else they need to see to answer while they may be away from the computer (the icon or number to pick in their phone app, a code), set screenshot on ask_user, with screenshotRef and screenshotElement to crop to it when the snapshot has its ref, so the picture reaches them in the app and on Telegram. Never type credentials you were not given as a vault reference.";
+  "Browser: the browser_* tools drive a real Chrome window on the user's own computer, visible on their screen, with a profile that keeps logins from one task to the next. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. When a step needs the user's own hands on the page (see Logging in), do not guess and do not give up: leave the page open, bring it up with browser_tabs select, and tell them in ask_user what to do in the dodo Chrome window on their screen, naming the site (never a tab number, which means nothing to them); wait for the answer, then continue in the same tab. The user may be away from the computer and answering from their phone: when the page shows something they need to see to answer (the icon or number to pick in their phone app, a code), set screenshot on ask_user, with screenshotRef and screenshotElement to crop to it when the snapshot has its ref, so the picture reaches them in the app and on Telegram. Never type credentials you were not given as a vault reference.";
 
 /** Headless browser: what happens to the page while ask_user waits, with a hold. */
 export const agentHeadlessHold = (holdMinutes: number | string) =>
@@ -48,27 +48,35 @@ export const agentHeadlessHold = (holdMinutes: number | string) =>
 export const AGENT_HEADLESS_NO_HOLD =
   'The run ends when you ask the user something; the next run starts on a blank page with the logins restored (open the site again), so finish a login in one go where you can.';
 
-/** Headless browser: a site that needs the user's own browser, when request_device can move the run. */
-export const AGENT_HEADLESS_REQUEST_DEVICE =
-  'A login this browser cannot finish (itsme or another phone-app QR login, a passkey, a login bound to their device, a site that refuses this browser, or one that still fails after a fresh try) is not for this browser: call request_device the moment that is clear, rather than giving up; the run continues on their Mac in a real Chrome window (at once or once they agree). For itsme that is as soon as the page offers it: its QR code changes every few seconds, so nobody can scan it from here.';
+/** Browser section: headless Chromium in the cloud. `hold` is one of the two hold texts above. */
+export const agentBrowserHeadless = (hold: string) =>
+  `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session); other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Never type credentials you were not given as a vault reference. When a page needs an answer from the user (a code from their phone, a choice, something to pick on their phone), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold}`;
 
-/** Headless browser: a site that needs the user's own browser, without request_device. */
-export const AGENT_HEADLESS_DEVICE_BLOCKED =
-  "A site that only works in the user's own browser (itsme and other phone-app QR logins, passkeys, device-bound logins) is not for this run: say so in the Summary and finish as blocked.";
-
-/**
- * Browser section: headless Chromium in the cloud. `hold` is one of the two hold texts above,
- * `deviceOnly` one of the two device texts.
- */
-export const agentBrowserHeadless = (hold: string, deviceOnly: string) =>
-  `Browser: the browser_* tools drive a headless Chromium in the cloud that nobody can see. Logins this task made in earlier runs are restored (cookies and local storage, for as long as the site keeps the session), so check whether you are already signed in before logging in again; other tasks' logins are not. Look with browser_snapshot or browser_find and act on element refs; opening a new site needs its approval, so stay on the sites the task is about. Use the browser to do the work yourself, not to point the user at it: go to the site the task needs without waiting to be told, fill in what you know, and complete the flow up to any irreversible step. Log in with vault references only (never type credentials you were not given as a vault reference). When a page needs the user (a code from their phone, a choice, something to pick on their phone), use ask_user with screenshot set, cropped with screenshotRef and screenshotElement when the snapshot has the ref, so they see what the page shows in the app and on Telegram; they may be answering from their phone. ${hold} ${deviceOnly}`;
+/** Finishing a login without the user, the same on both browsers: codes and phone approvals. */
+const LOGIN_SECOND_STEP =
+  "Then finish the login yourself, end to end. A code sent to the user's email: call get_email_code with the code field's target (its ref from the snapshot) the moment the page says it sent one; it waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used); it reads codes, not sign-in links, so when the mail holds only a link, ask the user. A code by SMS or from an authenticator app: ask_user for it as a secret answer. An approval on their phone (Google's 2-step prompt, a bank app push): ask_user to approve it, with a screenshot of any number or icon to match.";
 
 /**
- * Emailed one-time codes, and which sign-in option to pick: get_email_code reads the code from
- * the user's Gmail and types it, so a login by email code needs nobody.
+ * Logging in on the Mac: which way in to pick (the site's vault entry, then Google, then the
+ * site's email option), solving the second step itself, and the few cases the user must take
+ * over in the Chrome window.
  */
-export const EMAIL_CODE_LOGIN =
-  "Emailed codes: when a page says it sent a code to the user's email, call get_email_code with the code field's target (its ref from the snapshot) right away. It waits for the mail in their Gmail and types the code itself, so do not ask the user for it and do not open their mailbox in the browser. If the site then says the code is wrong or expired, use its resend link and call get_email_code again (it skips the code it already used). Choosing how to sign in: the user prefers 'Continue with Google' / 'Sign in with Google' wherever a site offers it. In the cloud browser, call use_google_session first (it loads their saved Google session), then click the Google button; in a Chrome window on their computer they are usually signed in to Google already. Where a site has no Google option: a password from the vault, then the site's own 'continue with email' that sends a code (with the email address from get_personal_info or the site's vault entry). get_email_code reads codes, not sign-in links: when the mail holds only a link, ask the user.";
+export const AGENT_LOGIN_WINDOW = `Logging in (this browser is on the user's Mac). First look whether the site already shows them signed in: this profile keeps logins. If not, pick the way in, in this order, and take the first that applies: (1) the site's vault entry: call list_vault, and when an entry lists this site's domain, use it (request_vault_access once, then type its fields as vault references, following its login hint); (2) 'Continue with Google' / 'Sign in with Google', when the site offers it: this Chrome is usually signed in to Google already, and if Google asks to sign in, use the Google vault entry; (3) the site's own email option ('continue with email', a code by mail), with the email address from get_personal_info. Do not create a new account unless the task says so. ${LOGIN_SECOND_STEP} Hand the page to the user only for what you cannot do yourself: a CAPTCHA you cannot pass, itsme or another phone-app QR code, a passkey, Touch ID or a security key, or a password that is not in the vault. For those, bring the page up and ask them to do that one step in the dodo Chrome window, as described above; the login then stays for later tasks.`;
+
+/** Cloud browser: what to do with a login it cannot do, when request_device can move the run. */
+export const AGENT_LOGIN_HEADLESS_MOVE =
+  'Do not try those here: call request_device as soon as it is clear the login needs one of them, saying which; the run continues on their Mac in a real Chrome window (at once, or once they agree), where the other ways in work.';
+
+/** Cloud browser: what to do with a login it cannot do, without request_device. */
+export const AGENT_LOGIN_HEADLESS_BLOCKED =
+  'This run cannot move there: say in the Summary which login the site needs and that it needs the Mac, and finish as blocked.';
+
+/**
+ * Logging in in the cloud browser: only a vault login works there (not Google's own), and
+ * everything else goes to the Mac. `elsewhere` is one of the two texts above.
+ */
+export const agentLoginHeadless = (elsewhere: string) =>
+  `Logging in (this browser is in the cloud). First look whether the site already shows them signed in. If not, only one way in works here: the site's vault entry. Call list_vault, and when an entry lists this site's domain, use it (request_vault_access once, then type its fields as vault references, following its login hint). ${LOGIN_SECOND_STEP} Everything else does not work in this browser and belongs on the user's Mac: a site without a vault entry (so signing in with Google, or with only an email address), any Google sign-in page (Google refuses this browser, also with the Google vault entry), itsme or another phone-app QR code, a passkey, a CAPTCHA, a site that refuses this browser, or a vault login that still fails after one fresh try. ${elsewhere}`;
 
 /**
  * Logins approved in a phone app (itsme and the like). Their QR codes now change every few
@@ -76,7 +84,7 @@ export const EMAIL_CODE_LOGIN =
  * screen: a screenshot of it would be stale before it arrived.
  */
 export const PHONE_APP_LOGIN =
-  "Phone app logins (itsme, a bank app): these log in with a QR code that changes every few seconds, so it can only be scanned straight off a screen, never from a screenshot or a message. On the user's Mac: get the login page to the QR code, bring that tab to the front with browser_tabs select, and ask_user (without a screenshot) to open the dodo Chrome window on their Mac, scan the QR code there with the app on their phone and approve, then answer when done; name the site and the app. Wait for the answer, check the page shows them signed in, and continue in the same tab; if it says the request expired or failed, reload the login for a fresh code and ask again. In the cloud browser nobody can see the code: move the task to the Mac with request_device as soon as the login needs the app. If a site still offers a phone-number option that sends a push to the app, that works anywhere: enter the mobile number from get_personal_info (or the vault entry's phone field) and ask the user to approve in the app.";
+  "Phone app logins (itsme, a bank app): these log in with a QR code that changes every few seconds, so it can only be scanned straight off a screen, never from a screenshot or a message. On the user's Mac: get the login page to the QR code, bring that tab to the front with browser_tabs select, and ask_user (without a screenshot) to open the dodo Chrome window on their Mac, scan the QR code there with the app on their phone and approve, then answer when done; name the site and the app. Wait for the answer, check the page shows them signed in, and continue in the same tab; if it says the request expired or failed, reload the login for a fresh code and ask again. In the cloud browser nobody can see the code: move the task to the Mac with request_device as soon as the login needs the app. If a site still offers a phone-number option that sends a push to the app, no scan is needed: enter the mobile number from get_personal_info (or the vault entry's phone field) and ask the user to approve in the app.";
 
 /** Browser section for a run without a browser that may ask for one. */
 export const AGENT_REQUEST_BROWSER =
@@ -275,18 +283,27 @@ export const PROMPTS: PromptInfo[] = [
     group: 'Task agent',
     name: 'Browser: headless in the cloud',
     purpose:
-      'Appended when the run has the remote headless Chromium. The hold sentence depends on whether the page is held open while a question waits; the last one on whether request_device can move the run to your Mac.',
+      'Appended when the run has the remote headless Chromium. The last sentence depends on whether the page is held open while a question waits.',
     kind: 'system section',
-    text: `${agentBrowserHeadless(agentHeadlessHold('{holdMinutes}'), AGENT_HEADLESS_REQUEST_DEVICE)}\n\nWithout a hold, the hold sentence is:\n${AGENT_HEADLESS_NO_HOLD}\n\nWithout request_device, the last sentence is:\n${AGENT_HEADLESS_DEVICE_BLOCKED}`,
+    text: `${agentBrowserHeadless(agentHeadlessHold('{holdMinutes}'))}\n\nWithout a hold, the last sentence is:\n${AGENT_HEADLESS_NO_HOLD}`,
   },
   {
-    id: 'agent-email-code',
+    id: 'agent-login-window',
     group: 'Task agent',
-    name: 'Emailed codes and sign-in choice',
+    name: 'Logging in: on your Mac',
     purpose:
-      'Appended after either browser section: get_email_code for codes sent by email, and which sign-in option to prefer (Google first, through use_google_session in the cloud).',
+      'Appended after the Chrome window section: the order of ways in (the site’s vault entry, then Google, then the site’s email option), finishing the second step itself (emailed codes), and the few cases you take over (CAPTCHA, itsme, passkey).',
     kind: 'system section',
-    text: EMAIL_CODE_LOGIN,
+    text: AGENT_LOGIN_WINDOW,
+  },
+  {
+    id: 'agent-login-headless',
+    group: 'Task agent',
+    name: 'Logging in: in the cloud',
+    purpose:
+      'Appended after the headless section: only a vault login works in the cloud browser (not Google’s own); any other login, a CAPTCHA or itsme moves the task to your Mac with request_device.',
+    kind: 'system section',
+    text: `${agentLoginHeadless(AGENT_LOGIN_HEADLESS_MOVE)}\n\nWithout request_device, the last sentence is:\n${AGENT_LOGIN_HEADLESS_BLOCKED}`,
   },
   {
     id: 'agent-phone-login',
