@@ -348,6 +348,30 @@ describe('browserTools', () => {
     expect(c2.policy?.({ element: 'Submit', target: 'e1' }, ctx)?.key).toBe('submit:');
   });
 
+  it('starts from the page the browser is already on, as after an approval', async () => {
+    // The run that resumes after "Allow Browser(submit:account.booking.com)" gets new tools,
+    // but the Mac's window is still on the site: the retried click must be keyed by it.
+    const client: BrowserClient = {
+      async listTools() {
+        return ['browser_click', 'browser_snapshot'].map((name) => ({
+          name,
+          inputSchema: { type: 'object' },
+        }));
+      },
+      async callTool() {
+        return {
+          text: '### Page\n- Page URL: https://account.booking.com/sign-in\n- Page Title: Booking',
+          isError: false,
+        };
+      },
+      async close() {},
+    };
+    const click = (await browserTools(client)).find((t) => t.name === 'browser_click');
+    expect(
+      click?.policy?.({ element: 'Submit', target: 'e1' }, { store: {} as TaskStore })?.key,
+    ).toBe('submit:account.booking.com');
+  });
+
   it('takes a screenshot for ask_user from the image part of the result', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     const client: BrowserClient = {
