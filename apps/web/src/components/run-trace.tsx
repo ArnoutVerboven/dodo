@@ -3,6 +3,7 @@ import { getBytes, ref } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import { useRunEvents } from '@/lib/data';
 import { storage } from '@/lib/firebase';
+import { argsLine, type StepStatus, showValue, type TraceStep, traceSteps } from '@/lib/trace';
 import { cn, formatEur } from '@/lib/utils';
 
 export const LIVE_STATES: Run['state'][] = ['queued', 'dispatching', 'claimed', 'running'];
@@ -82,9 +83,9 @@ export function RunTrace({ run, from, to }: { run: Run; from?: number; to?: numb
           {isLive(run) ? 'Starting…' : 'No steps recorded.'}
         </p>
       ) : (
-        <ol className="space-y-0.5 font-mono text-xs">
-          {shown.map((e) => (
-            <EventLine key={e.id} event={e} />
+        <ol className="space-y-0.5 text-xs">
+          {traceSteps(shown).map((step) => (
+            <StepLine key={step.id} step={step} />
           ))}
         </ol>
       )}
@@ -93,40 +94,86 @@ export function RunTrace({ run, from, to }: { run: Run; from?: number; to?: numb
 }
 
 const EVENT_STYLE: Partial<Record<RunEvent['type'], string>> = {
-  tool_call: 'text-blue-600 dark:text-blue-400',
   error: 'text-danger',
   steer: 'text-attention',
   run_finished: 'font-medium',
 };
 
-function EventLine({ event }: { event: RunEvent }) {
+const STATUS_STYLE: Record<StepStatus, string> = {
+  pending: 'text-muted-foreground',
+  ok: 'text-blue-600 dark:text-blue-400',
+  error: 'text-danger',
+  blocked: 'text-attention',
+};
+
+/** One step: a single line that opens to show the full arguments and result. */
+function StepLine({ step }: { step: TraceStep }) {
   const [open, setOpen] = useState(false);
-  const hasData = Object.keys(event.data).length > 0;
+  const detail = stepDetail(step);
   return (
     <li>
       <button
         type="button"
         className={cn(
-          'w-full rounded px-1 text-left',
-          hasData && 'hover:bg-accent',
-          EVENT_STYLE[event.type],
+          'flex w-full min-w-0 items-baseline gap-2 rounded px-1 py-0.5 text-left',
+          detail && 'hover:bg-accent',
         )}
-        onClick={() => hasData && setOpen((v) => !v)}
-        aria-expanded={hasData ? open : undefined}
+        onClick={() => detail && setOpen((v) => !v)}
+        aria-expanded={detail ? open : undefined}
       >
-        <span className="text-muted-foreground">
-          {String(event.seq).padStart(3, '0')} {clock(event.createdAt)}{' '}
-        </span>
-        {event.summary}
-        {event.cost !== undefined && (
-          <span className="text-muted-foreground"> · {formatEur(event.cost, 4)}</span>
+        <span className="min-w-0 flex-1 truncate">{stepTitle(step)}</span>
+        {step.cost !== undefined && step.cost > 0 && (
+          <span className="shrink-0 text-muted-foreground tabular-nums">
+            {formatEur(step.cost, 4)}
+          </span>
         )}
+        <span className="hidden shrink-0 text-muted-foreground tabular-nums sm:inline">
+          {clock(step.at)}
+        </span>
       </button>
-      {open && (
-        <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 whitespace-pre-wrap">
-          {JSON.stringify(event.data, null, 2)}
-        </pre>
+      {open && detail && (
+        <div className="mt-1 mb-2 space-y-2 rounded bg-muted p-2 font-mono">
+          <p className="font-sans text-muted-foreground sm:hidden">{clock(step.at)}</p>
+          {detail.map((d) => (
+            <div key={d.label}>
+              <p className="mb-0.5 font-sans font-medium text-muted-foreground">{d.label}</p>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">
+                {d.value}
+              </pre>
+            </div>
+          ))}
+        </div>
       )}
     </li>
   );
+}
+
+function stepTitle(step: TraceStep) {
+  if (step.kind === 'tool') {
+    return (
+      <span className="font-mono">
+        <span className={cn('font-medium', STATUS_STYLE[step.status])}>{step.name}</span>
+        <span className="text-muted-foreground">({argsLine(step.args)})</span>
+        {step.status === 'pending' && <span className="text-muted-foreground"> …</span>}
+      </span>
+    );
+  }
+  if (step.kind === 'text') return <span className="italic">{step.text}</span>;
+  return <span className={EVENT_STYLE[step.type]}>{step.summary}</span>;
+}
+
+/** What the open row shows; nothing when there is nothing more than the line itself. */
+function stepDetail(step: TraceStep): { label: string; value: string }[] | undefined {
+  if (step.kind === 'tool') {
+    const parts: { label: string; value: string }[] = [];
+    if (Object.keys(step.args).length > 0)
+      parts.push({ label: 'Arguments', value: showValue(step.args) });
+    if (step.note) parts.push({ label: 'Outcome', value: step.note });
+    if (step.result !== undefined) parts.push({ label: 'Result', value: showValue(step.result) });
+    return parts.length > 0 ? parts : undefined;
+  }
+  if (step.kind === 'text') return [{ label: 'Reply', value: step.text }];
+  return Object.keys(step.data).length > 0
+    ? [{ label: 'Details', value: showValue(step.data) }]
+    : undefined;
 }
