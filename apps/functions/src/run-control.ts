@@ -1049,6 +1049,22 @@ export function staleReason(run: Run, now: number, graceMs = 2 * LEASE_MS): stri
   return undefined;
 }
 
+/**
+ * Stop pressed on a run that no worker has taken yet (queued, e.g. waiting for an offline Mac):
+ * nothing would ever read the interrupt flag, so end the run here. Once a worker has claimed it,
+ * its first heartbeat stops it instead. Returns whether the run was ended.
+ */
+export async function stopIfQueued(deps: RunControlDeps, runId: string): Promise<boolean> {
+  const snap = await deps.db.doc(paths.run(runId)).get();
+  if (!snap.exists) return false;
+  const run = { id: snap.id, ...snap.data() } as Run;
+  if (run.state !== 'queued' || run.interrupt !== true) return false;
+  // finish ends it only if it is still queued at this generation, so a claim that got there
+  // first wins and that worker's heartbeat sees the flag.
+  await finish(deps, run, { reason: 'interrupted', session: [] });
+  return true;
+}
+
 /** Reap one run if it is dead (see `staleReason`); returns whether it was reaped. */
 export async function reapIfStale(
   deps: RunControlDeps,
@@ -1059,6 +1075,7 @@ export async function reapIfStale(
   const snap = await deps.db.doc(paths.run(runId)).get();
   if (!snap.exists) return false;
   const run = { id: snap.id, ...snap.data() } as Run;
+  if (run.state === 'queued' && run.interrupt === true) return stopIfQueued(deps, runId);
   const why = staleReason(run, now, graceMs);
   if (!why) return false;
   await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
@@ -1081,10 +1098,18 @@ export async function reapStaleRuns(
   const reaped: string[] = [];
   for (const d of live.docs) {
     const run = { id: d.id, ...d.data() } as Run;
-    const why = staleReason(run, now, graceMs);
-    if (!why) continue;
+    // A queued run that was stopped but missed its trigger: end it as stopped, not as dead.
+    const stopped = run.state === 'queued' && run.interrupt === true;
+    const why = stopped ? undefined : staleReason(run, now, graceMs);
+    if (!stopped && !why) continue;
     try {
-      await finish(deps, run, { reason: 'lease_lost', error: why, session: [] });
+      await finish(
+        deps,
+        run,
+        stopped
+          ? { reason: 'interrupted', session: [] }
+          : { reason: 'lease_lost', error: why, session: [] },
+      );
       reaped.push(run.id);
     } catch (err) {
       // One broken run must not keep the sweep from the others.

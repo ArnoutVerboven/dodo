@@ -38,7 +38,11 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import { defineInt, defineString } from 'firebase-functions/params';
 import { logger, setGlobalOptions } from 'firebase-functions/v2';
-import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+  onDocumentWritten,
+} from 'firebase-functions/v2/firestore';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -103,6 +107,7 @@ import {
   reapStaleRuns,
   requestInput,
   start,
+  stopIfQueued,
 } from './run-control.js';
 import { costGateFor, loadRunForCaller, scopesForRun } from './runtime.js';
 import { SEARCH_TOOL, searchWithBudget } from './search.js';
@@ -708,6 +713,21 @@ export const onRunCreated = onDocumentCreated(
       event.params.runId,
     );
     logger.info('dispatch', { runId: event.params.runId, result });
+  },
+);
+
+/**
+ * Stop on a run no worker has taken yet: no heartbeat would ever see the flag, so end it here.
+ * A run a worker already holds is stopped by its next heartbeat.
+ */
+export const onRunUpdated = onDocumentUpdated(
+  { document: 'runs/{runId}', serviceAccount: GATEWAY_SA },
+  async (event) => {
+    const before = event.data?.before.data() as { interrupt?: boolean } | undefined;
+    const after = event.data?.after.data() as { interrupt?: boolean; state?: string } | undefined;
+    if (before?.interrupt || !after?.interrupt || after.state !== 'queued') return;
+    const stopped = await stopIfQueued(controlDeps(), event.params.runId);
+    logger.info('stop on a queued run', { runId: event.params.runId, stopped });
   },
 );
 

@@ -38,6 +38,8 @@ export async function dispatch(
     const snap = await t.get(ref);
     const run = snap.data() as Run | undefined;
     if (run?.state !== 'queued') return undefined;
+    // Stopped before it was dispatched: the run trigger ends it (stopIfQueued), start nothing.
+    if (run.interrupt) return undefined;
     if (run.device !== 'gcp') return { kind: 'defer', run: { ...run, id: runId } }; // a Mac daemon claims it
     const generation = (run.generation ?? 0) + 1;
     t.update(ref, {

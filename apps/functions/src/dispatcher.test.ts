@@ -73,6 +73,15 @@ describe('dispatch', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it('starts nothing for a run that was stopped while queued', async () => {
+    const { deps, docs, start } = setup(async () => 'tok', undefined, [
+      ['runs/r1', { state: 'queued', device: 'gcp', taskId: 't1', interrupt: true }],
+    ]);
+    expect(await dispatch(deps, 'r1')).toBe('skipped');
+    expect(docs.get('runs/r1')).toMatchObject({ state: 'queued' });
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('leaves a Mac run queued and tells the task what it waits for', async () => {
     const { deps, docs, start } = setup(async () => 'tok', undefined, [
       ['runs/r1', { state: 'queued', device: 'mac:d1', taskId: 't1', createdAt: 0 }],
