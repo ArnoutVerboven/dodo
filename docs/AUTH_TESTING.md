@@ -62,9 +62,23 @@ It is not free and it needs you, so it is on demand only. It is not part of CI o
 
 The Mac cases run on your local model, which costs nothing unless the agent uses a paid tool such as `web_search` (the task tells it not to; the test prints what each case's cost went to); pick another with `--mac-model <id>`. The remote cases run on Gemini 3.5 Flash-Lite, to keep them cheap; pick another with `--remote-model <id>`. The local model exists only on your Mac, so a remote case never uses it. Remote cases add Cloud Run time for the browser worker.
 
+## How the agent logs in
+
+These rules are in the agent's instructions (Settings › Prompts: "Logging in: on your Mac" and "Logging in: in the cloud"), and the test checks that they hold.
+
+**On your Mac**, the agent takes the first way in that applies:
+
+1. the site's vault entry, when one lists the site's domain;
+2. "Continue with Google", when the site offers it;
+3. the site's own email option, with your email address from your personal info.
+
+It finishes the login itself where it can: an emailed code is read from Gmail (`get_email_code`), an SMS or authenticator code is asked as a secret answer, a phone approval is asked in dodo. It hands the Chrome window to you only for what it cannot do: a CAPTCHA, itsme or another phone-app QR code, a passkey, Touch ID or a security key, or a password that is not in the vault.
+
+**In the cloud**, only a login with the site's vault entry works (not Google's own). For anything else (a site without a vault entry, a Google sign-in, itsme, a passkey, a CAPTCHA, a refusal) the agent calls `request_device` at once, and the fallback below takes the task to your Mac.
+
 ## Fallback when a login fails remotely
 
-When the agent cannot finish a login in the cloud browser (a passkey, a login bound to your device, a site that refuses the cloud browser, or one that still fails after a fresh try), it calls `request_device` instead of giving up. What happens next depends on the task's device setting:
+When the agent meets a login the cloud browser cannot do (anything but a vault login: see above), it calls `request_device` instead of giving up. What happens next depends on the task's device setting:
 
 | Device setting  | What happens                                                                                                                                                                                                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

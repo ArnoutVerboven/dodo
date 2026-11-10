@@ -132,8 +132,6 @@ export function taskDescription(c: Case, opts: { reuseSessions?: boolean } = {})
   if (m.instructions) lines.push(m.instructions);
   if (m.useGoogleSession) {
     lines.push('Start by calling use_google_session, then check whether you are signed in.');
-  } else if (c.env === 'remote' && m.hosts.some((h) => h.endsWith('google.com'))) {
-    lines.push('Sign in fresh in this browser: do not call use_google_session.');
   }
   if (!opts.reuseSessions && !m.useGoogleSession) {
     lines.push(

@@ -133,9 +133,8 @@ describe('the test task', () => {
   it('tells the agent how to report, and how to treat existing sessions', () => {
     const remote = taskDescription(caseOf('google-remote'));
     expect(remote).toMatch(/AUTH_RESULT: ok \|/);
-    expect(remote).toMatch(/do not call use_google_session/);
     expect(remote).toMatch(/could not sign out first/);
-    expect(taskDescription(caseOf('google-local'))).not.toMatch(/use_google_session/);
+    expect(remote).not.toMatch(/use_google_session/);
     expect(taskDescription(caseOf('itsme-local'), { reuseSessions: true })).not.toMatch(
       /sign out first/,
     );

@@ -1,17 +1,18 @@
 import {
   AGENT_BROWSER_WINDOW,
-  AGENT_HEADLESS_DEVICE_BLOCKED,
   AGENT_HEADLESS_NO_HOLD,
-  AGENT_HEADLESS_REQUEST_DEVICE,
+  AGENT_LOGIN_HEADLESS_BLOCKED,
+  AGENT_LOGIN_HEADLESS_MOVE,
+  AGENT_LOGIN_WINDOW,
   AGENT_REQUEST_BROWSER,
   AGENT_SYSTEM,
   agentBrowserHeadless,
   agentGoogle,
   agentHeadlessHold,
+  agentLoginHeadless,
   agentNotion,
   agentProject,
   agentRepository,
-  EMAIL_CODE_LOGIN,
   PHONE_APP_LOGIN,
   type Project,
   repoDir,
@@ -51,15 +52,15 @@ export function systemPrompt(
 ): string {
   const lines = [AGENT_SYSTEM];
   if (features.browser === 'window') {
-    lines.push('', AGENT_BROWSER_WINDOW, EMAIL_CODE_LOGIN, PHONE_APP_LOGIN);
+    lines.push('', AGENT_BROWSER_WINDOW, AGENT_LOGIN_WINDOW, PHONE_APP_LOGIN);
   } else if (features.browser === 'headless') {
     const hold = features.holdMinutes
       ? agentHeadlessHold(features.holdMinutes)
       : AGENT_HEADLESS_NO_HOLD;
-    const deviceOnly = features.canRequestDevice
-      ? AGENT_HEADLESS_REQUEST_DEVICE
-      : AGENT_HEADLESS_DEVICE_BLOCKED;
-    lines.push('', agentBrowserHeadless(hold, deviceOnly), EMAIL_CODE_LOGIN, PHONE_APP_LOGIN);
+    const elsewhere = features.canRequestDevice
+      ? AGENT_LOGIN_HEADLESS_MOVE
+      : AGENT_LOGIN_HEADLESS_BLOCKED;
+    lines.push('', agentBrowserHeadless(hold), agentLoginHeadless(elsewhere), PHONE_APP_LOGIN);
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github?.length)
