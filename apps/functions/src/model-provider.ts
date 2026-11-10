@@ -327,7 +327,8 @@ export class FakeProvider implements ModelProvider, SearchProvider, TranscribePr
       functionCall: { name, args },
     });
     let parts: Content['parts'];
-    const transcript = JSON.stringify(req.contents);
+    // pi hands a tool's JSON back as a string inside the response, so quotes come escaped.
+    const transcript = JSON.stringify(req.contents).replace(/\\"/g, '"');
     const wantsFetch = /fetch http/i.test(transcript);
     // "Run: <command>" in the task runs it with the bash tool; the output goes into the summary
     // so a test can see what the sandbox let through.

@@ -6,8 +6,8 @@ describe('pickHarness', () => {
   const control = new FakeControlPlane([]);
   const noGemini = Object.assign(new FakeControlPlane([]), { geminiEndpoint: undefined });
 
-  it("uses dodo's loop unless pi is asked for", () => {
-    expect(pickHarness(undefined, control, 'gemini-3.8-flash').id).toBe('dodo-loop');
+  it("uses pi by default, and dodo's loop when it is asked for", () => {
+    expect(pickHarness(undefined, control, 'gemini-3.8-flash').id).toBe('pi');
     expect(pickHarness('dodo-loop', control, 'gemini-3.8-flash').id).toBe('dodo-loop');
   });
 
@@ -18,5 +18,6 @@ describe('pickHarness', () => {
   it("falls back to dodo's loop on the local model or without the endpoint", () => {
     expect(pickHarness('pi', control, 'local').id).toBe('dodo-loop');
     expect(pickHarness('pi', noGemini, 'gemini-3.8-flash').id).toBe('dodo-loop');
+    expect(pickHarness(undefined, control, 'local').id).toBe('dodo-loop');
   });
 });
