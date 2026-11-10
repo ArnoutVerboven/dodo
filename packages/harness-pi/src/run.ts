@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -358,6 +358,8 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
     });
   };
 
+  // A sandbox can point TMPDIR at a folder it has not made yet.
+  await mkdir(os.tmpdir(), { recursive: true });
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dodo-pi-'));
   const geminiSession = (): Content[] =>
     session ? toGeminiContents(convertToLlm(session.messages) as Message[]) : [...input.session];
