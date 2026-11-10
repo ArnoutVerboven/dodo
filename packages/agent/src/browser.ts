@@ -197,6 +197,13 @@ export async function browserTools(
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let currentHost = '';
+  // A run that resumes after an approval gets new tools but may find the browser still on the
+  // site (the Mac's window stays open): learn where it is now, or the retried submit would be
+  // keyed Browser(submit:) and miss the rule the user just approved.
+  if (available.has('browser_snapshot')) {
+    const page = await livePage(client);
+    if ('host' in page && page.url !== UNKNOWN_URL) currentHost = page.host;
+  }
   let tainted = false;
   /** When the agent last did something on the page (a click that may have sent a code). */
   let lastActionAt: number | undefined;
