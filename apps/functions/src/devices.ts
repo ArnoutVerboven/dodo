@@ -120,6 +120,7 @@ export async function claimRun(
     if (run.state !== 'queued') {
       throw new HttpsError('failed-precondition', `Run is ${run.state}`);
     }
+    if (run.interrupt) throw new HttpsError('failed-precondition', 'Run was stopped');
     const generation = (run.generation ?? 0) + 1;
     t.update(runRef, {
       state: 'claimed',

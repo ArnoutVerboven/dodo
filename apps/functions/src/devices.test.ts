@@ -155,6 +155,21 @@ describe('claimRun', () => {
     await expect(claimRun(t.deps, caller('d1'), req('d1', 'r1'))).rejects.toThrow(/Run is claimed/);
   });
 
+  it('refuses a run that was stopped while it waited for this Mac', async () => {
+    const t = deps({
+      ...base,
+      'runs/r1': {
+        state: 'queued',
+        device: 'mac:d1',
+        taskId: 't1',
+        generation: 0,
+        interrupt: true,
+      },
+    });
+    await expect(claimRun(t.deps, caller('d1'), req('d1', 'r1'))).rejects.toThrow(/stopped/);
+    expect(t.docs.get('runs/r1')).toMatchObject({ state: 'queued', generation: 0 });
+  });
+
   it("refuses another device's run, a revoked device, a stranger and an old daemon", async () => {
     const t = deps(base);
     await expect(claimRun(t.deps, caller('d1'), req('d1', 'r2'))).rejects.toThrow(/another device/);

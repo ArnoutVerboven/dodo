@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { paths, type Run, type Task } from '@dodo/core';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
 import type { Auth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import type { Storage } from 'firebase-admin/storage';
 import { afterAll, describe, expect, it } from 'vitest';
-import { finish } from './run-control.js';
+import { finish, reapStaleRuns, stopIfQueued } from './run-control.js';
 import { costGateFor } from './runtime.js';
 import { onInputAnswered, onTaskChanged } from './triggers.js';
 
@@ -96,6 +96,53 @@ describe.skipIf(!enabled)('a stopped run stays stopped', () => {
       expect(await runsOf(taskId)).toHaveLength(2);
     });
   }
+
+  async function seedQueued(interrupt: boolean) {
+    const d = db as NonNullable<typeof db>;
+    const { taskId, runId } = await seedRunning();
+    // Waiting for an offline Mac: no worker will ever read the flag.
+    await d.doc(paths.run(runId)).update({
+      state: 'queued',
+      generation: 0,
+      interrupt,
+      lease: FieldValue.delete(),
+    });
+    return { taskId, runId };
+  }
+
+  it('ends a run stopped while still queued, and nothing starts it again', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { taskId, runId } = await seedQueued(true);
+    const before = await taskOf(taskId);
+    expect(await stopIfQueued({ db: d, auth, storage, costGate: costGateFor(d) }, runId)).toBe(
+      true,
+    );
+    const run = (await d.doc(paths.run(runId)).get()).data() as Run;
+    expect(run.state).toBe('interrupted');
+    expect(run.endReason).toBe('interrupted');
+    const after = await taskOf(taskId);
+    expect(after.activeRunId).toBeUndefined();
+    expect(after.status).toBe('needs_input');
+    await onTaskChanged({ db: d }, before, after);
+    expect(await runsOf(taskId)).toHaveLength(1);
+  });
+
+  it('leaves a queued run alone that nobody stopped', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { runId } = await seedQueued(false);
+    expect(await stopIfQueued({ db: d, auth, storage, costGate: costGateFor(d) }, runId)).toBe(
+      false,
+    );
+    expect((await d.doc(paths.run(runId)).get()).get('state')).toBe('queued');
+  });
+
+  it('the sweep ends a stopped queued run that missed its trigger', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { runId } = await seedQueued(true);
+    const reaped = await reapStaleRuns({ db: d, auth, storage, costGate: costGateFor(d) });
+    expect(reaped).toContain(runId);
+    expect((await d.doc(paths.run(runId)).get()).get('state')).toBe('interrupted');
+  });
 
   it('does not start again when a budget top-up is declined', async () => {
     const d = db as NonNullable<typeof db>;
