@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -34,9 +34,9 @@ import {
   focusBrowserWindow,
   startBrowserServer,
 } from './browser.js';
-import { type CliConfig, chromeProfile, expandFolder, home, VERSION, workRoot } from './config.js';
+import { type CliConfig, chromeProfile, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
-import { ModelServer, type ServerProcess, startSharedEndpoint } from './local-model.js';
+import { LocalModelHost, type LocalModelRoute, spawnModelServer } from './local-model.js';
 import { LocalMcpHost } from './mcp.js';
 import { onBeat, type PresenceWatch, settleWithin } from './presence.js';
 import {
@@ -130,23 +130,13 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
   // Local MCP servers: listed in the Tools view, started when a run first needs them.
   const mcp = new LocalMcpHost(clients.db, config.deviceId, config.mcp ?? [], log);
   await mcp.start().catch((err: Error) => log(`mcp: ${err.message}`));
-  // The local model: with a start command, an endpoint that starts the server on demand and
-  // stops it when idle; runs (and other apps) call that instead of the server itself.
-  const modelServer = config.localModel?.command?.length
-    ? new ModelServer(config.localModel, { spawn: spawnModelServer, log })
-    : undefined;
-  const shared =
-    modelServer && config.localModel
-      ? await startSharedEndpoint(config.localModel, modelServer, log).catch((err: Error) => {
-          log(`local model: shared endpoint not started (${err.message}); runs call the server`);
-          return undefined;
-        })
-      : undefined;
+  // The local model: the gateway when it answers (asked again for each run), else dodo's own
+  // server, started on a run's first request and stopped when idle.
   const localModel = config.localModel
-    ? { ...config.localModel, url: shared?.url ?? config.localModel.url }
+    ? new LocalModelHost(config.localModel, { spawn: spawnModelServer, log })
     : undefined;
   log(
-    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, ${mcp.count} MCP server${mcp.count === 1 ? '' : 's'}, local model ${localModel ? `${localModel.model ?? 'default'} at ${localModel.url}` : 'none'}, waiting for runs`,
+    `${config.name} (${me}) online, protocol ${DEVICE_PROTOCOL}, sandbox ${report.state}, browser ${browser.mode ?? browser.state}, ${mcp.count} MCP server${mcp.count === 1 ? '' : 's'}, local model ${config.localModel ? `${localModelName(config.localModel) ?? 'default'} (gateway ${localModel?.gateway() ?? 'off'}, else ${config.localModel.command?.length ? "dodo's own server" : config.localModel.url})` : 'none'}, waiting for runs`,
   );
 
   return new Promise<StopReason>((resolve) => {
@@ -162,11 +152,10 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       for (const s of subs) s();
       clearInterval(beat);
       clearInterval(updates);
-      modelServer?.stop();
       // Bounded: a cleanup that hangs must not keep a dead daemon alive, since launchd only
       // starts a fresh one once this process exits.
       void settleWithin(
-        Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop(), shared?.close()]),
+        Promise.all([stopSandbox(), browserServer?.stop(), mcp.stop(), localModel?.close()]),
         15_000,
       ).then(() => resolve(reason));
     };
@@ -327,6 +316,13 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             log(`run ${runId}: mcp: ${err.message}; running without local MCP servers`);
             return {};
           });
+          // Asked now, not at start: the gateway may have come up (or gone) since.
+          const modelRoute = await localModel?.forRun().catch((err: Error) => {
+            log(`run ${runId}: local model: ${err.message}; running without it`);
+            return undefined;
+          });
+          if (modelRoute)
+            log(`run ${runId}: local model, if used: ${modelRoute.via} at ${modelRoute.url}`);
           const { code, askedUser } = await execute(
             config,
             runId,
@@ -335,7 +331,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             report.state === 'on',
             browserUrl,
             mcpUrls,
-            localModel,
+            modelRoute,
           );
           current = undefined;
           // The agent stopped to ask something while it had the window: put it in front of them.
@@ -414,35 +410,6 @@ async function claim(clients: Clients, config: CliConfig, runId: string, browser
   }
 }
 
-/** The model server, as you and outside the sandbox (like local MCP servers); output to a log. */
-function spawnModelServer(command: string[]): ServerProcess {
-  mkdirSync(home(), { recursive: true, mode: 0o700 });
-  const out = openSync(`${home()}/model.log`, 'a');
-  const child = spawn(command[0] as string, command.slice(1), {
-    stdio: ['ignore', out, out],
-    env: process.env,
-  });
-  closeSync(out);
-  let alive = true;
-  const exited = new Promise<void>((resolve) => {
-    const done = () => {
-      alive = false;
-      resolve();
-    };
-    child.on('exit', done);
-    child.on('error', done);
-  });
-  return {
-    running: () => alive,
-    stop: () => {
-      if (!alive) return;
-      child.kill('SIGTERM');
-      const force = setTimeout(() => child.kill('SIGKILL'), 10_000);
-      void exited.then(() => clearTimeout(force));
-    },
-  };
-}
-
 /** The worker is the same bundle Cloud Run uses; it only ever sees the run token. */
 export function workerEntry(): string {
   return (
@@ -459,7 +426,7 @@ async function execute(
   sandboxed: boolean,
   browserUrl?: string,
   mcpUrls: Record<string, string> = {},
-  localModel?: { url: string; model?: string },
+  localModel?: LocalModelRoute,
 ): Promise<{ code: number | null; askedUser: boolean }> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
