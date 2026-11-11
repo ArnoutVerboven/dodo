@@ -11,6 +11,22 @@ const plistPath = () => path.join(os.homedir(), 'Library', 'LaunchAgents', `${LA
 const escapeXml = (s: string) =>
   s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string);
 
+/**
+ * The node launchd should start. `process.execPath` is the resolved binary, which under Homebrew is
+ * a versioned path (`…/Cellar/node/26.8.1/bin/node`) that `brew upgrade node` deletes, leaving the
+ * agent unable to start. Homebrew's `opt/<formula>` link follows upgrades of the same formula
+ * (so node@22 stays on 22), so it is used when it exists.
+ */
+export function stableNodePath(
+  execPath: string = process.execPath,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  const m = /^(.+)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!m) return execPath;
+  const linked = `${m[1]}/opt/${m[2]}/bin/node`;
+  return exists(linked) ? linked : execPath;
+}
+
 export function installAgent(cliEntry: string) {
   if (process.platform !== 'darwin') throw new Error('launchd agents only exist on macOS');
   mkdirSync(path.dirname(plistPath()), { recursive: true });
@@ -22,7 +38,7 @@ export function installAgent(cliEntry: string) {
 <plist version="1.0"><dict>
   <key>Label</key><string>${LABEL}</string>
   <key>ProgramArguments</key><array>
-    <string>${escapeXml(process.execPath)}</string>
+    <string>${escapeXml(stableNodePath())}</string>
     <string>${escapeXml(cliEntry)}</string>
     <string>daemon</string>
   </array>

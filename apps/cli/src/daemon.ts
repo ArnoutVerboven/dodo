@@ -217,7 +217,14 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     const repo = autoUpdateOn(config) && !opts.once ? repoRoot() : undefined;
     let lastSkip: string | undefined;
     const update = async () => {
-      if (!repo || stopped || busy) return;
+      if (stopped || busy) return;
+      // `brew upgrade node` deletes the binary this daemon runs on, so workers could not start;
+      // launchd starts the daemon again (KeepAlive) on the upgraded node.
+      if (!existsSync(process.execPath)) {
+        stop('updated', `update: node at ${process.execPath} is gone (upgraded?); restarting.`);
+        return;
+      }
+      if (!repo) return;
       busy = 'update';
       try {
         const check = await checkForUpdate(repo);
