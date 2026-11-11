@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SandboxManager, type SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
+import { FREE_SEARCH_HOST } from '@dodo/core';
 import { home, workRoot } from './config.js';
 
 /**
@@ -11,8 +12,8 @@ import { home, workRoot } from './config.js';
  *   reads    everything except your home folder; inside it only the task folders you added,
  *            the daemon's work folder and whatever the worker itself needs (node, its bundle)
  *   writes   the task folders, the work folder and the temp folder
- *   network  through the runtime's proxy only: the Firebase hosts the worker talks to, GitHub
- *            and the package registries; any other host is asked of the control plane, which
+ *   network  through the runtime's proxy only: the Firebase hosts the worker talks to, GitHub,
+ *            the package registries and the free web search; any other host is asked of the control plane, which
  *            applies the task's policy (allowed hosts, allow rules, the approval you just gave)
  *
  * The daemon itself stays outside, with the device sign-in in the Keychain; the worker only
@@ -35,7 +36,10 @@ export interface SandboxInputs {
   emulatorHost?: string;
 }
 
-/** Hosts every run needs, whatever the task: the control plane, GitHub and the registries. */
+/**
+ * Hosts every run needs, whatever the task: the control plane, GitHub, the registries, and the
+ * free web search (web_search on a Mac sends its query there instead of to paid Google search).
+ */
 export function workerHosts(projectId: string, region: string, emulatorHost?: string): string[] {
   return [
     'firestore.googleapis.com',
@@ -50,6 +54,7 @@ export function workerHosts(projectId: string, region: string, emulatorHost?: st
     'registry.npmjs.org',
     'pypi.org',
     'files.pythonhosted.org',
+    FREE_SEARCH_HOST,
     ...(emulatorHost ? ['localhost', emulatorHost] : []),
   ];
 }

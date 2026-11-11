@@ -10,7 +10,9 @@ import {
   connectBrowser,
   connectMcp,
   createSecretResolver,
+  duckDuckGoSearch,
   execTools,
+  freeFirst,
   type GitHubAccess,
   githubTools,
   googleSessionTool,
@@ -240,7 +242,18 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const builtins = [
     ...taskTools,
     ...execTools,
-    webSearchTool((query) => control.search(query)),
+    // On a Mac a search is free (DuckDuckGo from this machine); the paid Google search is only
+    // the fallback when that fails. In the cloud every search is the paid one.
+    env.freeSearch
+      ? webSearchTool(
+          freeFirst(
+            duckDuckGoSearch(),
+            (query) => control.search(query),
+            (m) => console.log(m),
+          ),
+          { free: true },
+        )
+      : webSearchTool((query) => control.search(query)),
     ...(started.google ? googleTools((call) => control.google(call), started.google) : []),
     ...(started.notion ? notionTools((call) => control.notion(call), started.notion) : []),
     ...(githubAccess.length ? githubTools(githubAccess) : []),
@@ -414,6 +427,7 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       : undefined,
     browserUrl: process.env.DODO_BROWSER_URL || undefined,
     headlessBrowser: process.env.DODO_BROWSER === 'headless',
+    freeSearch: process.env.DODO_FREE_SEARCH === '1',
     mcpUrls: process.env.DODO_MCP_URLS
       ? (JSON.parse(process.env.DODO_MCP_URLS) as Record<string, string>)
       : undefined,
