@@ -75,6 +75,8 @@ export interface WorkerEnv {
   deadline?: number;
   /** Mac: the local model's OpenAI-compatible server (`dodo model`), for runs on the local model. */
   localModel?: { url: string; model?: string };
+  /** Mac: web_search runs free on this machine (DuckDuckGo), with the paid search as fallback. */
+  freeSearch?: boolean;
 }
 
 export interface Clients {

@@ -1,8 +1,8 @@
 import { PolicyEngine } from '@dodo/policy';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GatewayBudgetError } from './control-plane.js';
 import { runAgent } from './loop.js';
-import { webSearchTool } from './search-tools.js';
+import { duckDuckGoSearch, freeFirst, parseDuckDuckGo, webSearchTool } from './search-tools.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { taskTools } from './tools.js';
 
@@ -87,5 +87,90 @@ describe('web_search', () => {
     expect(result.reason).toBe('waiting_input');
     expect(ran).toBe(false);
     expect(control.inputRequests[0]?.suggestedRule).toBe('WebSearch(opening hours Atomium)');
+  });
+});
+
+const DDG_PAGE = `
+<div class="result results_links results_links_deep result--ad">
+  <h2 class="result__title"><a rel="nofollow" class="result__a" href="https://duckduckgo.com/y.js?ad_domain=x.com&amp;u3=1">Ad title</a></h2>
+  <a class="result__snippet" href="https://duckduckgo.com/y.js?u3=1">Buy now</a>
+</div>
+<div class="result results_links results_links_deep web-result">
+  <h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.booking.com%2Fgenius.html&amp;rut=abc">Booking.com <b>Genius</b> loyalty programme</a></h2>
+  <a class="result__url" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.booking.com%2Fgenius.html">www.booking.com/genius.html</a>
+  <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.booking.com%2Fgenius.html">Check your <b>Genius</b> level &amp; benefits in your account.</a>
+</div>
+<div class="result results_links results_links_deep web-result">
+  <h2 class="result__title"><a rel="nofollow" class="result__a" href="https://example.org/help">Help page</a></h2>
+</div>`;
+
+const page = (body: string, status = 200) =>
+  (async () =>
+    new Response(body, { status, headers: { 'content-type': 'text/html' } })) as typeof fetch;
+
+describe('free web search (Mac)', () => {
+  it('reads the organic results from DuckDuckGo and skips ads', () => {
+    expect(parseDuckDuckGo(DDG_PAGE)).toEqual([
+      {
+        title: 'Booking.com Genius loyalty programme',
+        url: 'https://www.booking.com/genius.html',
+        snippet: 'Check your Genius level & benefits in your account.',
+      },
+      { title: 'Help page', url: 'https://example.org/help', snippet: '' },
+    ]);
+  });
+
+  it('posts the query and returns the results at no cost', async () => {
+    let sent: { url: string; body: string } | undefined;
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      sent = { url, body: String(init.body) };
+      return new Response(DDG_PAGE, { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = await duckDuckGoSearch(fetchImpl)('booking genius status');
+    expect(sent).toEqual({
+      url: 'https://html.duckduckgo.com/html/',
+      body: 'q=booking+genius+status',
+    });
+    expect(r.cost).toBe(0);
+    expect(r.sources.map((s) => s.url)).toEqual([
+      'https://www.booking.com/genius.html',
+      'https://example.org/help',
+    ]);
+    expect(r.answer).toContain('1. Booking.com Genius loyalty programme');
+    expect(r.answer).toContain('https://example.org/help');
+  });
+
+  it('throws on a bot check or an error status', async () => {
+    await expect(duckDuckGoSearch(page('<div class="anomaly-modal">', 200))('q')).rejects.toThrow(
+      /bot check/,
+    );
+    await expect(duckDuckGoSearch(page('', 202))('q')).rejects.toThrow(/202/);
+  });
+
+  it('falls back to the paid search only when the free one fails or finds nothing', async () => {
+    const paid = vi.fn(async (q: string) => ({
+      answer: 'paid',
+      sources: [{ title: 't', url: 'https://x.test' }],
+      queries: [q],
+      cost: 14_000,
+      remaining: 0,
+    }));
+    const free = freeFirst(duckDuckGoSearch(page(DDG_PAGE)), paid);
+    expect((await free('a')).cost).toBe(0);
+    expect(paid).not.toHaveBeenCalled();
+
+    const logs: string[] = [];
+    const blocked = freeFirst(duckDuckGoSearch(page('', 403)), paid, (m) => logs.push(m));
+    expect((await blocked('b')).answer).toBe('paid');
+    const empty = freeFirst(duckDuckGoSearch(page('<html></html>')), paid);
+    expect((await empty('c')).answer).toBe('paid');
+    expect(paid).toHaveBeenCalledTimes(2);
+    expect(logs[0]).toContain('403');
+  });
+
+  it('tells the model searches are free', () => {
+    const search = async () => ({ answer: '', sources: [], queries: [], cost: 0, remaining: 0 });
+    expect(webSearchTool(search, { free: true }).description).toContain('free');
+    expect(webSearchTool(search).description).toContain('costs about');
   });
 });

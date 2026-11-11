@@ -453,6 +453,8 @@ async function execute(
     FIREBASE_API_KEY: config.firebase.apiKey,
     FIREBASE_PROJECT_ID: config.firebase.projectId,
     FUNCTIONS_REGION: config.region,
+    // web_search from this Mac goes to DuckDuckGo for free instead of paid Google search.
+    DODO_FREE_SEARCH: '1',
   };
   if (config.firebase.appId) env.FIREBASE_APP_ID = config.firebase.appId;
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;

@@ -120,6 +120,12 @@ export const SearchRequest = z.object({
 export type SearchRequest = z.infer<typeof SearchRequest>;
 
 export const SearchSource = z.object({ title: z.string(), url: z.string() });
+
+/**
+ * Where web_search runs for free on a Mac: DuckDuckGo's HTML results page, fetched by the
+ * worker itself. The Mac sandbox lets every run reach it, like the control plane's hosts.
+ */
+export const FREE_SEARCH_HOST = 'html.duckduckgo.com';
 export type SearchSource = z.infer<typeof SearchSource>;
 
 export const SearchResponse = z.object({
