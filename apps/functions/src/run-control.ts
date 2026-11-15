@@ -194,7 +194,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     model: run.model,
     contextWindow: contextWindow(run.model),
     browser: run.browser === true,
-    browserSetting: browserSettingOf(task, project),
+    browserSetting: browserSettingOf(task, project, settings),
     policy,
     ...(tools ? { tools } : {}),
     ...(google ? { google } : {}),
@@ -205,11 +205,14 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
 function browserSettingOf(
   task: Record<string, unknown>,
   project: Record<string, unknown> | undefined,
+  settings: Record<string, unknown>,
 ): StartResponse['browserSetting'] {
   const ai = (task.ai ?? {}) as Record<string, unknown>;
   const pdefaults = (project?.defaults ?? {}) as Record<string, unknown>;
-  const v = ai.browser ?? pdefaults.browser;
-  return v === 'auto' || v === 'chrome' ? v : 'none';
+  const gdefaults = (settings.defaults ?? {}) as Record<string, unknown>;
+  const v = ai.browser ?? pdefaults.browser ?? gdefaults.browser;
+  // Unset means Auto, as in decideBrowser.
+  return v === 'none' || v === 'chrome' ? v : 'auto';
 }
 
 /**

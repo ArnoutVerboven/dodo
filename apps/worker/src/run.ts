@@ -275,7 +275,13 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       : []),
   ];
   const tools = [
-    ...filterBuiltins(withBrowserHint(builtins, !!browser), started.tools),
+    ...filterBuiltins(
+      vaultNeedsBrowser(
+        withBrowserHint(builtins, !!browser),
+        !browser && started.browserSetting === 'auto',
+      ),
+      started.tools,
+    ),
     ...mcp.tools,
   ];
   if (started.tools?.toolsets.length)
@@ -353,6 +359,31 @@ export function withBrowserHint(tools: ToolDef[], browser: boolean): ToolDef[] {
       ? {
           ...t,
           description: `${t.description} This run has a browser: for a website to log in to, click through or check something on, use browser_navigate instead; http_fetch is for APIs, feeds and plain pages to read.`,
+        }
+      : t,
+  );
+}
+
+/**
+ * Browser Auto without one yet: a vault login is only ever typed into a browser, so asking
+ * for an entry restarts the run with a browser first (like request_browser) instead of
+ * approving an entry the run cannot use and fetching the login page over HTTP.
+ */
+export function vaultNeedsBrowser(tools: ToolDef[], canRequestBrowser: boolean): ToolDef[] {
+  if (!canRequestBrowser) return tools;
+  return tools.map((t) =>
+    t.name === 'request_vault_access'
+      ? {
+          ...t,
+          async execute() {
+            return {
+              result: {
+                ok: true,
+                note: 'A vault login is typed in the browser, which this run does not have yet. Restarting with a browser: open the site there, then call request_vault_access again.',
+              },
+              needsBrowser: true as const,
+            };
+          },
         }
       : t,
   );

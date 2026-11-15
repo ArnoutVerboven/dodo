@@ -70,8 +70,9 @@ export async function decideBrowser(
   ask: (() => Promise<boolean>) | undefined,
   log?: TriggerDeps['log'],
 ): Promise<{ browser: boolean; reason?: string }> {
+  // Unset means Auto: a task gets a browser when it needs one unless someone chose None.
   if (setting === 'chrome') return { browser: true };
-  if (setting === undefined || setting === 'none') return { browser: false };
+  if (setting === 'none') return { browser: false };
   if (opts.browser === true) return { browser: true };
   // A reply on a task that ran without a browser may now be about a website ("log in to it").
   if (opts.browser === false || opts.trigger !== 'new') {

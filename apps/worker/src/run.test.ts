@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execTools, taskTools } from '@dodo/agent';
 import { describe, expect, it } from 'vitest';
-import { filterBuiltins, pickWorkdir, withBrowserHint } from './run.js';
+import { filterBuiltins, pickWorkdir, vaultNeedsBrowser, withBrowserHint } from './run.js';
 
 const env = (allowedFolders?: string[]) => ({
   runId: 'r1',
@@ -61,5 +61,18 @@ describe('withBrowserHint', () => {
     expect(fetchDesc(withBrowserHint(execTools, true))).toContain('use browser_navigate instead');
     expect(fetchDesc(withBrowserHint(execTools, false))).not.toContain('browser_navigate');
     expect(fetchDesc(execTools)).not.toContain('browser_navigate');
+  });
+});
+
+describe('vaultNeedsBrowser', () => {
+  const vault = (tools: typeof taskTools) =>
+    tools.find((t) => t.name === 'request_vault_access') as (typeof taskTools)[number];
+  it('restarts with a browser instead of asking for a vault entry on Browser Auto', async () => {
+    const out = await vault(vaultNeedsBrowser(taskTools, true)).execute(
+      { entryId: 'albert-heijn', reason: 'log in' },
+      {} as never,
+    );
+    expect(out).toMatchObject({ needsBrowser: true });
+    expect(vault(vaultNeedsBrowser(taskTools, false))).toBe(vault(taskTools));
   });
 });
