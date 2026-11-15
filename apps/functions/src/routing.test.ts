@@ -59,7 +59,11 @@ describe('decideBrowser', () => {
     expect((await decideBrowser('none', { trigger: 'new', browser: true }, yes)).browser).toBe(
       false,
     );
-    expect((await decideBrowser(undefined, { trigger: 'new' }, yes)).browser).toBe(false);
+    expect((await decideBrowser(undefined, { trigger: 'new' }, no)).browser).toBe(false);
+  });
+
+  it('treats an unset setting as auto', async () => {
+    expect((await decideBrowser(undefined, { trigger: 'new' }, yes)).browser).toBe(true);
   });
 
   it('auto: asks the router once for a new task', async () => {

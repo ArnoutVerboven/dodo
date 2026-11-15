@@ -202,7 +202,7 @@ export function AiConfigFields({
             ariaLabel="Browser"
             value={value.browser ?? ''}
             options={browserOptions}
-            inherited={optionOf(browserOptions, inherited.browser ?? 'none')}
+            inherited={optionOf(browserOptions, inherited.browser ?? 'auto')}
             onChange={(browser) => set({ browser: browser as AiConfig['browser'] })}
             onReset={() => set({ browser: undefined })}
           />
