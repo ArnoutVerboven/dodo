@@ -59,8 +59,6 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          # Newer runner kernels also confine unconfined processes' user namespaces.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Headless Chromium for the browser engine tests
