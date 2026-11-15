@@ -36,7 +36,7 @@ import {
   Upload,
   User,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
@@ -156,15 +156,32 @@ function TaskView({ task }: { task: Task }) {
 
 function TitleEditor({ task }: { task: Task }) {
   const [title, setTitle] = useState(task.title);
+  const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     setTitle(task.title);
   }, [task.title]);
+  // Grow to fit the whole title, wrapping as needed. `field-sizing: content` does this in
+  // Chromium only; elsewhere a one-row textarea would cut a long title off.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text changes
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const fit = () => {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(el.parentElement ?? el);
+    return () => observer.disconnect();
+  }, [title]);
   return (
-    <label className="group flex items-center gap-2">
+    <label className="group flex items-start gap-2">
       <textarea
+        ref={box}
         aria-label="Title"
         rows={1}
-        className="-mx-1 w-full resize-none rounded-md bg-transparent px-1 text-xl font-semibold outline-none field-sizing-content hover:bg-accent/50 focus:bg-accent/50"
+        className="-mx-1 w-full resize-none overflow-hidden rounded-md bg-transparent px-1 text-xl font-semibold break-words outline-none hover:bg-accent/50 focus:bg-accent/50"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onBlur={() =>
@@ -183,7 +200,7 @@ function TitleEditor({ task }: { task: Task }) {
           }
         }}
       />
-      <Pencil className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+      <Pencil className="mt-2 h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
     </label>
   );
 }
@@ -292,21 +309,13 @@ function SummaryCard({ task }: { task: Task }) {
   );
 }
 
-/** The description sits right under the title as plain text; long ones fold to a few lines. */
+/** The description sits right under the title as plain text, shown in full. */
 function Description({ task }: { task: Task }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(task.description);
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setText(task.description);
   }, [task.description]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text changes
-  useEffect(() => {
-    const el = body.current;
-    if (el) setOverflows(el.scrollHeight > el.clientHeight + 1);
-  }, [task.description, editing]);
   const save = () => updateTask(task.id, { description: text }).then(() => setEditing(false));
   const cancel = () => {
     setText(task.description);
@@ -341,13 +350,7 @@ function Description({ task }: { task: Task }) {
   return (
     <div className="group relative">
       {task.description ? (
-        <div
-          ref={body}
-          className={cn(
-            'prose-sm pr-16 text-sm text-muted-foreground',
-            !expanded && 'line-clamp-4',
-          )}
-        >
+        <div className="prose-sm pr-16 text-sm break-words text-muted-foreground">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.description}</ReactMarkdown>
         </div>
       ) : (
@@ -357,23 +360,6 @@ function Description({ task }: { task: Task }) {
           onClick={() => setEditing(true)}
         >
           Add a description…
-        </button>
-      )}
-      {(overflows || expanded) && (
-        <button
-          type="button"
-          className="mt-0.5 inline-flex items-center gap-0.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {expanded ? (
-            <>
-              <ChevronDown className="h-3.5 w-3.5 rotate-180" /> Show less
-            </>
-          ) : (
-            <>
-              <ChevronDown className="h-3.5 w-3.5" /> Show more
-            </>
-          )}
         </button>
       )}
       {task.description && (
