@@ -59,6 +59,13 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Newer Ubuntu images confine bwrap with an AppArmor profile whose children get
+          # capability-less user namespaces; sandbox-runtime's seccomp helper needs one.
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || true
+          fi
+          echo "kernel $(uname -r), $(. /etc/os-release && echo "$PRETTY_NAME"), bwrap $(bwrap --version)"
+          sudo aa-status 2>/dev/null | grep -i bwrap || echo "no bwrap AppArmor profile loaded"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Headless Chromium for the browser engine tests
