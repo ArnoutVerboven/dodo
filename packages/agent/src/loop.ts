@@ -133,8 +133,8 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
 
   await trace.emit({
     type: 'run_started',
-    summary: `Run started (${input.trigger}, ${input.model})`,
-    data: { trigger: input.trigger, model: input.model },
+    summary: `Run started (${input.trigger}, ${input.model}, ${hasBrowser ? 'browser' : 'no browser'})`,
+    data: { trigger: input.trigger, model: input.model, browser: hasBrowser },
   });
 
   // Opening turn depends on the trigger.

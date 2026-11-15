@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SandboxManager, type SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
-import { FREE_SEARCH_HOST } from '@dodo/core';
+import { FREE_SEARCH_HOSTS } from '@dodo/core';
 import { home, workRoot } from './config.js';
 
 /**
@@ -54,7 +54,7 @@ export function workerHosts(projectId: string, region: string, emulatorHost?: st
     'registry.npmjs.org',
     'pypi.org',
     'files.pythonhosted.org',
-    FREE_SEARCH_HOST,
+    ...FREE_SEARCH_HOSTS,
     ...(emulatorHost ? ['localhost', emulatorHost] : []),
   ];
 }

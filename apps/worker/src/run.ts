@@ -6,13 +6,14 @@ import { promisify } from 'node:util';
 import {
   asAgent,
   authHeaderArgs,
+  bingRssSearch,
   browserTools,
   connectBrowser,
   connectMcp,
   createSecretResolver,
   duckDuckGoSearch,
   execTools,
-  freeFirst,
+  freeSearch,
   type GitHubAccess,
   githubTools,
   googleSessionTool,
@@ -242,16 +243,14 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const builtins = [
     ...taskTools,
     ...execTools,
-    // On a Mac a search is free (DuckDuckGo from this machine); the paid Google search is only
-    // the fallback when that fails. In the cloud every search is the paid one.
+    // On a Mac a search is always free (DuckDuckGo, else Bing, from this machine), never the
+    // paid Google search; in the cloud every search is the paid one.
     env.freeSearch
       ? webSearchTool(
-          freeFirst(
-            duckDuckGoSearch(),
-            (query) => control.search(query),
-            (m) => console.log(m),
-          ),
-          { free: true },
+          freeSearch([duckDuckGoSearch(), bingRssSearch()], (m) => console.log(m)),
+          {
+            free: true,
+          },
         )
       : webSearchTool((query) => control.search(query)),
     ...(started.google ? googleTools((call) => control.google(call), started.google) : []),
@@ -275,7 +274,10 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
         ]
       : []),
   ];
-  const tools = [...filterBuiltins(builtins, started.tools), ...mcp.tools];
+  const tools = [
+    ...filterBuiltins(withBrowserHint(builtins, !!browser), started.tools),
+    ...mcp.tools,
+  ];
   if (started.tools?.toolsets.length)
     console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
 
@@ -338,6 +340,22 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   await Promise.all(mcp.clients.map((c) => c.close()));
   console.log(`run ${env.runId} ended: ${result.reason} after ${result.steps} steps`);
   return result.reason;
+}
+
+/**
+ * With a browser, http_fetch says to leave websites to it: a model that sees both otherwise
+ * tends to fetch a login page over HTTP and stall on it.
+ */
+export function withBrowserHint(tools: ToolDef[], browser: boolean): ToolDef[] {
+  if (!browser) return tools;
+  return tools.map((t) =>
+    t.name === 'http_fetch'
+      ? {
+          ...t,
+          description: `${t.description} This run has a browser: for a website to log in to, click through or check something on, use browser_navigate instead; http_fetch is for APIs, feeds and plain pages to read.`,
+        }
+      : t,
+  );
 }
 
 /** The built-ins the Tools view leaves this run; the core task tools always stay. */
