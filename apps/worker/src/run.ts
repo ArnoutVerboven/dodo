@@ -193,14 +193,32 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       return undefined;
     });
   }
+  let browserProblem: string | undefined;
   const browser = headless
     ? headless.client
     : started.browser && env.browserUrl
       ? await connectBrowser(env.browserUrl).catch((err: Error) => {
           console.log(`browser unavailable: ${err.message}`);
+          browserProblem = `could not connect to the browser on this machine: ${err.message}`;
           return undefined;
         })
       : undefined;
+  if (started.browser && !browser) {
+    // Visible in the task's trace, not only in the daemon log: why a run that should have a
+    // browser has none.
+    browserProblem ??= env.headlessBrowser
+      ? 'the headless browser did not start'
+      : env.browserUrl
+        ? 'the browser did not answer'
+        : 'this machine started no browser for the run (see ~/.dodo/daemon.log on the Mac)';
+    await trace
+      .emit({
+        type: 'error',
+        summary: `Browser requested but unavailable: ${browserProblem}`,
+        data: { browser: 'unavailable', reason: browserProblem },
+      })
+      .catch(() => {});
+  }
   const mcp = await connectMcpServers(started.tools, env);
   const notes = [
     ...mcp.notes,
