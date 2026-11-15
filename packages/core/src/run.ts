@@ -122,10 +122,12 @@ export type SearchRequest = z.infer<typeof SearchRequest>;
 export const SearchSource = z.object({ title: z.string(), url: z.string() });
 
 /**
- * Where web_search runs for free on a Mac: DuckDuckGo's HTML results page, fetched by the
- * worker itself. The Mac sandbox lets every run reach it, like the control plane's hosts.
+ * Where web_search runs for free on a Mac: DuckDuckGo's HTML results page, else Bing's RSS
+ * results, fetched by the worker itself. The Mac sandbox lets every run reach them.
  */
 export const FREE_SEARCH_HOST = 'html.duckduckgo.com';
+export const FREE_SEARCH_FALLBACK_HOST = 'www.bing.com';
+export const FREE_SEARCH_HOSTS = [FREE_SEARCH_HOST, FREE_SEARCH_FALLBACK_HOST];
 export type SearchSource = z.infer<typeof SearchSource>;
 
 export const SearchResponse = z.object({

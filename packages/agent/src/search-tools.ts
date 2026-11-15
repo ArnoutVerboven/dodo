@@ -1,4 +1,9 @@
-import { FREE_SEARCH_HOST, type SearchResponse, type SearchSource } from '@dodo/core';
+import {
+  FREE_SEARCH_FALLBACK_HOST,
+  FREE_SEARCH_HOST,
+  type SearchResponse,
+  type SearchSource,
+} from '@dodo/core';
 import { z } from 'zod';
 import { htmlToText } from './exec-tools.js';
 import { define, type ToolDef } from './tools.js';
@@ -7,8 +12,8 @@ import { define, type ToolDef } from './tools.js';
  * Web search (#13): Gemini grounding with Google Search, run by the control plane so it is
  * billed under the same GCP project and cap, needs no key, and is paid per query from the
  * task's budget (TOOL_PRICES.web_search, #15). The worker only sends the query. On a Mac the
- * search runs free instead, from the user's own connection (duckDuckGoSearch), and the paid
- * search is only the fallback when that fails (freeFirst).
+ * search runs free instead, from the user's own connection (DuckDuckGo, else Bing), and never
+ * falls back to the paid one (freeSearch).
  *
  * A search is a read: it runs freely under the agent-decides profile and asks in the
  * untrusted one (`WebSearch(<query>)`, or `WebSearch(*)` for every search).
@@ -21,7 +26,7 @@ const PAID_DESCRIPTION =
 const FREE_DESCRIPTION =
   'Search the web and get the top results (title, link and snippet each). Use it to find facts, current information, prices, opening hours, documentation or the right page to open; then http_fetch or the browser to read a result in full. Searches on this machine are free, so search again with other words when the results miss; use search terms rather than long questions.';
 
-/** `free`: the search runs on this machine at no cost (freeFirst over duckDuckGoSearch). */
+/** `free`: the search runs on this machine at no cost (freeSearch). */
 export function webSearchTool(search: WebSearch, opts: { free?: boolean } = {}): ToolDef {
   return define({
     name: 'web_search',
@@ -80,19 +85,61 @@ export function duckDuckGoSearch(fetchImpl: typeof fetch = fetch): WebSearch {
     const results = parseDuckDuckGo(html);
     if (results.length === 0 && /anomaly|captcha|challenge/i.test(html))
       throw new Error('DuckDuckGo asked for a bot check');
-    const answer = results.length
-      ? results
-          .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet ? `   ${r.snippet}\n` : ''}   ${r.url}`)
-          .join('\n')
-      : '';
-    return {
-      answer,
-      sources: results.map(({ title, url }) => ({ title, url })),
-      queries: [query],
-      cost: 0,
-      remaining: 0,
-    };
+    return asResponse(query, results);
   };
+}
+
+/** Free results as the tool returns them: a numbered list as the answer, and the sources. */
+function asResponse(query: string, results: FreeSearchResult[]): SearchResponse {
+  const answer = results
+    .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet ? `   ${r.snippet}\n` : ''}   ${r.url}`)
+    .join('\n');
+  return {
+    answer,
+    sources: results.map(({ title, url }) => ({ title, url })),
+    queries: [query],
+    cost: 0,
+    remaining: 0,
+  };
+}
+
+/**
+ * The second free search: Bing's results as RSS (title, link, snippet), from the user's own
+ * connection, no key. Throws when Bing does not answer with a feed.
+ */
+export function bingRssSearch(fetchImpl: typeof fetch = fetch): WebSearch {
+  return async (query) => {
+    const url = `https://${FREE_SEARCH_FALLBACK_HOST}/search?${new URLSearchParams({ format: 'rss', q: query })}`;
+    const res = await fetchImpl(url, {
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+      headers: { 'user-agent': BROWSER_UA, accept: 'application/rss+xml, text/xml' },
+    });
+    const xml = await res.text();
+    if (!res.ok) throw new Error(`Bing answered ${res.status}`);
+    if (!/<rss\b/i.test(xml)) throw new Error('Bing did not answer with results');
+    return asResponse(query, parseBingRss(xml));
+  };
+}
+
+/** The items of Bing's RSS results, in order. */
+export function parseBingRss(xml: string): FreeSearchResult[] {
+  const results: FreeSearchResult[] = [];
+  const field = (item: string, tag: string) => {
+    const raw = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i').exec(item)?.[1] ?? '';
+    return htmlToText(raw.replace(/^<!\[CDATA\[|\]\]>$/g, '')).replace(/\s+/g, ' ');
+  };
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+    const item = m[1] ?? '';
+    const title = field(item, 'title');
+    const link = field(item, 'link');
+    try {
+      const u = new URL(link);
+      if (!title || (u.protocol !== 'https:' && u.protocol !== 'http:')) continue;
+      results.push({ title, url: u.href, snippet: field(item, 'description') });
+    } catch {}
+    if (results.length >= MAX_RESULTS) break;
+  }
+  return results;
 }
 
 export interface FreeSearchResult extends SearchSource {
@@ -137,18 +184,29 @@ function resultUrl(href: string): string | undefined {
 }
 
 /**
- * The free search first; the paid one only when it fails or finds nothing, so the agent still
- * gets an answer when DuckDuckGo blocks this machine for a while.
+ * The free searches in turn, the first with results wins. Never the paid search: when none
+ * answers, the agent hears why and how to search without this tool (the browser or http_fetch).
  */
-export function freeFirst(free: WebSearch, paid: WebSearch, log?: (m: string) => void): WebSearch {
+export function freeSearch(engines: WebSearch[], log?: (m: string) => void): WebSearch {
   return async (query) => {
-    try {
-      const r = await free(query);
-      if (r.sources.length > 0) return r;
-      log?.('free web search found nothing; using the paid search');
-    } catch (err) {
-      log?.(`free web search failed (${(err as Error).message}); using the paid search`);
+    const problems: string[] = [];
+    for (const engine of engines) {
+      try {
+        const r = await engine(query);
+        if (r.sources.length > 0) return r;
+        problems.push('no results');
+      } catch (err) {
+        problems.push((err as Error).message);
+      }
     }
-    return paid(query);
+    log?.(`free web search found nothing: ${problems.join('; ')}`);
+    const url = `https://duckduckgo.com/?${new URLSearchParams({ q: query })}`;
+    return {
+      answer: `The free web search found nothing (${problems.join('; ')}). Try other search terms, or open ${url} with browser_navigate (or http_fetch) to search there.`,
+      sources: [],
+      queries: [query],
+      cost: 0,
+      remaining: 0,
+    };
   };
 }

@@ -2,7 +2,14 @@ import { PolicyEngine } from '@dodo/policy';
 import { describe, expect, it, vi } from 'vitest';
 import { GatewayBudgetError } from './control-plane.js';
 import { runAgent } from './loop.js';
-import { duckDuckGoSearch, freeFirst, parseDuckDuckGo, webSearchTool } from './search-tools.js';
+import {
+  bingRssSearch,
+  duckDuckGoSearch,
+  freeSearch,
+  parseBingRss,
+  parseDuckDuckGo,
+  webSearchTool,
+} from './search-tools.js';
 import { FakeControlPlane, MemoryTaskStore, MemoryTrace, sampleTask } from './testing.js';
 import { taskTools } from './tools.js';
 
@@ -147,24 +154,40 @@ describe('free web search (Mac)', () => {
     await expect(duckDuckGoSearch(page('', 202))('q')).rejects.toThrow(/202/);
   });
 
-  it('falls back to the paid search only when the free one fails or finds nothing', async () => {
-    const paid = vi.fn(async (q: string) => ({
-      answer: 'paid',
-      sources: [{ title: 't', url: 'https://x.test' }],
-      queries: [q],
-      cost: 14_000,
-      remaining: 0,
-    }));
-    const free = freeFirst(duckDuckGoSearch(page(DDG_PAGE)), paid);
-    expect((await free('a')).cost).toBe(0);
-    expect(paid).not.toHaveBeenCalled();
+  it('reads Bing RSS results', async () => {
+    const rss = `<?xml version="1.0"?><rss version="2.0"><channel><title>Bing</title>
+      <item><title>Mijn AH | Albert Heijn</title><link>https://www.ah.be/mijn</link><description>Log in op je account &amp; bekijk je bonus.</description></item>
+      <item><title>Bad</title><link>javascript:alert(1)</link><description>x</description></item>
+    </channel></rss>`;
+    expect(parseBingRss(rss)).toEqual([
+      {
+        title: 'Mijn AH | Albert Heijn',
+        url: 'https://www.ah.be/mijn',
+        snippet: 'Log in op je account & bekijk je bonus.',
+      },
+    ]);
+    const r = await bingRssSearch(page(rss))('ah.be login');
+    expect(r.cost).toBe(0);
+    expect(r.sources).toEqual([{ title: 'Mijn AH | Albert Heijn', url: 'https://www.ah.be/mijn' }]);
+    await expect(bingRssSearch(page('<html>captcha</html>'))('q')).rejects.toThrow(/Bing/);
+  });
+
+  it('tries the next free engine and never pays', async () => {
+    const second = vi.fn(duckDuckGoSearch(page(DDG_PAGE)));
+    const r = await freeSearch([duckDuckGoSearch(page('', 403)), second])('a');
+    expect(second).toHaveBeenCalledOnce();
+    expect(r.cost).toBe(0);
+    expect(r.sources).toHaveLength(2);
 
     const logs: string[] = [];
-    const blocked = freeFirst(duckDuckGoSearch(page('', 403)), paid, (m) => logs.push(m));
-    expect((await blocked('b')).answer).toBe('paid');
-    const empty = freeFirst(duckDuckGoSearch(page('<html></html>')), paid);
-    expect((await empty('c')).answer).toBe('paid');
-    expect(paid).toHaveBeenCalledTimes(2);
+    const none = await freeSearch(
+      [duckDuckGoSearch(page('', 403)), duckDuckGoSearch(page('<html></html>'))],
+      (m) => logs.push(m),
+    )('albert heijn');
+    expect(none.cost).toBe(0);
+    expect(none.sources).toEqual([]);
+    expect(none.answer).toContain('403; no results');
+    expect(none.answer).toContain('https://duckduckgo.com/?q=albert+heijn');
     expect(logs[0]).toContain('403');
   });
 

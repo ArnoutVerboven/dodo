@@ -1,8 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
-import { taskTools } from '@dodo/agent';
+import { execTools, taskTools } from '@dodo/agent';
 import { describe, expect, it } from 'vitest';
-import { filterBuiltins, pickWorkdir } from './run.js';
+import { filterBuiltins, pickWorkdir, withBrowserHint } from './run.js';
 
 const env = (allowedFolders?: string[]) => ({
   runId: 'r1',
@@ -51,5 +51,15 @@ describe('filterBuiltins', () => {
       'finish',
     ]);
     expect(filterBuiltins(taskTools, undefined)).toHaveLength(taskTools.length);
+  });
+});
+
+describe('withBrowserHint', () => {
+  const fetchDesc = (tools: typeof execTools) =>
+    tools.find((t) => t.name === 'http_fetch')?.description ?? '';
+  it('points http_fetch at the browser only when the run has one', () => {
+    expect(fetchDesc(withBrowserHint(execTools, true))).toContain('use browser_navigate instead');
+    expect(fetchDesc(withBrowserHint(execTools, false))).not.toContain('browser_navigate');
+    expect(fetchDesc(execTools)).not.toContain('browser_navigate');
   });
 });
