@@ -100,6 +100,10 @@ export class AgentBrowser {
       ['stream', 'disable'],
       ['stream', 'status'],
     ]);
+    // What counts is that the live view is off. `stream disable` on a session whose view is
+    // already off (every start after the first: the daemon calls this again before each run)
+    // fails with "Streaming is not enabled for this session", which is the state we want.
+    if (status?.ok && status.data.enabled === false) return;
     if (!off?.ok || status?.data.enabled !== false)
       throw new Error(
         `agent-browser did not start: ${off?.error ?? status?.error ?? 'its live view stayed on'}`,

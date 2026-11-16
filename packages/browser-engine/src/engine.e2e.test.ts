@@ -97,6 +97,10 @@ describe.skipIf(!chromium)('agent-browser engine (cloud bridge)', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
+  it('starts again on a session that is already running (the Mac daemon does before each run)', async () => {
+    await expect(ab.start()).resolves.toBeUndefined();
+  });
+
   it('navigates and answers with the page first, then the interactive elements', async () => {
     const r = await text('browser_navigate', { url: `${base}/` });
     expect(r.isError).toBe(false);
