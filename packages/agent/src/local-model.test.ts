@@ -155,11 +155,49 @@ describe('generateLocal', () => {
     }) as unknown as typeof fetch;
     await expect(
       generateLocal(
-        { url: 'http://localhost:9' },
+        { url: 'http://localhost:9', retryDelaysMs: [] },
         { model: 'local', contents: [{ role: 'user', parts: [{ text: 'hi' }] }] },
         fetchFn,
       ),
     ).rejects.toThrow(/localhost:9 did not answer.*ECONNREFUSED/);
+  });
+
+  it('tries again when a gateway answers 502 for a crashed model server', async () => {
+    let calls = 0;
+    const fetchFn = (async () => {
+      calls++;
+      return calls < 3
+        ? new Response('{"error":{"message":"model server error"}}', { status: 502 })
+        : new Response(JSON.stringify({ choices: [{ message: { content: 'back' } }] }), {
+            status: 200,
+          });
+    }) as unknown as typeof fetch;
+    const r = await generateLocal(
+      { url: 'http://127.0.0.1:8090/v1', retryDelaysMs: [0, 0] },
+      { model: 'local', contents: [{ role: 'user', parts: [{ text: 'hi' }] }] },
+      fetchFn,
+    );
+    expect(calls).toBe(3);
+    expect(r.content.parts[0]?.text).toBe('back');
+  });
+
+  it('gives up after the retries, and does not retry other errors', async () => {
+    let calls = 0;
+    const status = (code: number) =>
+      (async () => {
+        calls++;
+        return new Response('nope', { status: code });
+      }) as unknown as typeof fetch;
+    const req = { model: 'local', contents: [{ role: 'user' as const, parts: [{ text: 'hi' }] }] };
+    await expect(
+      generateLocal({ url: 'http://x', retryDelaysMs: [0] }, req, status(502)),
+    ).rejects.toThrow(/HTTP 502 \(after 2 tries\)/);
+    expect(calls).toBe(2);
+    calls = 0;
+    await expect(
+      generateLocal({ url: 'http://x', retryDelaysMs: [0] }, req, status(400)),
+    ).rejects.toThrow(/HTTP 400: nope/);
+    expect(calls).toBe(1);
   });
 
   it('builds the endpoint from any base url', () => {
