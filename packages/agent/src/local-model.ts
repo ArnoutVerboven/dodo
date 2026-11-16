@@ -20,6 +20,11 @@ export interface LocalModelConfig {
   model?: string;
   /** Per-call timeout; a 30B model on a laptop can take minutes for a long prompt. */
   timeoutMs?: number;
+  /**
+   * Waits before trying a call again when the server is briefly gone: a 502/503/504 (a gateway
+   * whose model server crashed or is restarting) or no connection. A timeout is not retried.
+   */
+  retryDelaysMs?: number[];
 }
 
 interface ChatToolCall {
@@ -236,26 +241,46 @@ export async function generateLocal(
   callPrefix = `call_${Date.now().toString(36)}`,
 ): Promise<Omit<GenerateResponse, 'cost' | 'remaining'>> {
   const url = chatCompletionsUrl(config.url);
-  const body = toChatRequest(req, config.model);
-  let res: Response;
-  try {
-    res = await fetchFn(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.timeoutMs ?? 10 * 60_000),
-    });
-  } catch (err) {
-    throw new Error(
-      `The local model at ${config.url} did not answer (${(err as Error).message}). Is the server running on this Mac? See \`dodo model\`.`,
-    );
+  const body = JSON.stringify(toChatRequest(req, config.model));
+  const delays = config.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt >= delays.length;
+    let res: Response;
+    try {
+      res = await fetchFn(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(config.timeoutMs ?? 10 * 60_000),
+      });
+    } catch (err) {
+      const timedOut = (err as Error).name === 'TimeoutError';
+      if (!last && !timedOut) {
+        await wait(delays[attempt] as number);
+        continue;
+      }
+      throw new Error(
+        `The local model at ${config.url} did not answer (${(err as Error).message}). Is the server running on this Mac? See \`dodo model\`.`,
+      );
+    }
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 500);
+      if (!last && RETRY_STATUS.includes(res.status)) {
+        await wait(delays[attempt] as number);
+        continue;
+      }
+      throw new Error(
+        `The local model at ${config.url} answered HTTP ${res.status}${attempt ? ` (after ${attempt + 1} tries)` : ''}: ${detail}`,
+      );
+    }
+    return fromChatResponse((await res.json()) as ChatResponse, callPrefix);
   }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 500);
-    throw new Error(`The local model at ${config.url} answered HTTP ${res.status}: ${detail}`);
-  }
-  return fromChatResponse((await res.json()) as ChatResponse, callPrefix);
 }
+
+/** A crashed or restarting model server behind a gateway usually answers again within seconds. */
+const DEFAULT_RETRY_DELAYS_MS = [3_000, 15_000];
+const RETRY_STATUS = [502, 503, 504];
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * The control plane for a run on the local model: model calls go to the Mac's own server and
