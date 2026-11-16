@@ -280,7 +280,8 @@ export async function createTask(input: NewTask): Promise<string> {
 
 function provisionalTitle(description: string): string {
   const first = description.trim().split(/\n|(?<=[.!?])\s/)[0] ?? '';
-  return first.length > 80 ? `${first.slice(0, 77)}…` : first || 'Untitled task';
+  // Kept whole: the UI truncates where room is tight. Only a very long sentence is cut.
+  return first.length > 200 ? `${first.slice(0, 199)}…` : first || 'Untitled task';
 }
 
 export async function updateTask(id: string, changes: Partial<Omit<Task, 'id'>>) {

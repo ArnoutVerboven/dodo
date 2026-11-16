@@ -12,18 +12,23 @@ import { type GatewayDeps, generateWithBudget } from './gateway.js';
 
 const TITLE_MODEL = 'gemini-3.1-flash-lite';
 
-/** A title without a model: the description's first line, cut at a word near 60 characters. */
+/**
+ * A title without a model: the description's first line, whole. The UI truncates where room is
+ * tight, so the stored title is cut only when the line is very long, at a word near 200 characters.
+ */
 export function plainTitle(description: string): string {
   const line =
     description
       .split('\n')
       .map((l) => l.replace(/^[#>*\-\s]+/, '').trim())
       .find(Boolean) ?? '';
-  if (line.length <= 60) return line;
-  const cut = line.slice(0, 60);
+  if (line.length <= TITLE_MAX) return line;
+  const cut = line.slice(0, TITLE_MAX);
   const space = cut.lastIndexOf(' ');
-  return `${(space > 30 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`;
+  return `${(space > TITLE_MAX / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`;
 }
+
+const TITLE_MAX = 200;
 
 /**
  * Tasks created without a title get one from the cheapest model, charged to the task. A task

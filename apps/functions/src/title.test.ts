@@ -7,12 +7,14 @@ describe('plainTitle', () => {
     expect(plainTitle('- renew passport')).toBe('renew passport');
   });
 
-  it('cuts a long line at a word', () => {
-    const t = plainTitle(
-      'Find out which energy contract is cheapest for our house given last year usage and switch',
-    );
-    expect(t.length).toBeLessThanOrEqual(61);
-    expect(t.endsWith('…')).toBe(true);
-    expect(t).toBe('Find out which energy contract is cheapest for our house…');
+  it('keeps an ordinary long line whole', () => {
+    const line = "log in to albert heijn and tell me what's in my shopping cart and what it costs";
+    expect(plainTitle(line)).toBe(line);
+  });
+
+  it('cuts only a very long line, at a word', () => {
+    const t = plainTitle('word '.repeat(60));
+    expect(t.length).toBeLessThanOrEqual(201);
+    expect(t.endsWith('word…')).toBe(true);
   });
 });
