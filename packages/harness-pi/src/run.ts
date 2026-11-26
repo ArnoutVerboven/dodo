@@ -277,6 +277,7 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
     pi.on('before_provider_request', async () => {
       if (compacting) return undefined;
       steps++;
+      opts.clock?.mark('first_model_request');
       await trace.emit({ type: 'model_call', summary: `Model call ${steps}`, data: {} });
       return undefined;
     });
@@ -310,8 +311,11 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
     pi.on('message_end', async (event) => {
       const m = event.message as Message;
       if (m.role !== 'assistant' || compacting) return undefined;
+      opts.clock?.mark('first_model_reply');
       const message = redact(m) as AssistantMessage;
       const calls = message.content.filter((c) => c.type === 'toolCall');
+      const startup = opts.clock?.takeReport();
+      if (startup && opts.clock) log(opts.clock.line());
       const text = message.content
         .filter((c) => c.type === 'text')
         .map((c) => (c as { text: string }).text)
@@ -331,6 +335,7 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
             outputTokens: message.usage.output,
             cachedInputTokens: message.usage.cacheRead,
           },
+          ...(startup ? { startup } : {}),
         },
       });
       return { message };
@@ -431,6 +436,7 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
       opening.push(headlessRestartedNote(opts.browserRestored));
     }
 
+    opts.clock?.mark('harness_ready');
     await supervisor.beat();
     const first = supervisor.stopReason();
     if (first) end = { reason: first.reason, ...(first.error ? { error: first.error } : {}) };

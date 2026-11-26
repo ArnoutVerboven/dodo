@@ -128,6 +128,7 @@ export async function claimRun(
       attempts: FieldValue.increment(1),
       execution: `mac:${req.deviceId}`,
       lease: { owner: deviceUid(req.deviceId), expiresAt: now + LEASE_MS },
+      'timings.claimed': now,
       updatedAt: now,
     });
     t.update(

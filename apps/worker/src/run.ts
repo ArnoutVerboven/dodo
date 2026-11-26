@@ -26,6 +26,7 @@ import {
   prepareDir,
   requestBrowserTool,
   requestDeviceTool,
+  StartupClock,
   type ToolDef,
   takeScreenshot,
   taskTools,
@@ -106,13 +107,19 @@ async function checkout(
 }
 
 /** One run, start to finish. Used by the Cloud Run entrypoint and the emulator dev loop. */
-export async function executeRun(env: WorkerEnv): Promise<string> {
+export async function executeRun(
+  env: WorkerEnv,
+  clock: StartupClock = new StartupClock(),
+): Promise<string> {
+  // Marks the Mac daemon took before it spawned this worker (claim, browser, sandbox).
+  clock.add(env.timings);
   const app = initializeApp(
     { apiKey: env.firebase.apiKey, projectId: env.firebase.projectId, appId: env.firebase.appId },
     `run-${env.runId}`,
   );
   const clients = connect(app, env);
   await signInAsRun(clients, env.runToken);
+  clock.mark('signed_in');
   const control = new CallableControlPlane(clients.functions, env.runId, {
     baseUrl: geminiBaseUrl(env),
     idToken: async () => {
@@ -125,6 +132,8 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   let started: Awaited<ReturnType<typeof control.start>>;
   try {
     started = await control.start();
+    clock.add(started.timings);
+    clock.mark('run_started');
   } catch (err) {
     // Could not even start: tell the control plane so the task is released, then give up.
     await control
@@ -154,6 +163,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   const trace = new FirestoreTrace(clients.db, env.runId);
   const workdir = pickWorkdir(task.ai.folder ?? project?.defaults.folder, task.id, env);
   await prepareDir(workdir);
+  clock.mark('workdir_ready');
   const policy = new PolicyEngine(started.policy);
   // Each repo is checked out with its own read token: one repo in the task folder itself,
   // several in subfolders named after them.
@@ -171,6 +181,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       return { repo, dir, github, note };
     }),
   );
+  if (repos.length) clock.mark('repos_ready');
   // The browser only when the run wants one: the daemon's server on your Chrome, or headless
   // Chromium started here in the browser worker image.
   let headless: HeadlessBrowser | undefined;
@@ -219,7 +230,9 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       })
       .catch(() => {});
   }
+  if (browser) clock.mark('browser_ready');
   const mcp = await connectMcpServers(started.tools, env);
+  if (mcp.clients.length) clock.mark('mcp_ready');
   const notes = [
     ...mcp.notes,
     ...checkouts.map(({ repo, dir, note }) =>
@@ -304,6 +317,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
   ];
   if (started.tools?.toolsets.length)
     console.log(`toolsets ${started.tools.toolsets.join(', ')}: ${tools.length} tools`);
+  clock.mark('tools_ready');
 
   const harness = pickHarness(task.ai.harness ?? project?.defaults.harness, model, started.model);
   if (harness.id !== 'dodo-loop') console.log(`harness ${harness.id}`);
@@ -338,6 +352,7 @@ export async function executeRun(env: WorkerEnv): Promise<string> {
       heartbeatMs: HEARTBEAT_MS,
       googleFolder: started.google?.folder,
       notionWorkspace: started.notion?.workspace,
+      clock,
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
@@ -505,9 +520,24 @@ export function envFromProcess(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
           model: process.env.DODO_LOCAL_MODEL || undefined,
         }
       : undefined,
+    timings: parseTimings(process.env.DODO_TIMINGS),
     deadline: process.env.DODO_TIMEOUT_S
       ? Date.now() + (Number(process.env.DODO_TIMEOUT_S) - 20) * 1000
       : undefined,
     ...overrides,
   };
+}
+
+/** `DODO_TIMINGS`: startup marks the Mac daemon took, as JSON; anything else is ignored. */
+export function parseTimings(raw: string | undefined): Record<string, number> | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+    return Object.fromEntries(
+      Object.entries(v).filter((e): e is [string, number] => typeof e[1] === 'number'),
+    );
+  } catch {
+    return undefined;
+  }
 }
