@@ -382,6 +382,59 @@ describe('policy in the loop', () => {
     expect(JSON.stringify(control.requests[1]?.contents.at(-1))).toContain('sandboxed');
   });
 
+  it('holds an approval card for the answer and continues in the same run', async () => {
+    const server = createServer((_req, res) => res.end('local page')).listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    try {
+      const policy = new PolicyEngine({ profile: 'agent-decides', allow: [], deny: [] });
+      const fetchIt = { calls: [{ name: 'http_fetch', args: { url } }] };
+      const control = new FakeControlPlane([
+        fetchIt,
+        fetchIt,
+        fetchIt,
+        { calls: [{ name: 'finish', args: { outcome: 'done' } }] },
+      ]);
+      // "Yes, always": the run's own policy learns the rule, so the third call asks nothing.
+      control.heldAnswers.push({
+        messageId: 'm1',
+        prompt: 'Allow?',
+        value: 'yes',
+        suggestedRule: 'Http(domain:127.0.0.1)',
+        alwaysAllow: true,
+      });
+      const store = new MemoryTaskStore(sampleTask());
+      const r = await runAgent(
+        {
+          runId: 'r1',
+          task: store.task,
+          project: undefined,
+          model: 'm',
+          trigger: 'new',
+          session: [],
+        },
+        {
+          control,
+          store,
+          trace: new MemoryTrace(),
+          tools,
+          policy,
+          heartbeatMs: 10,
+          inputHoldMs: 5000,
+          workdir: os.tmpdir(),
+        },
+      );
+      expect(r.reason).toBe('finished');
+      expect(control.inputRequests).toHaveLength(1);
+      expect(control.inputRequests[0]).toMatchObject({ kind: 'approval', holdMs: 5000 });
+      expect(control.requests).toHaveLength(4);
+      expect(JSON.stringify(control.requests[2]?.contents.at(-1))).toContain('local page');
+      expect(JSON.stringify(control.requests[3]?.contents.at(-1))).toContain('local page');
+    } finally {
+      server.close();
+    }
+  });
+
   it('honours a one-time approval on resume', async () => {
     const policy = new PolicyEngine({ profile: 'agent-decides', allow: [], deny: [] });
     const { control, run } = setup(

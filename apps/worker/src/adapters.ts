@@ -44,6 +44,7 @@ import {
   getDocs,
   getFirestore,
   limit,
+  onSnapshot,
   orderBy,
   query,
   updateDoc,
@@ -366,6 +367,16 @@ export class FirestoreTaskStore implements TaskStore {
     private readonly runId: string,
     private readonly projectId?: string,
   ) {}
+  /** Calls `onChange` when the thread message changes (its answer arrives); returns the unsubscribe. */
+  watchMessage(messageId: string, onChange: () => void): () => void {
+    return onSnapshot(
+      doc(this.db, `${paths.messages(this.taskId)}/${messageId}`),
+      (snap) => {
+        if ((snap.get('input') as { answer?: unknown } | undefined)?.answer) onChange();
+      },
+      (err) => console.log(`answer watch stopped: ${err.message}`),
+    );
+  }
   async getTask() {
     const snap = await getDoc(doc(this.db, paths.task(this.taskId)));
     return Task.parse({ id: snap.id, ...snap.data() });

@@ -139,7 +139,7 @@ const piArchived = (await db.doc(`runs/${piRun}`).get()).data();
 if (!piArchived?.sessionPath) fail('pi session not archived');
 console.log(`pi run: ${piEnded.steps} model calls, ${piEnded.spent} micro-EUR`);
 
-// 2. A task that asks a question parks, and the answer resumes it to completion.
+// 2. A task that asks a question holds its run, and the answer continues it to completion.
 const ask = await db.collection('tasks').add({
   title: 'E2E: ask me',
   titleSource: 'user',
@@ -171,7 +171,45 @@ await until(
 );
 const runs = await db.collection('runs').where('taskId', '==', ask.id).get();
 console.log(`ask task finished after ${runs.size} runs`);
-if (runs.size !== 2) fail(`expected 2 runs, got ${runs.size}`);
+// The run held the question open, so the answer continued it: one run, not a resume.
+if (runs.size !== 1) fail(`expected 1 run (held), got ${runs.size}`);
+
+// 2b. A comment in the thread instead of an answer on the card: the held run parks and the
+//     next run continues with the comment.
+const askComment = await db.collection('tasks').add({
+  title: 'E2E: ask me, then comment',
+  titleSource: 'user',
+  description: 'Please ask me a question before you start.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true },
+  summary: '',
+  externalRefs: {},
+  createdAt: now,
+  updatedAt: now,
+});
+await until('input request (comment case)', async () => {
+  const m = await db
+    .collection(`tasks/${askComment.id}/messages`)
+    .where('author', '==', 'agent')
+    .get();
+  return m.docs.find((d) => d.get('input'));
+});
+await db
+  .collection(`tasks/${askComment.id}/messages`)
+  .add({ author: 'user', body: 'Never mind, just summarise it.', createdAt: Date.now() });
+await until(
+  'comment run to finish',
+  async () => {
+    const d = (await askComment.get()).data();
+    return d.status === 'review' && !d.activeRunId ? d : undefined;
+  },
+  120_000,
+);
+const commentRuns = await db.collection('runs').where('taskId', '==', askComment.id).get();
+if (commentRuns.size !== 2) fail(`expected 2 runs for the comment case, got ${commentRuns.size}`);
+console.log('comment during a hold ok');
 
 // 3. A task stuck behind a dead worker is released when the user comments.
 const stuck = await db.collection('tasks').add({
@@ -254,7 +292,8 @@ const fetched = await until(
 );
 if (!fetched.summary.includes('Fake summary')) fail('fetch task summary missing');
 const fetchRuns = await db.collection('runs').where('taskId', '==', fetchTask.id).get();
-if (fetchRuns.size !== 2) fail(`expected 2 runs for the fetch task, got ${fetchRuns.size}`);
+// Held: the yes continued the same run.
+if (fetchRuns.size !== 1) fail(`expected 1 run for the fetch task (held), got ${fetchRuns.size}`);
 console.log('approval flow ok');
 
 // 5. A Mac pairs with a one-time code, its daemon claims a run addressed to it and runs it with

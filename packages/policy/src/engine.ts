@@ -45,6 +45,15 @@ export class PolicyEngine {
     this.deny = config.deny.flatMap((r) => parseRule(r) ?? []);
   }
 
+  /**
+   * "Always allow" answered while the run held for it: the control plane saves the rule, but
+   * this run's policy was read at its start, so it learns the rule here too.
+   */
+  allowAlways(rule: string) {
+    const parsed = parseRule(rule);
+    if (parsed) this.allow.push(parsed);
+  }
+
   /** The user approved this exact call once (answered "yes" without "always allow"). */
   allowOnce(rule: string) {
     this.onceAllowed.add(rule);

@@ -32,7 +32,7 @@ import { NOTION_TOOLS } from './notion-tools.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
 import type { StartupClock } from './startup-clock.js';
-import { RunSupervisor } from './supervisor.js';
+import { RunSupervisor, type SupervisorOptions } from './supervisor.js';
 import { ToolRuntime, truncate } from './tool-runtime.js';
 import type { ToolContext, ToolDef } from './tools.js';
 import { toDeclarations } from './tools.js';
@@ -57,6 +57,10 @@ export interface LoopOptions {
    * of ending the run: a remote browser keeps its page and logins across the question.
    */
   inputHoldMs?: number;
+  /** See `SupervisorOptions.watchAnswer`: a held answer arrives at once instead of next beat. */
+  watchAnswer?: SupervisorOptions['watchAnswer'];
+  /** See `SupervisorOptions.holdRelease`: ends a hold early so the run parks. */
+  holdRelease?: AbortSignal;
   /**
    * When the worker is killed (epoch ms). A hold never runs past it: the run parks in time
    * instead of dying mid-hold with the question unanswerable until its lease expires.
@@ -174,8 +178,11 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
 
   /** The user's answer goes into the conversation; a "yes" to an approval permits that call once. */
   function takeAnswer(a: NonNullable<RunInput['answer']>) {
-    if (a.suggestedRule && !a.alwaysAllow && isApproved(a.value)) {
-      opts.policy?.allowOnce(a.suggestedRule);
+    if (a.suggestedRule && isApproved(a.value)) {
+      // "Always": saved by the control plane, and known to this run's policy at once too
+      // (a held run read its policy before the answer).
+      if (a.alwaysAllow) opts.policy?.allowAlways(a.suggestedRule);
+      else opts.policy?.allowOnce(a.suggestedRule);
     }
     session.push(user(answerTurn(a.prompt, a.value)));
   }
@@ -184,6 +191,8 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   const supervisor = new RunSupervisor(control, {
     heartbeatMs: opts.heartbeatMs,
     heartbeatToleranceMs: opts.heartbeatToleranceMs,
+    watchAnswer: opts.watchAnswer,
+    holdRelease: opts.holdRelease,
     log,
   });
   supervisor.start();
@@ -372,25 +381,17 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         // Every other step ends the run (or holds it): the tool responses so far go in first.
         session.push({ role: 'user', parts: [...responses] });
         responses.length = 0;
-        if (step.kind === 'approval') {
-          pendingInput = {
-            kind: 'approval',
-            prompt: step.prompt,
-            suggestedRule: step.suggestedRule,
-            session,
-          };
-          finishWith('waiting_input');
-          break;
-        }
-        if (step.kind === 'ask_user') {
+        if (step.kind === 'approval' || step.kind === 'ask_user') {
+          // An approval card is a question like any other: held for the answer the same way.
+          const ask: Omit<Parameters<ControlPlane['requestInput']>[0], 'session'> =
+            step.kind === 'approval'
+              ? { kind: 'approval', prompt: step.prompt, suggestedRule: step.suggestedRule }
+              : step.askUser;
           const holdMs = holdTime(opts.inputHoldMs, opts.deadline);
           if (holdMs) {
             // Post the question now and wait here for the answer, lease kept by the
             // heartbeat. No answer in time: park the run exactly as without a hold.
-            const answer = await supervisor.holdForAnswer(
-              { ...step.askUser, session, holdMs },
-              holdMs,
-            );
+            const answer = await supervisor.holdForAnswer({ ...ask, session, holdMs }, holdMs);
             if (answer) {
               takeAnswer(answer);
               await trace.emit({
@@ -405,7 +406,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
             // A stop flag during the hold is handled at the top of the loop.
             break;
           }
-          pendingInput = { ...step.askUser, session };
+          pendingInput = { ...ask, session };
           finishWith('waiting_input');
           break;
         }
