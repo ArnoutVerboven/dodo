@@ -31,6 +31,7 @@ import { GOOGLE_TOOLS } from './google-tools.js';
 import { NOTION_TOOLS } from './notion-tools.js';
 import { systemPrompt, taskContext } from './prompt.js';
 import { redactDeep, type SecretResolver } from './secrets.js';
+import type { StartupClock } from './startup-clock.js';
 import { RunSupervisor } from './supervisor.js';
 import { ToolRuntime, truncate } from './tool-runtime.js';
 import type { ToolContext, ToolDef } from './tools.js';
@@ -74,6 +75,11 @@ export interface LoopOptions {
   googleFolder?: string;
   /** The Notion workspace the Notion tools reach, for the system prompt. */
   notionWorkspace?: string;
+  /**
+   * Startup timing: the harness marks its own phases and the first model call, and attaches the
+   * summary to the first model reply's trace event (`data.startup`).
+   */
+  clock?: StartupClock;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -197,6 +203,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
   let contextTokens = input.session.length ? (input.task.context?.tokens ?? 0) : 0;
   let autoCompact = true;
 
+  opts.clock?.mark('harness_ready');
   let steps = 0;
   let nudges = 0;
   /** The hold ran out: the question is posted, the run must still be parked. */
@@ -289,6 +296,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
       // Pages the model has moved on from go out of the conversation (browser.ts).
       pruneOldPages(session);
       let response: Awaited<ReturnType<ControlPlane['generate']>>;
+      opts.clock?.mark('first_model_request');
       try {
         response = await control.generate({
           model: input.model,
@@ -296,6 +304,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
           contents: session,
           tools: declarations,
         });
+        opts.clock?.mark('first_model_reply');
       } catch (err) {
         if (err instanceof GatewayBudgetError) {
           finishWith('budget_exhausted', { error: err.message });
@@ -323,6 +332,8 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
         .filter((p) => p.text && !p.thought)
         .map((p) => p.text)
         .join('');
+      const startup = opts.clock?.takeReport();
+      if (startup && opts.clock) log(opts.clock.line());
       await trace.emit({
         type: 'model_response',
         summary: calls.length
@@ -332,6 +343,7 @@ export async function runAgent(input: RunInput, opts: LoopOptions): Promise<Loop
           text: truncate(text, 2000),
           calls: calls.map((c) => c.functionCall?.name),
           usage: response.usage,
+          ...(startup ? { startup } : {}),
         },
         cost: response.cost,
       });

@@ -46,6 +46,7 @@ export async function dispatch(
       state: 'dispatching',
       generation,
       attempts: FieldValue.increment(1),
+      'timings.dispatch_started': now,
       updatedAt: now,
     });
     return { kind: 'start', run: { ...run, id: runId, generation } };
@@ -75,7 +76,13 @@ export async function dispatch(
       { DODO_RUN_ID: runId, DODO_RUN_TOKEN: token, DODO_TIMEOUT_S: String(timeoutSeconds) },
       timeoutSeconds,
     );
-    await ref.update({ state: 'claimed', execution, updatedAt: now });
+    await ref.update({
+      state: 'claimed',
+      execution,
+      // Read again, not `now`: how long the token and runJob took is the point.
+      'timings.execution_requested': (deps.now ?? Date.now)(),
+      updatedAt: now,
+    });
     return 'started';
   } catch (err) {
     deps.log?.('executor start failed', { runId, err: String(err) });

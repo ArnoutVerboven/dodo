@@ -14,6 +14,7 @@ export * from './notion-tools.js';
 export * from './prompt.js';
 export * from './search-tools.js';
 export * from './secrets.js';
+export * from './startup-clock.js';
 export * from './supervisor.js';
 export * from './testing.js';
 export * from './tool-runtime.js';

@@ -102,6 +102,8 @@ export interface StartResponse {
   google?: RunGoogleAccess;
   /** Notion is connected (Settings › Integrations): the run gets the Notion tools. */
   notion?: RunNotionAccess;
+  /** Startup marks the control plane took (queued, dispatched, claimed), for the worker's clock. */
+  timings?: Record<string, number>;
 }
 
 /** The permission rules a run is judged by: global, then project, then task, in that order. */
@@ -199,6 +201,7 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     ...(tools ? { tools } : {}),
     ...(google ? { google } : {}),
     ...(notion ? { notion } : {}),
+    timings: { ...(run.timings ?? {}), queued: run.createdAt },
   };
 }
 

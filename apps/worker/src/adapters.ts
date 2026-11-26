@@ -77,6 +77,8 @@ export interface WorkerEnv {
   localModel?: { url: string; model?: string };
   /** Mac: web_search runs free on this machine (DuckDuckGo), with the paid search as fallback. */
   freeSearch?: boolean;
+  /** Mac: startup marks the daemon took before spawning the worker (`DODO_TIMINGS`), epoch ms. */
+  timings?: Record<string, number>;
 }
 
 export interface Clients {
@@ -224,6 +226,8 @@ export class CallableControlPlane implements ControlPlane {
       tools?: RunToolAccess;
       google?: RunGoogleAccess;
       notion?: RunNotionAccess;
+      /** Control-plane startup marks (queued, dispatched, claimed), epoch ms. */
+      timings?: Record<string, number>;
     }>('runStart', { runId: this.runId, protocol: WORKER_PROTOCOL }, true);
   }
   async generate(req: Omit<GenerateRequest, 'runId'>) {

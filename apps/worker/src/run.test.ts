@@ -2,7 +2,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execTools, taskTools } from '@dodo/agent';
 import { describe, expect, it } from 'vitest';
-import { filterBuiltins, pickWorkdir, vaultNeedsBrowser, withBrowserHint } from './run.js';
+import {
+  filterBuiltins,
+  parseTimings,
+  pickWorkdir,
+  vaultNeedsBrowser,
+  withBrowserHint,
+} from './run.js';
 
 const env = (allowedFolders?: string[]) => ({
   runId: 'r1',
@@ -74,5 +80,14 @@ describe('vaultNeedsBrowser', () => {
     );
     expect(out).toMatchObject({ needsBrowser: true });
     expect(vault(vaultNeedsBrowser(taskTools, false))).toBe(vault(taskTools));
+  });
+});
+
+describe('parseTimings', () => {
+  it('keeps numeric marks and ignores anything else', () => {
+    expect(parseTimings('{"claimed":1,"x":"no"}')).toEqual({ claimed: 1 });
+    expect(parseTimings('[1]')).toBeUndefined();
+    expect(parseTimings('not json')).toBeUndefined();
+    expect(parseTimings(undefined)).toBeUndefined();
   });
 });

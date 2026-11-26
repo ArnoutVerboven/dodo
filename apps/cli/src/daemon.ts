@@ -278,6 +278,8 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
       try {
         const claimed = await claim(clients, config, runId, browser.state === 'ready');
         if (claimed) {
+          // Startup marks for the run's trace (the worker adds its own): epoch ms.
+          const timings: Record<string, number> = { claimed: Date.now() };
           log(`run ${runId}: claimed for task ${claimed.taskId}`);
           current = runId;
           let browserUrl: string | undefined;
@@ -319,17 +321,21 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
               }
             }
           }
+          if (browserUrl) timings.daemon_browser_ready = Date.now();
           const mcpUrls = await mcp.urlsForRun().catch((err: Error) => {
             log(`run ${runId}: mcp: ${err.message}; running without local MCP servers`);
             return {};
           });
+          if (Object.keys(mcpUrls).length) timings.daemon_mcp_ready = Date.now();
           // Asked now, not at start: the gateway may have come up (or gone) since.
           const modelRoute = await localModel?.forRun().catch((err: Error) => {
             log(`run ${runId}: local model: ${err.message}; running without it`);
             return undefined;
           });
-          if (modelRoute)
+          if (modelRoute) {
+            timings.daemon_model_route = Date.now();
             log(`run ${runId}: local model, if used: ${modelRoute.via} at ${modelRoute.url}`);
+          }
           const { code, askedUser } = await execute(
             config,
             runId,
@@ -339,6 +345,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             browserUrl,
             mcpUrls,
             modelRoute,
+            timings,
           );
           current = undefined;
           // The agent stopped to ask something while it had the window: put it in front of them.
@@ -434,6 +441,7 @@ async function execute(
   browserUrl?: string,
   mcpUrls: Record<string, string> = {},
   localModel?: LocalModelRoute,
+  timings: Record<string, number> = {},
 ): Promise<{ code: number | null; askedUser: boolean }> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
@@ -472,6 +480,8 @@ async function execute(
         localBinding: !!browserUrl || local || !!localModel,
       })
     : [process.execPath, entry];
+  // The worker adds these to its startup trace: what the daemon did before the process existed.
+  env.DODO_TIMINGS = JSON.stringify({ ...timings, worker_spawned: Date.now() });
   return new Promise((resolve) => {
     const child = spawn(argv[0] as string, argv.slice(1), {
       env,

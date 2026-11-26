@@ -296,6 +296,11 @@ export const Run = z.object({
   steps: z.number().int().nonnegative().default(0),
   startedAt: Timestamp.optional(),
   endedAt: Timestamp.optional(),
+  /**
+   * Startup marks the control plane takes (`dispatch_started`, `execution_requested`,
+   * `claimed`), epoch ms. The worker adds its own and traces the whole start (startup-clock.ts).
+   */
+  timings: z.record(z.string(), Timestamp).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
