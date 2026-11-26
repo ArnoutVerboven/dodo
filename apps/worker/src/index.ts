@@ -20,8 +20,20 @@ const guard = setTimeout(
   Math.max(30, timeoutS - 20) * 1000,
 );
 
+// The Mac daemon writes `release` on stdin when other work is queued: a hold for an answer
+// ends and the run parks. Cloud Run gives no stdin; then this never fires.
+const holdRelease = new AbortController();
+if (process.env.DODO_HOLD_RELEASE === 'stdin') {
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk: string) => {
+    if (/\brelease\b/.test(chunk)) holdRelease.abort();
+  });
+  process.stdin.on('error', () => {});
+  process.stdin.unref?.();
+}
+
 try {
-  await executeRun(envFromProcess(), clock);
+  await executeRun(envFromProcess(), clock, { holdRelease: holdRelease.signal });
 } catch (err) {
   console.error('worker failed', err);
 } finally {

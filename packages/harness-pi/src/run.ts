@@ -137,6 +137,8 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
   const supervisor = new RunSupervisor(control, {
     heartbeatMs: opts.heartbeatMs,
     heartbeatToleranceMs: opts.heartbeatToleranceMs,
+    watchAnswer: opts.watchAnswer,
+    holdRelease: opts.holdRelease,
     log,
   });
   const runtime = new ToolRuntime({
@@ -169,13 +171,12 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
   const onStep = (step: ToolStep) => {
     if (step.kind === 'continue') return false;
     if (step.kind === 'approval') {
-      pendingInput = {
-        kind: 'approval',
-        prompt: step.prompt,
-        suggestedRule: step.suggestedRule,
-        session: [],
+      // Held for the answer like any question (below); parked when the run cannot hold.
+      asked = {
+        kind: 'ask_user',
+        result: step.result,
+        askUser: { kind: 'approval', prompt: step.prompt, suggestedRule: step.suggestedRule },
       };
-      end ??= { reason: 'waiting_input' };
     } else if (step.kind === 'ask_user') {
       asked = step;
     } else {
@@ -483,8 +484,10 @@ export async function runPi(input: RunInput, opts: LoopOptions): Promise<LoopRes
               summary: `Answer: ${truncate(answer.value, 80)}`,
               data: { messageId: answer.messageId },
             });
-            if (answer.suggestedRule && !answer.alwaysAllow && isApproved(answer.value)) {
-              opts.policy?.allowOnce(answer.suggestedRule);
+            if (answer.suggestedRule && isApproved(answer.value)) {
+              // "Always" is saved by the control plane; this run's policy learns it too.
+              if (answer.alwaysAllow) opts.policy?.allowAlways(answer.suggestedRule);
+              else opts.policy?.allowOnce(answer.suggestedRule);
             }
             next = answerTurn(answer.prompt, answer.value);
             continue;

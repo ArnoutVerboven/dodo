@@ -260,6 +260,13 @@ export const RequestInputRequest = z.object({
 });
 export type RequestInputRequest = z.infer<typeof RequestInputRequest>;
 
+/**
+ * What a worker logs when it starts holding a question open for the answer; the Mac daemon
+ * matches it in the worker's output (to bring the browser forward, or release the hold when
+ * other work is queued).
+ */
+export const HOLDING_LOG = 'holding for the answer';
+
 export const RequestInputResponse = z.object({
   ok: z.boolean(),
   /** The question's thread message; the worker holds for its answer when it asked to. */

@@ -292,6 +292,30 @@ export async function heartbeat(deps: RunControlDeps, run: Run): Promise<Heartbe
   };
 }
 
+/** The latest user comment (not a card answer) posted after the held question, if any. */
+async function commentSince(
+  deps: RunControlDeps,
+  taskId: string,
+  questionId: string,
+): Promise<string | undefined> {
+  const asked = (await deps.db.doc(`${paths.messages(taskId)}/${questionId}`).get()).get(
+    'createdAt',
+  ) as number | undefined;
+  if (!asked) return undefined;
+  const msgs = await deps.db
+    .collection(paths.messages(taskId))
+    .where('author', '==', 'user')
+    .where('createdAt', '>', asked)
+    .orderBy('createdAt')
+    .limit(20)
+    .get();
+  const body = msgs.docs
+    .filter((d) => !d.get('input'))
+    .at(-1)
+    ?.get('body');
+  return typeof body === 'string' && body.trim() ? body : undefined;
+}
+
 async function heldAnswer(
   deps: RunControlDeps,
   run: Run,
@@ -749,6 +773,18 @@ export async function finish(deps: RunControlDeps, run: Run, req: Omit<FinishReq
         sessionPath,
         browser: run.browser,
         answer: answered,
+      });
+      return;
+    }
+    // A comment posted while the run held its question (instead of an answer on the card)
+    // found the run busy, so nothing started for it: continue with it now.
+    const comment = held ? await commentSince(deps, run.taskId, held) : undefined;
+    if (comment) {
+      await enqueueRun({ db: deps.db, now: deps.now, log: deps.log }, run.taskId, {
+        trigger: 'comment',
+        sessionPath,
+        browser: run.browser,
+        hint: comment.slice(0, 2000),
       });
     }
     return;
