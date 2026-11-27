@@ -57,6 +57,8 @@ export interface LoopOptions {
    * of ending the run: a remote browser keeps its page and logins across the question.
    */
   inputHoldMs?: number;
+  /** Headless: the user can open the held page live in the app and take over (see live.ts). */
+  browserLive?: boolean;
   /**
    * When the worker is killed (epoch ms). A hold never runs past it: the run parks in time
    * instead of dying mid-hold with the question unanswerable until its lease expires.
@@ -97,7 +99,7 @@ export function runSystemPrompt(
   input: Pick<RunInput, 'task' | 'project'>,
   opts: Pick<
     LoopOptions,
-    'tools' | 'browserKind' | 'inputHoldMs' | 'googleFolder' | 'notionWorkspace'
+    'tools' | 'browserKind' | 'inputHoldMs' | 'browserLive' | 'googleFolder' | 'notionWorkspace'
   >,
   harness?: string,
 ): string {
@@ -106,6 +108,7 @@ export function runSystemPrompt(
   return systemPrompt(input.task, input.project, {
     browser: hasBrowser ? (opts.browserKind ?? 'window') : undefined,
     holdMinutes: hasBrowser && opts.inputHoldMs ? Math.round(opts.inputHoldMs / 60_000) : undefined,
+    liveTakeover: hasBrowser && opts.browserKind === 'headless' && !!opts.browserLive,
     canRequestBrowser: !hasBrowser && tools.some((t) => t.name === 'request_browser'),
     canRequestDevice: tools.some((t) => t.name === 'request_device'),
     github: tools.some((t) => t.name === 'open_pull_request')

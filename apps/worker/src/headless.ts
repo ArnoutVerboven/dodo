@@ -9,6 +9,8 @@ import {
   browserCookies,
   type CdpBridge,
   cdpCookies,
+  type LiveFrame,
+  LiveScreen,
   launchChromeBridge,
   mcpServer,
   restoreState,
@@ -16,6 +18,7 @@ import {
 } from '@dodo/browser-engine';
 import type { createConnection as CreateConnection } from '@playwright/mcp';
 import type { BrowserContextOptions } from 'playwright';
+import type { LiveSource } from './live.js';
 
 /**
  * The browser of a remote run: headless Chromium in the browser worker image. The worker
@@ -42,6 +45,8 @@ export interface HeadlessBrowser {
   addState(json: StorageStateJson): Promise<boolean>;
   /** The page the agent is on, for the next run's hint; none on a blank page. */
   lastUrl(): string | undefined;
+  /** The page as a live picture you can click into (agent-browser engine only). */
+  live?: LiveSource;
   stop(): Promise<void>;
 }
 
@@ -401,12 +406,36 @@ async function startAgentBrowser(opts: HeadlessOptions): Promise<HeadlessBrowser
       return true;
     },
     lastUrl: () => tools.lastUrl(),
+    // On the worker's own line to the browser: no live view port of agent-browser's is opened.
+    live: liveSource(bridge, () => tools.lastUrl(), opts.log),
     async stop() {
       if (stopped) return;
       stopped = true;
       await client.close().catch(() => undefined);
       await ab.one(['close'], 10_000).catch(() => undefined);
       await bridge.close().catch(() => undefined);
+    },
+  };
+}
+
+/** A LiveScreen on the bridge, started and stopped by the live relay. */
+function liveSource(
+  bridge: CdpBridge,
+  preferUrl: () => string | undefined,
+  log: (m: string) => void,
+): LiveSource {
+  // One screen for the run: its event listener on the bridge stays for the bridge's life.
+  let onFrame: ((f: LiveFrame) => void) | undefined;
+  const screen = new LiveScreen(bridge, { onFrame: (f) => onFrame?.(f), preferUrl, log });
+  return {
+    async start(cb) {
+      onFrame = cb;
+      await screen.start();
+    },
+    input: (a) => screen.input(a),
+    async stop() {
+      await screen.stop();
+      onFrame = undefined;
     },
   };
 }

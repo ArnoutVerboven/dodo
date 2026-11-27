@@ -85,5 +85,11 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "live",
+      "fieldPath": "jpeg",
+      "indexes": []
+    }
+  ]
 }

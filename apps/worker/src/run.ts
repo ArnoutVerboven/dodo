@@ -58,6 +58,7 @@ import {
 } from './adapters.js';
 import { pickHarness } from './harness-choice.js';
 import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
+import { firestoreLiveStore, LiveRelay } from './live.js';
 
 const HEARTBEAT_MS = 15_000;
 /** How long a remote run with a browser holds its page open for an answer (MFA, a code). */
@@ -204,6 +205,13 @@ export async function executeRun(
       return undefined;
     });
   }
+  // While the run holds the page for an answer, the owner can open it live in the app.
+  const live = headless?.live
+    ? new LiveRelay(firestoreLiveStore(clients.db, env.runId), headless.live, {
+        log: (m) => console.log(m),
+      })
+    : undefined;
+  live?.listen();
   let browserProblem: string | undefined;
   const browser = headless
     ? headless.client
@@ -348,6 +356,7 @@ export async function executeRun(
       browserRestored: headless ? restored : undefined,
       // A headless page is lost with the run: hold it for the answer when the agent asks.
       inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
+      browserLive: !!live,
       deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       googleFolder: started.google?.folder,
@@ -356,6 +365,7 @@ export async function executeRun(
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
+  await live?.close();
   if (headless) {
     // Whatever the run did to the logins is kept for the task's next run.
     const lastUrl = headless.lastUrl();

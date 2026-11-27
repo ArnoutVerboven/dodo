@@ -86,6 +86,14 @@ export const agentLoginHeadless = (elsewhere: string) =>
 export const PHONE_APP_LOGIN =
   "Phone app logins (itsme, a bank app): these log in with a QR code that changes every few seconds, so it can only be scanned straight off a screen, never from a screenshot or a message. On the user's Mac: get the login page to the QR code, bring that tab to the front with browser_tabs select, and ask_user (without a screenshot) to open the dodo Chrome window on their Mac, scan the QR code there with the app on their phone and approve, then answer when done; name the site and the app. Wait for the answer, check the page shows them signed in, and continue in the same tab; if it says the request expired or failed, reload the login for a fresh code and ask again. In the cloud browser nobody can see the code: move the task to the Mac with request_device as soon as the login needs the app. If a site still offers a phone-number option that sends a push to the app, no scan is needed: enter the mobile number from get_personal_info (or the vault entry's phone field) and ask the user to approve in the app.";
 
+/**
+ * Cloud browser with live takeover: while ask_user holds the page, the user can open it live in
+ * the app and click and type in it. A CAPTCHA and a phone-app QR code are then done here
+ * instead of on the Mac. Appended after the login sections, so it overrides them for those two.
+ */
+export const AGENT_HEADLESS_TAKEOVER =
+  'Live takeover: while ask_user waits for the answer, the user can open this page live in the dodo app (Take over the page) and click and type in it themselves. So for a CAPTCHA, or an itsme or other phone-app QR code, do not move the task to the Mac: get the page to that step and ask_user (without a screenshot, which a QR code outlives) to take over the page in the app and do that one step, naming the site and what to do (solve the check; scan the QR code with the app on their phone and approve), then answer when done. When the answer comes, look at the page again with browser_snapshot before going on, since they may have changed it; if they say it did not work, or the site refuses this browser, then move to the Mac as above. Everything else listed for the Mac (Google sign-in, a passkey, a site without a vault entry) still goes there.';
+
 /** Browser section for a run without a browser that may ask for one. */
 export const AGENT_REQUEST_BROWSER =
   'Browser: this run has none. Reading pages and APIs works with the http tool. If the task turns out to need a real browser (a site to log in to, click through or fill in, a JavaScript app the http tool cannot read, something to look at), call request_browser once with the reason: the run restarts with the browser tools and this conversation. Logging in to a site, also by an emailed code, is browser work: call request_browser for it rather than telling the user it cannot be done.';
@@ -313,6 +321,15 @@ export const PROMPTS: PromptInfo[] = [
       'Appended after either browser section: itsme and bank-app logins, whose QR codes change every few seconds, are scanned on the Mac’s screen; in the cloud they move to the Mac.',
     kind: 'system section',
     text: PHONE_APP_LOGIN,
+  },
+  {
+    id: 'agent-headless-takeover',
+    group: 'Task agent',
+    name: 'Logging in: taking over the cloud page',
+    purpose:
+      'Appended in the cloud browser when you can take over the held page live in the app: a CAPTCHA or an itsme QR code is done there instead of moving the task to your Mac.',
+    kind: 'system section',
+    text: AGENT_HEADLESS_TAKEOVER,
   },
   {
     id: 'agent-request-browser',

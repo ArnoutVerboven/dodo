@@ -26,4 +26,30 @@ describe('logging in', () => {
     expect(stuck).toContain('finish as blocked');
     expect(stuck).not.toContain('call request_device as soon as');
   });
+
+  it('in the cloud with live takeover: a CAPTCHA or a QR code is done on the held page', () => {
+    const live = systemPrompt(task, undefined, {
+      browser: 'headless',
+      canRequestDevice: true,
+      holdMinutes: 10,
+      liveTakeover: true,
+    });
+    expect(live).toContain('Take over the page');
+    expect(live).toMatch(/CAPTCHA, or an itsme or other phone-app QR code, do not move the task/);
+    // Without a hold there is no page to take over.
+    expect(
+      systemPrompt(task, undefined, {
+        browser: 'headless',
+        canRequestDevice: true,
+        liveTakeover: true,
+      }),
+    ).not.toContain('Take over the page');
+    expect(
+      systemPrompt(task, undefined, {
+        browser: 'headless',
+        canRequestDevice: true,
+        holdMinutes: 10,
+      }),
+    ).not.toContain('Take over the page');
+  });
 });

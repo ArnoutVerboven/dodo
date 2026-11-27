@@ -1,6 +1,7 @@
 import {
   AGENT_BROWSER_WINDOW,
   AGENT_HEADLESS_NO_HOLD,
+  AGENT_HEADLESS_TAKEOVER,
   AGENT_LOGIN_HEADLESS_BLOCKED,
   AGENT_LOGIN_HEADLESS_MOVE,
   AGENT_LOGIN_WINDOW,
@@ -31,6 +32,8 @@ export interface PromptFeatures {
   browser?: 'window' | 'headless';
   /** Headless: how long the page stays open while a question waits for the user. */
   holdMinutes?: number;
+  /** Headless with a hold: the user can take over the held page live in the app. */
+  liveTakeover?: boolean;
   /** No browser now, but request_browser can get one. */
   canRequestBrowser?: boolean;
   /** A remote run that request_device can move to the user's Mac. */
@@ -61,6 +64,7 @@ export function systemPrompt(
       ? AGENT_LOGIN_HEADLESS_MOVE
       : AGENT_LOGIN_HEADLESS_BLOCKED;
     lines.push('', agentBrowserHeadless(hold), agentLoginHeadless(elsewhere), PHONE_APP_LOGIN);
+    if (features.holdMinutes && features.liveTakeover) lines.push(AGENT_HEADLESS_TAKEOVER);
   }
   if (features.canRequestBrowser) lines.push('', AGENT_REQUEST_BROWSER);
   if (features.github?.length)
