@@ -647,7 +647,24 @@ function MessageView({
  */
 function TakeOver({ taskId, message, run }: { taskId: string; message: ThreadMessage; run: Run }) {
   const frame = useLiveView(run.id);
-  const [open, setOpen] = useState(false);
+  // Kept for the tab: leaving the task page and coming back reopens the page you had open.
+  const key = `dodo.takeover.${run.id}.${message.id}`;
+  const [open, setOpenState] = useState(() => {
+    try {
+      return sessionStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setOpen = (v: boolean) => {
+    setOpenState(v);
+    try {
+      if (v) sessionStorage.setItem(key, '1');
+      else sessionStorage.removeItem(key);
+    } catch {
+      // No storage (private window): the page just doesn't reopen by itself.
+    }
+  };
   if (!frame && !open) return null;
   if (!open)
     return (
@@ -669,7 +686,7 @@ function TakeOver({ taskId, message, run }: { taskId: string; message: ThreadMes
         const req = message.input;
         // A plain question gets an answer saying so; buttons and approvals you answer yourself.
         if (req && !req.answer && req.kind === 'text' && !req.secret)
-          void answerInput(taskId, message.id, req, 'Done: I did that step on the page myself.');
+          void answerInput(taskId, message.id, req, 'Done: control handed back to the agent.');
       }}
     />
   );
