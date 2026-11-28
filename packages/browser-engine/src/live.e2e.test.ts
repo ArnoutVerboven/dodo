@@ -69,10 +69,16 @@ describe.skipIf(!chromium)('live view (cloud bridge)', () => {
     );
     await new Promise<void>((r) => other.listen(0, '127.0.0.1', r));
     const otherBase = `http://localhost:${(other.address() as AddressInfo).port}`;
+    // The popup is slow to answer, as a real sign-in page is: the live view attaches to its tab
+    // while it is still blank and must pick up the page and address it then shows.
     site = createServer((req, res) =>
-      res
-        .writeHead(200, { 'content-type': 'text/html' })
-        .end((PAGES[req.url ?? '/'] ?? '').replace('OTHER', otherBase)),
+      setTimeout(
+        () =>
+          res
+            .writeHead(200, { 'content-type': 'text/html' })
+            .end((PAGES[req.url ?? '/'] ?? '').replace('OTHER', otherBase)),
+        req.url === '/popup' ? 1000 : 0,
+      ),
     );
     await new Promise<void>((r) => site.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(site.address() as AddressInfo).port}`;
