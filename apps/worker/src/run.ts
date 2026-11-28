@@ -58,6 +58,7 @@ import {
 } from './adapters.js';
 import { pickHarness } from './harness-choice.js';
 import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
+import { firestoreLiveStore, LiveRelay } from './live.js';
 
 const HEARTBEAT_MS = 15_000;
 /**
@@ -215,6 +216,13 @@ export async function executeRun(
       return undefined;
     });
   }
+  // While the run holds the page for an answer, the owner can open it live in the app.
+  const live = headless?.live
+    ? new LiveRelay(firestoreLiveStore(clients.db, env.runId), headless.live, {
+        log: (m) => console.log(m),
+      })
+    : undefined;
+  live?.listen();
   let browserProblem: string | undefined;
   const browser = headless
     ? headless.client
@@ -362,6 +370,7 @@ export async function executeRun(
       inputHoldMs: INPUT_HOLD_MS,
       watchAnswer: (messageId, onChange) => store.watchMessage(messageId, onChange),
       holdRelease: opts.holdRelease,
+      browserLive: !!live,
       deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,
       googleFolder: started.google?.folder,
@@ -370,6 +379,7 @@ export async function executeRun(
       log: (m, d) => console.log(m, d ?? ''),
     },
   );
+  await live?.close();
   if (headless) {
     // Whatever the run did to the logins is kept for the task's next run.
     const lastUrl = headless.lastUrl();

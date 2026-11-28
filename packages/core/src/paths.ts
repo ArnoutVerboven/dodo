@@ -19,6 +19,11 @@ export const paths = {
   runs: () => 'runs',
   run: (id: string) => `runs/${id}`,
   runEvents: (runId: string) => `runs/${runId}/events`,
+  /** Live takeover of the cloud browser: `view` (worker) and `control` (owner). */
+  runLiveView: (runId: string) => `runs/${runId}/live/view`,
+  runLiveControl: (runId: string) => `runs/${runId}/live/control`,
+  /** The owner's clicks and typing in the live view, replayed by the worker. */
+  runLiveInput: (runId: string) => `runs/${runId}/liveInput`,
   /** Tools view: built-ins turned off, MCP servers, toolsets. */
   toolSettings: () => 'settings/tools',
   mcpServers: () => 'mcpServers',

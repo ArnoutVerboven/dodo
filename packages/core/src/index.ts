@@ -5,6 +5,7 @@ export * from './email-code.js';
 export * from './github.js';
 export * from './google.js';
 export * from './ingest.js';
+export * from './live.js';
 export * from './local-model.js';
 export * from './model.js';
 export * from './notion.js';

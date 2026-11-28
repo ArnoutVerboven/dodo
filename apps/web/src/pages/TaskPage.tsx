@@ -27,6 +27,7 @@ import {
   Link2,
   Loader2,
   Minimize2,
+  MonitorSmartphone,
   Paperclip,
   Pencil,
   Send,
@@ -42,6 +43,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { AiConfigFields } from '@/components/AiConfigFields';
 import { ArtifactPreview, canPreview, downloadArtifact } from '@/components/ArtifactPreview';
+import { LiveBrowser, useLiveView } from '@/components/LiveBrowser';
 import { PushToTalkButton } from '@/components/PushToTalk';
 import { isLive, RUN_STATE_LABEL, RunTrace, runStats } from '@/components/run-trace';
 import { SourceLink } from '@/components/SourceIcon';
@@ -627,12 +629,49 @@ function MessageView({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.body}</ReactMarkdown>
         </div>
         {m.input?.image && <QuestionImage storagePath={m.input.image.storagePath} />}
+        {inputOpen && run?.browser && run.awaiting?.messageId === m.id && (
+          <TakeOver taskId={taskId} message={m} run={run} />
+        )}
         {open && run && <RunTrace run={run} from={traceFrom} to={traceTo} />}
         {m.input && (
           <InputRequestView taskId={taskId} message={m} open={inputOpen} latest={inputLatest} />
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * A cloud run holding its page for this question: open the page live and do the step yourself
+ * (a CAPTCHA, an itsme QR code). Offered once the worker said it can show the page.
+ */
+function TakeOver({ taskId, message, run }: { taskId: string; message: ThreadMessage; run: Run }) {
+  const frame = useLiveView(run.id);
+  const [open, setOpen] = useState(false);
+  if (!frame && !open) return null;
+  if (!open)
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className={cn('mt-2', TOUCH_SIZE)}
+        onClick={() => setOpen(true)}
+      >
+        <MonitorSmartphone className="h-4 w-4" /> Take over the page
+      </Button>
+    );
+  return (
+    <LiveBrowser
+      run={run}
+      frame={frame}
+      onDone={() => {
+        setOpen(false);
+        const req = message.input;
+        // A plain question gets an answer saying so; buttons and approvals you answer yourself.
+        if (req && !req.answer && req.kind === 'text' && !req.secret)
+          void answerInput(taskId, message.id, req, 'Done: I did that step on the page myself.');
+      }}
+    />
   );
 }
 

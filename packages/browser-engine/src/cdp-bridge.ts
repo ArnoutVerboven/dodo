@@ -53,6 +53,11 @@ export async function launchChromeBridge(launch: ChromeLaunch): Promise<CdpBridg
 
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   const ownSessions = new Set<string>();
+  // Targets the worker is attaching to now: Chrome announces the new session to the whole
+  // browser connection (Target.attachedToTarget) before it answers the call. Passed on,
+  // agent-browser would take that session for its own and lose the page when the worker lets
+  // go of it (the live view does, after a takeover).
+  const attaching = new Map<string, number>();
   const listeners: Array<(m: string, p: Record<string, unknown>, s?: string) => void> = [];
   let nextId = OWN_ID_BASE;
   let client: WebSocket | undefined;
@@ -92,6 +97,17 @@ export async function launchChromeBridge(launch: ChromeLaunch): Promise<CdpBridg
           l(msg.method, (msg.params ?? {}) as Record<string, unknown>, msg.sessionId);
         continue;
       }
+      if (msg.method === 'Target.attachedToTarget' && !msg.sessionId) {
+        const p = msg.params as { sessionId?: string; targetInfo?: { targetId?: string } };
+        const target = p?.targetInfo?.targetId;
+        const n = target ? attaching.get(target) : undefined;
+        if (target && n && p.sessionId) {
+          if (n > 1) attaching.set(target, n - 1);
+          else attaching.delete(target);
+          ownSessions.add(p.sessionId);
+          continue;
+        }
+      }
       if (msg.method === 'Target.detachedFromTarget') {
         const sid = (msg.params as { sessionId?: string } | undefined)?.sessionId;
         if (sid && ownSessions.delete(sid)) continue;
@@ -112,15 +128,28 @@ export async function launchChromeBridge(launch: ChromeLaunch): Promise<CdpBridg
     new Promise<unknown>((resolve, reject) => {
       if (gone) return reject(new Error('the browser exited'));
       const id = nextId++;
+      const target = method === 'Target.attachToTarget' ? String(params.targetId ?? '') : '';
+      if (target) attaching.set(target, (attaching.get(target) ?? 0) + 1);
+      const settle = () => {
+        const n = attaching.get(target);
+        if (!target || !n) return;
+        if (n > 1) attaching.set(target, n - 1);
+        else attaching.delete(target);
+      };
       pending.set(id, {
         resolve: (v) => {
           if (method === 'Target.attachToTarget') {
             const sid = (v as { sessionId?: string }).sessionId;
+            // The announcement normally came first and was kept back; if not, stop waiting for it.
+            if (sid && !ownSessions.has(sid)) settle();
             if (sid) ownSessions.add(sid);
           }
           resolve(v);
         },
-        reject,
+        reject: (e) => {
+          settle();
+          reject(e);
+        },
       });
       send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });

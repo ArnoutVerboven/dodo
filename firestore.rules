@@ -159,6 +159,23 @@ service cloud.firestore {
         allow read: if isOwner() || isLiveRun(runId);
         allow create: if isLiveRun(runId) && request.resource.data.runId == runId;
       }
+      // Live takeover of the cloud browser while the run holds it for an answer
+      // (packages/core/src/live.ts): the run shows the page in `view`, the owner opens it
+      // with `control` and clicks and types into `liveInput`, which the run replays and deletes.
+      match /live/{docId} {
+        allow read: if isOwner() || isLiveRun(runId);
+        allow write: if docId == 'view' && isLiveRun(runId);
+        allow write: if docId == 'control' && isOwner()
+          && request.resource.data.keys().hasOnly(['want', 'at'])
+          && request.resource.data.want is bool;
+      }
+      match /liveInput/{inputId} {
+        allow read: if isOwner() || isLiveRun(runId);
+        allow create: if isOwner()
+          && request.resource.data.type in ['click', 'text', 'key', 'scroll']
+          && request.resource.data.keys().hasOnly(['type', 'x', 'y', 'dy', 'text', 'key', 'at']);
+        allow delete: if isLiveRun(runId);
+      }
     }
 
     // Web push registrations of the owner's browsers. Runs never see them.

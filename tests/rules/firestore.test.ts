@@ -7,6 +7,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -347,6 +348,41 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertSucceeds(setDoc(doc(owner(), 'settings/tools'), { disabledBuiltins: ['bash'] }));
     await assertFails(getDoc(doc(run(), 'toolsets/mail')));
     await assertFails(getDoc(doc(stranger(), 'settings/tools')));
+  });
+
+  it('live takeover: the run shows the page, the owner opens it and sends input', async () => {
+    const view = { active: true, width: 800, height: 600, seq: 1, at: 1 };
+    await assertSucceeds(setDoc(doc(run(), 'runs/r1/live/view'), view));
+    await assertFails(setDoc(doc(run('r1', 1), 'runs/r1/live/view'), view)); // stale lease
+    await assertFails(setDoc(doc(run('r9', 1), 'runs/r9/live/view'), view)); // ended run
+    await assertFails(setDoc(doc(owner(), 'runs/r1/live/view'), view));
+    await assertFails(setDoc(doc(run(), 'runs/r1/live/control'), { want: true, at: 1 }));
+    await assertSucceeds(getDoc(doc(owner(), 'runs/r1/live/view')));
+    await assertFails(getDoc(doc(stranger(), 'runs/r1/live/view')));
+
+    await assertSucceeds(setDoc(doc(owner(), 'runs/r1/live/control'), { want: true, at: 1 }));
+    await assertFails(setDoc(doc(owner(), 'runs/r1/live/control'), { want: 'yes', at: 1 }));
+    await assertFails(
+      setDoc(doc(owner(), 'runs/r1/live/control'), { want: true, at: 1, extra: 1 }),
+    );
+    await assertFails(setDoc(doc(owner(), 'runs/r1/live/other'), { want: true, at: 1 }));
+    await assertSucceeds(getDoc(doc(run(), 'runs/r1/live/control')));
+
+    await assertSucceeds(
+      setDoc(doc(owner(), 'runs/r1/liveInput/i1'), { type: 'click', x: 1, y: 2, at: 1 }),
+    );
+    await assertFails(
+      setDoc(doc(owner(), 'runs/r1/liveInput/i2'), { type: 'eval', text: 'x', at: 1 }),
+    );
+    await assertFails(
+      setDoc(doc(run(), 'runs/r1/liveInput/i3'), { type: 'click', x: 1, y: 2, at: 1 }),
+    );
+    await assertFails(
+      setDoc(doc(stranger(), 'runs/r1/liveInput/i4'), { type: 'click', x: 1, y: 2, at: 1 }),
+    );
+    await assertSucceeds(getDocs(collection(run(), 'runs/r1/liveInput')));
+    await assertSucceeds(deleteDoc(doc(run(), 'runs/r1/liveInput/i1')));
+    await assertFails(deleteDoc(doc(owner(), 'runs/r1/liveInput/i1')));
   });
 
   it('denies unknown collections', async () => {

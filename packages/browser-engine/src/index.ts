@@ -13,6 +13,13 @@ export {
   agentBrowserBinary,
   type CommandResult,
 } from './cli.js';
+export {
+  type CdpLink,
+  type LiveAction,
+  type LiveFrame,
+  LiveScreen,
+  type LiveScreenOptions,
+} from './live.js';
 export { type HttpMcp, mcpServer, serveHttp } from './server.js';
 export { findInSnapshot, markFrames, toTarget } from './snapshot.js';
 export {
