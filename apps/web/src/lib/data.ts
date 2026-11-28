@@ -43,7 +43,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { z } from 'zod';
 import { db, functions, storage } from './firebase';
 import { isTextual } from './files';
@@ -255,7 +255,53 @@ function clean<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/* ------------------------------ Standby ------------------------------ */
+
+/** What `runPrepare` takes (apps/functions/src/standby.ts). */
+export interface PrepareRequest {
+  taskId?: string;
+  draft?: { ai?: Partial<Task['ai']>; projectId?: string };
+  cancel?: boolean;
+}
+
+// One call at a time, in order: a cancel for the last form must not overtake the next prepare.
+let prepareQueue: Promise<unknown> = Promise.resolve();
+const callPrepare = (req: PrepareRequest) => {
+  prepareQueue = prepareQueue
+    .then(() => httpsCallable(functions, 'runPrepare', { timeout: 30_000 })(req))
+    .catch((err) => console.warn('runPrepare failed', err));
+  return prepareQueue;
+};
+
+/** When something that starts a run was last sent from here: its standby must not be cancelled. */
+let runSentAt = 0;
+const noteRunSent = () => {
+  runSentAt = Date.now();
+};
+
+/**
+ * Gets a run's place ready while you write it: a remote standby worker, or your Mac's local
+ * model warmed up. Asked once per `key` (undefined: nothing to prepare); when the key changes or
+ * the view closes without sending anything, a standby still waiting is stopped, so it costs only
+ * the minutes you spent writing. The control plane caps what standbys cost a month.
+ */
+export function useRunPrepare(key: string | undefined, request: () => PrepareRequest) {
+  const req = useRef(request);
+  req.current = request;
+  useEffect(() => {
+    if (!key) return;
+    const openedAt = Date.now();
+    void callPrepare(req.current());
+    return () => {
+      // Sent from this view: the run takes (or took) the standby.
+      if (runSentAt >= openedAt) return;
+      void callPrepare({ cancel: true });
+    };
+  }, [key]);
+}
+
 export async function createTask(input: NewTask): Promise<string> {
+  noteRunSent();
   const now = Date.now();
   const title = input.title?.trim();
   const task: Omit<Task, 'id'> = {
@@ -295,6 +341,7 @@ export async function deleteTask(id: string) {
 }
 
 export async function postUserMessage(taskId: string, body: string) {
+  noteRunSent();
   const now = Date.now();
   await addDoc(collection(db, paths.messages(taskId)), { author: 'user', body, createdAt: now });
   await updateDoc(doc(db, paths.task(taskId)), { updatedAt: now });
@@ -308,6 +355,7 @@ export async function answerInput(
   alwaysAllow?: { rule: string; scope: 'task' | 'project' | 'global' },
 ) {
   if (!input) return;
+  noteRunSent();
   // Only the answer: the request itself stays as the control plane wrote it.
   await updateDoc(doc(db, paths.messages(taskId), messageId), {
     'input.answer': clean({ value, alwaysAllow, answeredAt: Date.now() }),
@@ -319,6 +367,7 @@ export async function answerInput(
  * apart and the thread only gets a reference, so it never shows up there or to the model.
  */
 export async function answerSecretInput(taskId: string, messageId: string, value: string) {
+  noteRunSent();
   await httpsCallable(functions, 'answerSecret')({ taskId, messageId, value });
 }
 

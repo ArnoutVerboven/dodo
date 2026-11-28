@@ -79,6 +79,7 @@ import {
   useBudgets,
   useMessages,
   useProjects,
+  useRunPrepare,
   useRuns,
   useSettings,
   useTask,
@@ -449,6 +450,12 @@ function Thread({ taskId, className }: { taskId: string; className?: string }) {
   for (const m of messages) if (m.runId) byRun.set(m.runId, [...(byRun.get(m.runId) ?? []), m]);
   const liveRun = runs.find(isLive);
   const inputs = pendingInputs(messages);
+  // An open question whose run has parked (no live run holds for the answer): the run that
+  // your answer starts gets a worker ready while you read and write (standby.ts).
+  useRunPrepare(
+    !liveRun && inputs.open.size > 0 ? `${taskId}|${[...inputs.open].join(',')}` : undefined,
+    () => ({ taskId }),
+  );
   const items: TimelineItem[] = [
     ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, message: m })),
     ...runs

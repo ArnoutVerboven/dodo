@@ -13,8 +13,15 @@ export const WORKER_GIB = 1;
 /** The browser job: same CPU, twice the memory for headless Chromium. */
 export const WORKER_BROWSER_GIB = 2;
 
-export function workerShape(run: Pick<RunT, 'browser'>): { vcpu: number; gib: number } {
-  return { vcpu: WORKER_VCPU, gib: run.browser ? WORKER_BROWSER_GIB : WORKER_GIB };
+export function workerShape(run: Pick<RunT, 'browser' | 'standbyId'>): {
+  vcpu: number;
+  gib: number;
+} {
+  // A standby is always the browser job, whatever the run wants.
+  return {
+    vcpu: WORKER_VCPU,
+    gib: run.browser || run.standbyId ? WORKER_BROWSER_GIB : WORKER_GIB,
+  };
 }
 
 export interface Caller {

@@ -17,8 +17,11 @@ function fakeDb(docs: Map<string, Record<string, unknown>>) {
       docs.set(path, cur);
     },
   });
+  // No standby workers here (standby.emulator.test.ts covers them): every query is empty.
+  const collection = () => ({ where: () => ({ get: async () => ({ docs: [] }) }) });
   return {
     doc,
+    collection,
     runTransaction: async (fn: (t: unknown) => Promise<unknown>) =>
       fn({
         get: (r: { get: () => unknown }) => r.get(),

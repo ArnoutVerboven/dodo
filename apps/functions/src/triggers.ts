@@ -27,6 +27,11 @@ export interface TriggerDeps {
    * (emulator, tests): no browser until the agent asks for one.
    */
   needsBrowser?: (task: Task) => Promise<boolean>;
+  /**
+   * Starts the new run's worker right after the enqueue, saving the run trigger's hop (about a
+   * second, more when that function is cold). The trigger still fires and finds it taken.
+   */
+  dispatch?: (runId: string) => Promise<unknown>;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -122,7 +127,8 @@ export async function enqueueRun(
       : undefined;
   const decided = await decideBrowser(firstAi.browser, opts, ask, deps.log);
 
-  return db.runTransaction(async (t) => {
+  let remote = false;
+  const runId = await db.runTransaction(async (t) => {
     const taskSnap = await t.get(db.doc(paths.task(taskId)));
     const task = taskSnap.data() as Task | undefined;
     if (!task?.ai?.enabled) return undefined;
@@ -153,6 +159,7 @@ export async function enqueueRun(
       .filter(Boolean)
       .join(', ');
     const ref = db.collection(paths.runs()).doc();
+    remote = route.device === 'gcp';
     const run: Omit<Run, 'id'> = {
       taskId,
       projectId: task.projectId,
@@ -182,6 +189,15 @@ export async function enqueueRun(
     });
     return ref.id;
   });
+  // Remote only: a Mac run waits for its daemon, and the trigger's status line says so.
+  if (runId && remote && deps.dispatch) {
+    await deps
+      .dispatch(runId)
+      .catch((err) =>
+        deps.log?.('inline dispatch failed; the run trigger retries', { runId, err: String(err) }),
+      );
+  }
+  return runId;
 }
 
 /** The task's latest run: its session continues the conversation, its browser stays. */

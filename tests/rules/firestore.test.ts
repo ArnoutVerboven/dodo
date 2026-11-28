@@ -261,6 +261,39 @@ describe.skipIf(!enabled)('firestore.rules', () => {
     await assertFails(getDoc(doc(device(), 'runs/m1/events/e1')));
   });
 
+  const standby = (id = 's1') =>
+    env.authenticatedContext(`standby:${id}`, { standby: id }).firestore();
+
+  it('lets a standby worker read only its own document and only say it listens', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'standbys/s1'), { state: 'starting', expiresAt: 9, reserved: 1 });
+      await setDoc(doc(db, 'standbys/s2'), { state: 'assigned', runToken: 'secret' });
+      await setDoc(doc(db, 'standbyUsage/2026-11'), { spent: 1 });
+    });
+    await assertSucceeds(getDoc(doc(standby(), 'standbys/s1')));
+    await assertFails(getDoc(doc(standby(), 'standbys/s2'))); // another standby's run token
+    await assertFails(getDoc(doc(stranger(), 'standbys/s2')));
+    await assertFails(getDoc(doc(run(), 'standbys/s2')));
+    // Only starting → waiting with readyAt; never its run, token or expiry.
+    await assertFails(updateDoc(doc(standby(), 'standbys/s1'), { expiresAt: 99 }));
+    await assertFails(
+      updateDoc(doc(standby(), 'standbys/s1'), { state: 'assigned', runId: 'r1', readyAt: 2 }),
+    );
+    await assertSucceeds(
+      updateDoc(doc(standby(), 'standbys/s1'), { state: 'waiting', readyAt: 2 }),
+    );
+    await assertFails(updateDoc(doc(standby(), 'standbys/s1'), { state: 'waiting', readyAt: 3 }));
+    // Nothing else is open to it, and the owner only reads.
+    await assertFails(getDoc(doc(standby(), 'tasks/t1')));
+    await assertFails(getDoc(doc(standby(), 'runs/r1')));
+    await assertFails(getDoc(doc(standby(), 'standbyUsage/2026-11')));
+    await assertSucceeds(getDoc(doc(owner(), 'standbys/s2')));
+    await assertSucceeds(getDoc(doc(owner(), 'standbyUsage/2026-11')));
+    await assertFails(setDoc(doc(owner(), 'standbyUsage/2026-11'), { spent: 0 }));
+    await assertFails(setDoc(doc(owner(), 'standbys/s3'), { state: 'starting' }));
+  });
+
   it('lets the owner edit personal info and a live run read it', async () => {
     await assertSucceeds(setDoc(doc(owner(), 'settings/profile'), { email: 'a@b.be' }));
     await assertSucceeds(getDoc(doc(run(), 'settings/profile')));

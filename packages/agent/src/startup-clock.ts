@@ -12,7 +12,8 @@
 export const STARTUP_PHASES = [
   'queued', // run doc created (control plane)
   'dispatch_started', // dispatcher took it (remote)
-  'execution_requested', // Cloud Run Jobs runJob returned (remote)
+  'execution_requested', // Cloud Run Jobs runJob returned, or the standby got its token (remote)
+  'standby_taken', // a standby worker (already running) took the run (remote)
   'claimed', // Mac daemon's deviceClaim returned
   'daemon_browser_ready', // Mac: browser server up
   'daemon_mcp_ready', // Mac: local MCP endpoints handed out

@@ -13,6 +13,7 @@ import {
   mlxServerCommand,
   normaliseBaseUrl,
   type ServerProcess,
+  shouldWarmUp,
 } from './local-model.js';
 
 /** A fake server on a free port of 127.0.0.1 (the gateway, or mlx_lm.server). */
@@ -271,6 +272,33 @@ describe('LocalModelHost (what a run talks to)', () => {
     expect(own.spawned).toEqual([['mlx_lm.server', '--model', 'repo']]);
     expect(seen).toEqual(['repo']);
     await host.close();
+  });
+
+  it('warms up: one tiny request through the route a run would take, loading the model', async () => {
+    const seen: string[] = [];
+    const own = await ownServer(seen);
+    const logs: string[] = [];
+    const host = new LocalModelHost(
+      { url: own.url, model: 'repo', command: ['mlx_lm.server', '--model', 'repo'] },
+      {
+        ...deps(own.spawn, { LOCAL_LLM_URL: `http://127.0.0.1:${await closedPort()}/v1` }),
+        log: (m: string) => logs.push(m),
+      },
+    );
+    // Two signals at once still make one request.
+    await Promise.all([host.warmUp(), host.warmUp()]);
+    expect(own.spawned).toEqual([['mlx_lm.server', '--model', 'repo']]);
+    expect(seen).toEqual(['repo']);
+    expect(logs.some((l) => /warmed up via own .*HTTP 200/.test(l))).toBe(true);
+    await host.close();
+  });
+
+  it('warms up only for a new, recent signal', () => {
+    const now = 1_000_000;
+    expect(shouldWarmUp(now - 1_000, undefined, now)).toBe(true);
+    expect(shouldWarmUp(now - 1_000, now - 1_000, now)).toBe(false); // already done
+    expect(shouldWarmUp(now - 120_000, undefined, now)).toBe(false); // stale, from before a restart
+    expect(shouldWarmUp(undefined, undefined, now)).toBe(false);
   });
 
   it('asks again for each run: a gateway that came up later wins, and frees our own', async () => {

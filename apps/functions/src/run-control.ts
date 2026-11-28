@@ -183,6 +183,12 @@ export async function start(deps: RunControlDeps, run: Run): Promise<StartRespon
     updatedAt: now,
     localToken: FieldValue.delete(),
   });
+  // A standby that took the run has signed in with its token: it need not stay readable.
+  if (run.standbyId)
+    await deps.db
+      .doc(paths.standby(run.standbyId))
+      .update({ runToken: FieldValue.delete(), updatedAt: now })
+      .catch(() => undefined);
   await deps.db.doc(paths.task(run.taskId)).update({
     statusLine: { text: 'Working…', needsYou: false },
     updatedAt: now,
@@ -911,7 +917,7 @@ export function exhaustedCap(error: string | undefined): {
   };
 }
 
-const infraCost = (run: Pick<Run, 'browser'>, ms: number) => {
+const infraCost = (run: Pick<Run, 'browser' | 'standbyId'>, ms: number) => {
   const shape = workerShape(run);
   return computeCost(Math.max(0, ms) / 1000, shape.vcpu, shape.gib);
 };
