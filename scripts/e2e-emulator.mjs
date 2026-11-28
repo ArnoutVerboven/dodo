@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
 process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
@@ -98,6 +99,91 @@ const archived = (await db.doc(`runs/${run}`).get()).data();
 if (!archived?.sessionPath || !archived?.tracePath) fail('session/trace not archived');
 const events = await db.collection(`runs/${run}/events`).get();
 if (!events.empty) fail('events not cleaned up after archival');
+
+// 1a. A standby worker: the new-task form asks for one (runPrepare), it starts and waits ready,
+//     and the next remote run is handed to it; no new worker starts for that run. Closing the
+//     form without a task cancels the next one.
+const ownerIdToken = async () => {
+  const uid = 'e2e-owner';
+  await getAuth()
+    .createUser({ uid })
+    .catch(() => undefined);
+  await getAuth().setCustomUserClaims(uid, { dodo_owner: true });
+  const custom = await getAuth().createCustomToken(uid);
+  const r = await fetch(
+    `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-key`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: custom, returnSecureToken: true }),
+    },
+  );
+  return (await r.json()).idToken;
+};
+const idToken = await ownerIdToken();
+const prepare = async (data) => {
+  const r = await fetch('http://127.0.0.1:5001/demo-dodo/europe-west1/runPrepare', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ data }),
+  });
+  const body = await r.json();
+  if (!r.ok) fail(`runPrepare ${r.status}: ${JSON.stringify(body)}`);
+  return body.result;
+};
+const prepared = await prepare({ draft: { ai: { enabled: true, device: 'gcp' } } });
+if (prepared.state !== 'started') fail(`runPrepare: ${JSON.stringify(prepared)}`);
+await until('standby ready', async () => {
+  const sb = (await db.doc(`standbys/${prepared.id}`).get()).data();
+  return sb?.state === 'waiting' && sb.readyAt ? sb : undefined;
+});
+const reusedStandby = await prepare({ draft: { ai: { enabled: true, device: 'gcp' } } });
+if (reusedStandby.state !== 'reused' || reusedStandby.id !== prepared.id)
+  fail(`second prepare: ${JSON.stringify(reusedStandby)}`);
+const standbyTask = await db.collection('tasks').add({
+  title: 'E2E: on the standby',
+  titleSource: 'user',
+  description: 'Summarise these notes: the standby took this run.',
+  status: 'todo',
+  priority: 'none',
+  tags: ['e2e'],
+  ai: { enabled: true, harness: 'dodo-loop', device: 'gcp' },
+  summary: '',
+  externalRefs: {},
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+const standbyRunId = await until('standby run enqueued', async () =>
+  (await standbyTask.get()).get('activeRunId'),
+);
+const standbyRun = await until(
+  'standby run to end',
+  async () => {
+    const r = (await db.doc(`runs/${standbyRunId}`).get()).data();
+    return ['succeeded', 'failed', 'interrupted', 'budget_exhausted'].includes(r?.state)
+      ? r
+      : undefined;
+  },
+  120_000,
+);
+if (standbyRun.state !== 'succeeded') fail(`standby run ${standbyRun.state}: ${standbyRun.error}`);
+if (standbyRun.standbyId !== prepared.id) fail(`run not on the standby: ${standbyRun.standbyId}`);
+// A new worker would have execution local:<runId> (LocalExecutor.start); the standby's is its own.
+if (standbyRun.execution !== `local:standby:${prepared.id}`)
+  fail(`a new worker was started: execution ${standbyRun.execution}`);
+const usedStandby = (await db.doc(`standbys/${prepared.id}`).get()).data();
+if (usedStandby.state !== 'assigned' || usedStandby.runId !== standbyRunId || usedStandby.runToken)
+  fail(`standby after the run: ${JSON.stringify(usedStandby)}`);
+const queuedToStart = (standbyRun.timings?.execution_requested ?? 0) - standbyRun.createdAt;
+console.log(`standby took run ${standbyRunId} (${queuedToStart} ms from queued to handed over)`);
+const second = await prepare({ draft: { ai: { enabled: true, device: 'gcp' } } });
+if (second.state !== 'started') fail(`prepare after use: ${JSON.stringify(second)}`);
+const cancelled = await prepare({ cancel: true });
+if (cancelled.state !== 'cancelled' || cancelled.count !== 1)
+  fail(`cancel: ${JSON.stringify(cancelled)}`);
+if ((await db.doc(`standbys/${second.id}`).get()).get('state') !== 'cancelled')
+  fail('standby not cancelled');
+console.log('standby ok');
 
 // 1b. The same task on the pi harness (the default): pi's own Gemini client streams through gatewayGemini with
 //     the run's token, runs dodo's tools, and the run ends, is charged and archived the same way.

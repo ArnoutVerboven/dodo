@@ -3,6 +3,7 @@ import { type Device, deviceIdFromChoice, isDeviceOnline, paths, type Run } from
 import type { Auth } from 'firebase-admin/auth';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { runUid, scopesForRun, workerShape } from './runtime.js';
+import { assignStandby, findStandby } from './standby.js';
 
 /** Starts a worker for a run. Remote: a Cloud Run Job execution (the browser job when the run
  * wants a browser). Local (emulator): nothing; the dev worker script picks up `dispatching`
@@ -18,6 +19,8 @@ export interface DispatcherDeps {
   executor: Executor;
   now?: () => number;
   log?: (message: string, data?: Record<string, unknown>) => void;
+  /** false: always a new container (a standby that never took its run). */
+  useStandby?: boolean;
 }
 
 const MIN_TIMEOUT_S = 60;
@@ -33,7 +36,9 @@ export async function dispatch(
 ): Promise<'started' | 'skipped' | 'deferred'> {
   const now = (deps.now ?? Date.now)();
   const ref = deps.db.doc(paths.run(runId));
-  type Step = { kind: 'start' | 'defer'; run: Run } | undefined;
+  type Step =
+    | { kind: 'start' | 'defer'; run: Run; standby?: { id: string; execution?: string } }
+    | undefined;
   const step = await deps.db.runTransaction(async (t): Promise<Step> => {
     const snap = await t.get(ref);
     const run = snap.data() as Run | undefined;
@@ -41,15 +46,23 @@ export async function dispatch(
     // Stopped before it was dispatched: the run trigger ends it (stopIfQueued), start nothing.
     if (run.interrupt) return undefined;
     if (run.device !== 'gcp') return { kind: 'defer', run: { ...run, id: runId } }; // a Mac daemon claims it
+    // A standby worker waiting in its container takes the run instead of a new one.
+    const standby = deps.useStandby === false ? undefined : await findStandby(deps.db, t, now);
     const generation = (run.generation ?? 0) + 1;
     t.update(ref, {
       state: 'dispatching',
       generation,
       attempts: FieldValue.increment(1),
       'timings.dispatch_started': now,
+      ...(standby ? { standbyId: standby.id } : {}),
       updatedAt: now,
     });
-    return { kind: 'start', run: { ...run, id: runId, generation } };
+    if (standby) assignStandby(deps.db, t, standby, runId, now);
+    return {
+      kind: 'start',
+      run: { ...run, id: runId, generation, ...(standby ? { standbyId: standby.id } : {}) },
+      standby: standby ? { id: standby.id, execution: standby.execution } : undefined,
+    };
   });
   if (!step) return 'skipped';
   if (step.kind === 'defer') {
@@ -71,6 +84,23 @@ export async function dispatch(
       taskId: claimed.taskId,
       generation: claimed.generation,
     });
+    if (step.standby) {
+      // Claimed first: the standby calls runStart the moment it sees the token.
+      await ref.update({
+        state: 'claimed',
+        execution: step.standby.execution ?? `standby:${step.standby.id}`,
+        'timings.execution_requested': (deps.now ?? Date.now)(),
+        updatedAt: now,
+      });
+      // The standby listens to its document: the token is all it was waiting for.
+      await deps.db.doc(paths.standby(step.standby.id)).update({
+        runToken: token,
+        timeoutSeconds,
+        updatedAt: (deps.now ?? Date.now)(),
+      });
+      deps.log?.('run handed to a standby worker', { runId, standbyId: step.standby.id });
+      return 'started';
+    }
     const execution = await deps.executor.start(
       claimed,
       { DODO_RUN_ID: runId, DODO_RUN_TOKEN: token, DODO_TIMEOUT_S: String(timeoutSeconds) },

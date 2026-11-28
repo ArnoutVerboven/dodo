@@ -37,7 +37,12 @@ import {
 } from './browser.js';
 import { type CliConfig, chromeProfile, expandFolder, VERSION, workRoot } from './config.js';
 import { credentialStore } from './credentials.js';
-import { LocalModelHost, type LocalModelRoute, spawnModelServer } from './local-model.js';
+import {
+  LocalModelHost,
+  type LocalModelRoute,
+  shouldWarmUp,
+  spawnModelServer,
+} from './local-model.js';
 import { LocalMcpHost } from './mcp.js';
 import { onBeat, type PresenceWatch, settleWithin } from './presence.js';
 import {
@@ -146,6 +151,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     let busy: string | undefined;
     const pending: string[] = [];
     let activeHold: WorkerHold | undefined;
+    let lastWarmUpAt: number | undefined;
 
     const stop = (reason: StopReason, why: string) => {
       if (stopped) return;
@@ -261,6 +267,12 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
         (snap) => {
           if (!snap.exists() || snap.get('state') !== 'approved')
             stop('revoked', 'This Mac was revoked in Settings.');
+          // The app is about to start a task on the local model here: load it now.
+          const warmUpAt = snap.get('warmUpAt') as number | undefined;
+          if (localModel && shouldWarmUp(warmUpAt, lastWarmUpAt, Date.now())) {
+            lastWarmUpAt = warmUpAt;
+            void localModel.warmUp();
+          }
         },
         () => stop('revoked', 'This Mac was revoked in Settings.'),
       ),

@@ -1,10 +1,12 @@
 rules_version = '2';
 
-// Three identities:
+// The identities:
 //  - the owner (custom claim dodo_owner, granted by the claimOwnership function);
 //  - a run (uid run:{runId}, claims run/taskId/generation, minted by the dispatcher): may only
 //    write its own trace, and its task's summary/status/messages/artifacts, while its lease
 //    generation is current;
+//  - a standby worker (uid standby:{id}, claim standby, minted by runPrepare): reads its own
+//    standbys document until the dispatcher hands it a run, then signs in as that run;
 //  - a Mac daemon (uid device:{id}, claim device, minted by deviceRegister): may read the queued
 //    runs addressed to it and report presence on its own device document, nothing else;
 //  - trusted server code (Admin SDK, bypasses rules): budgets, ledger, run state.
@@ -144,6 +146,27 @@ service cloud.firestore {
       allow update: if isDevice(deviceId)
         && resource.data.state == 'approved'
         && onlyChanges(['lastSeen', 'version', 'protocol', 'folders', 'browser', 'localModel', 'currentRunId', 'updatedAt']);
+    }
+
+    // Standby workers (apps/functions/src/standby.ts): a remote container started ahead of a
+    // run. Its identity (uid standby:{id}, claim standby) reads only its own document, where
+    // the control plane hands it the run, and may say it is listening. The cap on what
+    // standbys cost (standbyUsage) is server-only.
+    match /standbys/{standbyId} {
+      allow read: if isOwner();
+      allow read: if request.auth != null
+        && request.auth.uid == 'standby:' + standbyId
+        && request.auth.token.standby == standbyId;
+      allow update: if request.auth != null
+        && request.auth.uid == 'standby:' + standbyId
+        && request.auth.token.standby == standbyId
+        && resource.data.state == 'starting'
+        && onlyChanges(['state', 'readyAt'])
+        && request.resource.data.state == 'waiting'
+        && request.resource.data.readyAt is number;
+    }
+    match /standbyUsage/{month} {
+      allow read: if isOwner();
     }
 
     match /runs/{runId} {

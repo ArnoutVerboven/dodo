@@ -301,10 +301,41 @@ export const Run = z.object({
    * `claimed`), epoch ms. The worker adds its own and traces the whole start (startup-clock.ts).
    */
   timings: z.record(z.string(), Timestamp).optional(),
+  /** Remote: the standby worker that took this run instead of a new container (standby.ts). */
+  standbyId: z.string().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
 export type Run = z.infer<typeof Run>;
+
+/**
+ * A remote worker started ahead of a run (the new-task form or an answer box opened), waiting
+ * in its container for the next remote run. Written by the control plane only; the standby
+ * worker reads its own document and may set `readyAt` once it listens.
+ */
+export const Standby = z.object({
+  id: z.string(),
+  /** starting → (waiting once ready) → assigned | expired | cancelled. */
+  state: z.enum(['starting', 'waiting', 'assigned', 'expired', 'cancelled']),
+  /** The worker exits by itself at this time if no run came (epoch ms). */
+  expiresAt: Timestamp,
+  /** The Cloud Run execution, for cancelling it. */
+  execution: z.string().optional(),
+  /** The worker signed in and listens. */
+  readyAt: Timestamp.optional(),
+  /** Set on assignment: the run, its token, and how long it may run (seconds). */
+  runId: z.string().optional(),
+  runToken: z.string().optional(),
+  timeoutSeconds: z.number().optional(),
+  assignedAt: Timestamp.optional(),
+  /** Charged to the month up front (the whole wait), refunded for the part not waited. */
+  reserved: MicroEur.default(0),
+  /** Emulator: the dev worker's token for the standby identity. */
+  localToken: z.string().optional(),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+export type Standby = z.infer<typeof Standby>;
 
 export const DeviceState = z.enum(['approved', 'revoked']);
 export type DeviceState = z.infer<typeof DeviceState>;
@@ -324,6 +355,8 @@ export const Device = z.object({
   localModel: z.string().optional(),
   lastSeen: Timestamp.optional(),
   currentRunId: z.string().optional(),
+  /** The owner is about to start a task here (form opened): the daemon warms the local model. */
+  warmUpAt: Timestamp.optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

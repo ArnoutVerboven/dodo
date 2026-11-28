@@ -27,6 +27,10 @@ RUN npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scrip
   && chmod 755 node_modules/agent-browser/bin/agent-browser-linux-* \
   && rm -rf /root/.npm
 COPY apps/worker/dist/index.js ./index.js
+# Node's compile cache, filled once here: every container loads the 19 MB bundle about a third
+# faster. Run without a run, the worker stops at once ("Missing env"), after compiling it all.
+ENV NODE_COMPILE_CACHE=/app/.node-cache
+RUN node index.js >/dev/null 2>&1; test -n "$(ls -A /app/.node-cache)"
 COPY --chmod=755 apps/worker/chromium-as-browser.sh /usr/local/bin/chromium-as-browser
 # The worker runs as root and holds the run's credential; the agent's commands, git and its
 # file reads and writes run as `agent` (packages/agent/src/agent-user.ts), which cannot read

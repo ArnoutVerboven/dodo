@@ -117,6 +117,7 @@ import {
   SecretAnswerError,
   saveSecretAnswer,
 } from './secret-answers.js';
+import { type PrepareRequest, prepareRun, type StandbyExecutor, sweepStandbys } from './standby.js';
 import {
   ackTelegram,
   handleTelegramUpdate,
@@ -665,6 +666,8 @@ const triggerDeps = (db: Firestore) => ({
   db,
   log: logger.info,
   reap: (runId: string) => reapIfStale(controlDeps(), runId),
+  // Started right away instead of on the run trigger's hop; the trigger then finds it taken.
+  dispatch: (runId: string) => dispatch(dispatchDeps(), runId),
   needsBrowser: (task: Parameters<typeof needsBrowser>[1]) =>
     needsBrowser(
       { db, costGate: costGateFor(db), provider: provider(), hourlyCap: DEFAULT_HOURLY_CAP },
@@ -673,10 +676,30 @@ const triggerDeps = (db: Firestore) => ({
 });
 
 /** Cloud Run Jobs executor: one execution per run, env carries the run identity. */
-class CloudRunExecutor implements Executor {
+class CloudRunExecutor implements Executor, StandbyExecutor {
   async start(run: { browser?: boolean }, env: Record<string, string>, timeoutSeconds: number) {
+    const op = await this.runJob(
+      run.browser ? WORKER_BROWSER_JOB : WORKER_JOB,
+      env,
+      timeoutSeconds,
+    );
+    return op.name ?? 'execution';
+  }
+
+  /** A standby is always the browser job: it can take any remote run. */
+  async startStandby(env: Record<string, string>, timeoutSeconds: number) {
+    const op = await this.runJob(WORKER_BROWSER_JOB, env, timeoutSeconds);
+    // The execution's own name (the operation's metadata), which cancelExecution takes.
+    return (op.metadata as { name?: string } | undefined)?.name ?? op.name ?? 'execution';
+  }
+
+  async cancel(execution: string) {
+    if (!execution.includes('/executions/')) return;
+    await new ExecutionsClient().cancelExecution({ name: execution });
+  }
+
+  private async runJob(job: string, env: Record<string, string>, timeoutSeconds: number) {
     const jobs = new JobsClient();
-    const job = run.browser ? WORKER_BROWSER_JOB : WORKER_JOB;
     const name = `projects/${projectId()}/locations/${REGION}/jobs/${job}`;
     const [op] = await jobs.runJob({
       name,
@@ -686,32 +709,66 @@ class CloudRunExecutor implements Executor {
         containerOverrides: [{ env: Object.entries(env).map(([k, v]) => ({ name: k, value: v })) }],
       },
     });
-    return op.name ?? 'execution';
+    return op;
   }
 }
 
 /** Emulator: the dev worker script watches for `dispatching` runs and reads the token itself. */
-class LocalExecutor implements Executor {
+class LocalExecutor implements Executor, StandbyExecutor {
   async start(run: { id: string }, env: Record<string, string>) {
     await getFirestore().doc(paths.run(run.id)).update({ localToken: env.DODO_RUN_TOKEN });
     return `local:${run.id}`;
   }
+
+  /** The dev worker watches standbys with a local token, like runs. */
+  async startStandby(env: Record<string, string>) {
+    const id = env.DODO_STANDBY_ID as string;
+    await getFirestore().doc(paths.standby(id)).update({ localToken: env.DODO_STANDBY_TOKEN });
+    return `local:standby:${id}`;
+  }
 }
+
+const executor = () => (isEmulator ? new LocalExecutor() : new CloudRunExecutor());
+const dispatchDeps = () => ({ ...controlDeps(), executor: executor(), log: logger.warn });
+const standbyDeps = () => {
+  const db = getFirestore();
+  return { db, auth: getAuth(), executor: executor(), log: logger.warn };
+};
+
+/**
+ * The web app's hint that a run is about to start (the new-task form opened, or the answer box
+ * of a parked task): a standby container for a remote run, the local model warmed for a Mac run
+ * on it. `cancel` stops the standby when the form closes without a task (standby.ts).
+ */
+export const runPrepare = onCall(
+  { serviceAccount: GATEWAY_SA, timeoutSeconds: 30 },
+  async (request) => {
+    ownerOnly(request.auth);
+    const data = (request.data ?? {}) as PrepareRequest;
+    const req: PrepareRequest = {
+      taskId: typeof data.taskId === 'string' && data.taskId ? data.taskId : undefined,
+      draft:
+        data.draft && typeof data.draft === 'object'
+          ? {
+              ai: data.draft.ai && typeof data.draft.ai === 'object' ? data.draft.ai : undefined,
+              projectId:
+                typeof data.draft.projectId === 'string' ? data.draft.projectId : undefined,
+            }
+          : undefined,
+      cancel: data.cancel === true,
+    };
+    const result = await prepareRun(standbyDeps(), req);
+    logger.info('run prepare', { ...req, draft: undefined, result });
+    return result;
+  },
+);
 
 // retry: dispatch is idempotent (queued → dispatching in a transaction), so a delivery that
 // failed (contention, a crash before the executor started) is safe to repeat.
 export const onRunCreated = onDocumentCreated(
   { document: 'runs/{runId}', serviceAccount: GATEWAY_SA, retry: true },
   async (event) => {
-    const deps = controlDeps();
-    const result = await dispatch(
-      {
-        ...deps,
-        executor: isEmulator ? new LocalExecutor() : new CloudRunExecutor(),
-        log: logger.warn,
-      },
-      event.params.runId,
-    );
+    const result = await dispatch(dispatchDeps(), event.params.runId);
     logger.info('dispatch', { runId: event.params.runId, result });
   },
 );
@@ -1100,6 +1157,15 @@ export const reapRuns = onSchedule(
   },
   async () => {
     const deps = controlDeps();
+    // Standbys first: a run handed to a standby that never took it starts again, not reaped.
+    const swept = await sweepStandbys({
+      ...standbyDeps(),
+      redispatch: (runId) => dispatch({ ...dispatchDeps(), useStandby: false }, runId),
+    }).catch((err) => {
+      logger.warn('standby sweep failed', { err: String(err) });
+      return { expired: [], requeued: [] };
+    });
+    if (swept.expired.length || swept.requeued.length) logger.info('standby sweep', swept);
     const reaped = await reapStaleRuns(deps);
     if (reaped.length) logger.info('reaped stale runs', { runs: reaped });
     // Reservations a dead function left open would otherwise hold budget forever.

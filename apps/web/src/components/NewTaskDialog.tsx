@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { createTask, useProjects, useSettings } from '@/lib/data';
+import { createTask, useProjects, useRunPrepare, useSettings } from '@/lib/data';
 import { cn } from '@/lib/utils';
 
 export function NewTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -53,6 +53,14 @@ function NewTaskForm({ onDone }: { onDone: () => void }) {
   const project = projects.find((p) => p.id === projectId);
   const resolved = resolveAiConfig({ ai: { ...ai, enabled: true } }, project, settings);
   const canCreate = !!(description.trim() || title.trim());
+  // While you write, the place the run will go gets ready: a remote worker starts, or your
+  // Mac loads the local model. Again if you pick another device or model.
+  useRunPrepare(
+    aiEnabled ? `${resolved.device}|${resolved.model}|${projectId ?? ''}` : undefined,
+    () => ({
+      draft: { ai: { ...ai, enabled: true }, projectId },
+    }),
+  );
 
   const create = async (text = description) => {
     if (busy.current || !(text.trim() || title.trim())) return;

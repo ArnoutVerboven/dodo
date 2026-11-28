@@ -32,6 +32,11 @@ export const paths = {
   toolset: (id: string) => `toolsets/${id}`,
   devices: () => 'devices',
   device: (id: string) => `devices/${id}`,
+  /** Standby workers (remote): a container started ahead of a run, waiting to take it. */
+  standbys: () => 'standbys',
+  standby: (id: string) => `standbys/${id}`,
+  /** What standbys cost this month (server only), for their hard monthly cap. */
+  standbyUsage: (month: string) => `standbyUsage/${month}`,
   /** Storage paths. */
   sessionBlob: (runId: string) => `runs/${runId}/session.json`,
   traceBlob: (runId: string) => `runs/${runId}/trace.json`,

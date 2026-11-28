@@ -8,6 +8,7 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { envFromProcess, executeRun } from './run.js';
+import { waitForRun } from './standby.js';
 
 const host = process.env.FIREBASE_EMULATOR_HOST ?? '127.0.0.1';
 process.env.FIRESTORE_EMULATOR_HOST ??= `${host}:8080`;
@@ -32,6 +33,34 @@ db.collection('runs')
         console.error(`dev worker: run ${d.id} crashed`, err);
       } finally {
         busy.delete(d.id);
+      }
+    }
+  });
+
+// Standbys (standby.ts): the same wait as in a Cloud Run container, then the run it gets.
+db.collection('standbys')
+  .where('state', '==', 'starting')
+  .onSnapshot(async (snap) => {
+    for (const d of snap.docs) {
+      const token = d.get('localToken') as string | undefined;
+      const key = `standby:${d.id}`;
+      if (!token || busy.has(key)) continue;
+      busy.add(key);
+      console.log(`dev worker: standby ${d.id} waiting`);
+      try {
+        const base = envFromProcess({ runId: '', runToken: '', emulatorHost: host });
+        const until = d.get('expiresAt') as number;
+        const assigned = await waitForRun({ id: d.id, token, until }, base);
+        if (!assigned) {
+          console.log(`dev worker: standby ${d.id} got no run`);
+          continue;
+        }
+        console.log(`dev worker: standby ${d.id} executing run ${assigned.runId}`);
+        await executeRun({ ...base, runId: assigned.runId, runToken: assigned.runToken });
+      } catch (err) {
+        console.error(`dev worker: standby ${d.id} crashed`, err);
+      } finally {
+        busy.delete(key);
       }
     }
   });

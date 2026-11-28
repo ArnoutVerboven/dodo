@@ -451,6 +451,42 @@ export class LocalModelHost {
     return { url: normaliseBaseUrl(this.config.url), model: this.config.model, via: 'yours' };
   }
 
+  /**
+   * Loads the model before a run needs it (the new-task form or an answer box opened in the
+   * app): a one-token request through the same route a run would take, which makes the gateway
+   * or dodo's own server load the model. A cold model took 40–100 s to answer a run's first
+   * request. One warm-up at a time; errors are only logged, the run itself tries again.
+   */
+  private warming: Promise<void> | undefined;
+  warmUp(): Promise<void> {
+    this.warming ??= (async () => {
+      const started = Date.now();
+      try {
+        const route = await this.forRun();
+        const r = await this.fetchFn(`${route.url}/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: route.model ?? 'default',
+            messages: [{ role: 'user', content: 'Reply with OK.' }],
+            max_tokens: 1,
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(300_000),
+        });
+        await r.text().catch(() => '');
+        this.deps.log(
+          `local model: warmed up via ${route.via} in ${((Date.now() - started) / 1000).toFixed(1)}s (HTTP ${r.status})`,
+        );
+      } catch (err) {
+        this.deps.log(`local model: warm-up failed (${(err as Error).message})`);
+      } finally {
+        this.warming = undefined;
+      }
+    })();
+    return this.warming;
+  }
+
   async close() {
     this.server?.stop();
     const front = await this.front;
@@ -608,4 +644,16 @@ export async function detectLocalModel(
     model,
     command: mlxServerCommand(server, model, new URL(DEFAULT_LOCAL_MODEL_URL).port),
   };
+}
+
+/**
+ * Warm the local model for a `warmUpAt` the app just wrote: a new value, and recent (the first
+ * snapshot after the daemon starts carries the last one, which may be hours old).
+ */
+export function shouldWarmUp(
+  warmUpAt: number | undefined,
+  last: number | undefined,
+  now: number,
+): boolean {
+  return typeof warmUpAt === 'number' && warmUpAt !== last && now - warmUpAt < 60_000;
 }
