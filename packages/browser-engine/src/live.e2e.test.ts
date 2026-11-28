@@ -155,9 +155,11 @@ describe.skipIf(!chromium)('live view (cloud bridge)', () => {
     expect(await until(async () => Number(await evalText('window.scrollY')) > 0)).toBe(true);
   });
 
-  it('follows a sign-in popup to its new tab', async () => {
-    await live.input({ type: 'scroll', x: 200, y: 300, dy: -5000 });
-    await until(async () => Number(await evalText('window.scrollY')) === 0);
+  // Back to the top first, directly: a wheel scroll is animated and, on a loaded CI runner, may
+  // not be back at 0 before the test's time is up, so the click would miss the link.
+  it('follows a sign-in popup to its new tab', { timeout: 20_000 }, async () => {
+    await evalText('window.scrollTo(0, 0)');
+    expect(await until(async () => Number(await evalText('window.scrollY')) === 0)).toBe(true);
     await live.input({ type: 'click', x: 320, y: 28 });
     expect(await until(() => frames.at(-1)?.url === `${base}/popup`)).toBe(true);
   });
