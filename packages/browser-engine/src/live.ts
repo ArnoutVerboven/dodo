@@ -175,7 +175,18 @@ export class LiveScreen {
       },
       sessionId,
     );
-    // A page that does not repaint sends no frame of its own: a screenshot gives the first one.
+    await this.snapshot(sessionId);
+  }
+
+  /**
+   * Sends the tab as it is now, with its address. A page that does not repaint sends no frame of
+   * its own: this gives the first one, and one when a page finishes loading.
+   */
+  private async snapshot(sessionId: string): Promise<void> {
+    const info = (await this.cdp
+      .call('Target.getTargetInfo', { targetId: this.targetId })
+      .catch(() => undefined)) as { targetInfo?: TargetInfo } | undefined;
+    if (info?.targetInfo?.url && this.session === sessionId) this.url = info.targetInfo.url;
     const shot = (await this.cdp
       .call(
         'Page.captureScreenshot',
@@ -226,6 +237,12 @@ export class LiveScreen {
 
   private event(method: string, params: Record<string, unknown>, sessionId?: string): void {
     if (!this.running || !sessionId || sessionId !== this.session) return;
+    // A popup is shown while still blank: once its page has loaded, show it with its address
+    // (Chrome sends no frameNavigated for a new tab's first page).
+    if (method === 'Page.loadEventFired' || method === 'Page.navigatedWithinDocument') {
+      void this.snapshot(sessionId).catch(() => undefined);
+      return;
+    }
     if (method !== 'Page.screencastFrame') return;
     const p = params as {
       data: string;
