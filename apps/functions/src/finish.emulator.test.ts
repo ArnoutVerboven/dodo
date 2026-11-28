@@ -200,6 +200,56 @@ describe.skipIf(!enabled)('finish', () => {
     expect(card?.input?.topUp).toBe(800_000);
   });
 
+  it('waiting_input after a hold: a comment posted instead of an answer starts the next run', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { taskId, runId } = await seed();
+    const question = d.collection(paths.messages(taskId)).doc();
+    await question.set({
+      author: 'agent',
+      body: 'Which one?',
+      runId,
+      input: { kind: 'choice', prompt: 'Which one?', options: ['A', 'B'] },
+      createdAt: 100,
+    });
+    await d.collection(paths.messages(taskId)).add({
+      author: 'user',
+      body: 'Neither, use staging',
+      createdAt: 200,
+    });
+    await d.doc(paths.run(runId)).update({ awaiting: { messageId: question.id, until: 1e15 } });
+    const run = { id: runId, ...(await d.doc(paths.run(runId)).get()).data() } as Run;
+    await finish({ db: d, auth, storage, costGate: costGateFor(d) }, run, {
+      reason: 'waiting_input',
+      session: [],
+    });
+    const next = (await d.collection(paths.runs()).where('taskId', '==', taskId).get()).docs
+      .filter((r) => r.id !== runId)
+      .map((r) => r.data() as Run);
+    expect(next).toHaveLength(1);
+    expect(next[0]?.trigger).toBe('comment');
+  });
+
+  it('waiting_input after a hold with no answer and no comment: the task waits', async () => {
+    const d = db as NonNullable<typeof db>;
+    const { taskId, runId } = await seed();
+    const question = d.collection(paths.messages(taskId)).doc();
+    await question.set({
+      author: 'agent',
+      body: 'Which one?',
+      runId,
+      input: { kind: 'choice', prompt: 'Which one?', options: ['A', 'B'] },
+      createdAt: 100,
+    });
+    await d.doc(paths.run(runId)).update({ awaiting: { messageId: question.id, until: 1e15 } });
+    const run = { id: runId, ...(await d.doc(paths.run(runId)).get()).data() } as Run;
+    await finish({ db: d, auth, storage, costGate: costGateFor(d) }, run, {
+      reason: 'waiting_input',
+      session: [],
+    });
+    const runs = await d.collection(paths.runs()).where('taskId', '==', taskId).get();
+    expect(runs.size).toBe(1);
+  });
+
   it('needs_browser: no notice, and a new run with a browser picks the session up', async () => {
     const out = await end({ reason: 'needs_browser', session: [] }, 'auto');
     expect(out.run.state).toBe('succeeded');

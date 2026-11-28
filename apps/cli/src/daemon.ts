@@ -11,6 +11,7 @@ import {
   type DeviceEgressResponse,
   type DeviceReleaseRequest,
   deviceChoice,
+  HOLDING_LOG,
   paths,
 } from '@dodo/core';
 import {
@@ -144,6 +145,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
     let stopped = false;
     let busy: string | undefined;
     const pending: string[] = [];
+    let activeHold: WorkerHold | undefined;
 
     const stop = (reason: StopReason, why: string) => {
       if (stopped) return;
@@ -336,6 +338,17 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             timings.daemon_model_route = Date.now();
             log(`run ${runId}: local model, if used: ${modelRoute.via} at ${modelRoute.url}`);
           }
+          // The worker waits up to 10 minutes for the answer to a question; the Mac is one pair
+          // of hands, so other queued work releases that wait (the run parks, as before).
+          const hold: WorkerHold = {
+            holding: false,
+            onHolding: () => {
+              if (browserUrl && browser.mode === 'window')
+                void focusBrowserWindow(chromeProfile(), log);
+              if (pending.length) releaseHold(hold, runId, log);
+            },
+          };
+          activeHold = hold;
           const { code, askedUser } = await execute(
             config,
             runId,
@@ -346,7 +359,9 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             mcpUrls,
             modelRoute,
             timings,
+            hold,
           );
+          activeHold = undefined;
           current = undefined;
           // The agent stopped to ask something while it had the window: put it in front of them.
           if (askedUser && browserUrl && browser.mode === 'window')
@@ -394,6 +409,7 @@ export async function runDaemon(config: CliConfig, opts: DaemonOptions = {}): Pr
             .map((d) => d.id)
             .filter((id) => id !== busy && !pending.includes(id));
           pending.push(...ids);
+          if (ids.length && activeHold?.holding && busy) releaseHold(activeHold, busy, log);
           void next();
         },
         (err) => stop('revoked', `Cannot watch runs: ${err.message}`),
@@ -442,6 +458,7 @@ async function execute(
   mcpUrls: Record<string, string> = {},
   localModel?: LocalModelRoute,
   timings: Record<string, number> = {},
+  hold?: WorkerHold,
 ): Promise<{ code: number | null; askedUser: boolean }> {
   const entry = workerEntry();
   mkdirSync(workRoot(), { recursive: true, mode: 0o700 });
@@ -463,6 +480,8 @@ async function execute(
     FUNCTIONS_REGION: config.region,
     // web_search from this Mac goes to DuckDuckGo for free instead of paid Google search.
     DODO_FREE_SEARCH: '1',
+    // `release` on stdin ends a hold for an answer (other work is queued).
+    DODO_HOLD_RELEASE: 'stdin',
   };
   if (config.firebase.appId) env.FIREBASE_APP_ID = config.firebase.appId;
   if (config.emulatorHost) env.FIREBASE_EMULATOR_HOST = config.emulatorHost;
@@ -486,14 +505,24 @@ async function execute(
     const child = spawn(argv[0] as string, argv.slice(1), {
       env,
       cwd: workRoot(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
+    child.stdin.on('error', () => {});
+    if (hold) {
+      hold.release = () => {
+        if (child.stdin.writable) child.stdin.write('release\n');
+      };
+    }
     let askedUser = false;
     const relay = (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split('\n')) {
         if (!line.trim()) continue;
         log(`  [${runId.slice(0, 6)}] ${line}`);
         if (endedWaitingInput(line)) askedUser = true;
+        if (hold && !hold.holding && line.includes(HOLDING_LOG)) {
+          hold.holding = true;
+          hold.onHolding();
+        }
       }
     };
     child.stdout.on('data', relay);
@@ -524,4 +553,18 @@ export function localModelName(local: CliConfig['localModel']): string | undefin
   const i = cmd.indexOf('--model');
   const raw = local.model ?? (i >= 0 ? cmd[i + 1] : undefined);
   return raw?.split('/').filter(Boolean).at(-1) || undefined;
+}
+
+/** The worker holding a question open for its answer, and how to end that early. */
+export interface WorkerHold {
+  holding: boolean;
+  onHolding: () => void;
+  release?: () => void;
+}
+
+function releaseHold(hold: WorkerHold, runId: string, log: (m: string) => void) {
+  if (!hold.release) return;
+  log(`run ${runId}: other work is queued; parking the run instead of holding for the answer`);
+  hold.release();
+  hold.release = undefined;
 }

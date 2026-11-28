@@ -21,6 +21,7 @@ async function setup(
   script: ScriptedTurn[],
   session: Content[] = [],
   trigger: 'new' | 'resume' = 'new',
+  hold: { inputHoldMs?: number; heartbeatMs?: number } = {},
 ) {
   const workdir = await mkdtemp(path.join(os.tmpdir(), 'pi-test-'));
   const control = new FakeControlPlane(script);
@@ -49,6 +50,7 @@ async function setup(
         }),
         workdir,
         heartbeatMs: 0,
+        ...hold,
       },
     );
   return { workdir, control, store, trace, run };
@@ -111,6 +113,27 @@ describe('pi harness', () => {
     expect(r.reason).toBe('waiting_input');
     expect(control.inputRequests[0]).toMatchObject({ kind: 'approval' });
     expect(control.inputRequests[0]?.session.length).toBeGreaterThan(1);
+  });
+
+  it('holds an approval for the answer and runs the call in the same run', async () => {
+    const curl = {
+      calls: [{ name: 'bash', args: { command: 'curl -m 1 https://example.invalid' } }],
+    };
+    const { control, run } = await setup([curl, curl, finish], [], 'new', {
+      inputHoldMs: 5000,
+      heartbeatMs: 10,
+    });
+    control.heldAnswers.push({
+      messageId: 'm1',
+      prompt: 'Allow?',
+      value: 'yes',
+      suggestedRule: 'Bash(curl -m 1 https://example.invalid)',
+    });
+    const r = await run();
+    expect(r.reason).toBe('finished');
+    expect(control.inputRequests).toHaveLength(1);
+    expect(control.inputRequests[0]).toMatchObject({ kind: 'approval', holdMs: 5000 });
+    expect(control.requests).toHaveLength(3);
   });
 
   it('resumes a stored conversation with the answer', async () => {

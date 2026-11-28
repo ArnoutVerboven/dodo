@@ -1,4 +1,4 @@
-import type { HeartbeatResponse, RunEndReason } from '@dodo/core';
+import { type HeartbeatResponse, HOLDING_LOG, type RunEndReason } from '@dodo/core';
 import { type ControlPlane, LeaseLostError, type RunInput } from './control-plane.js';
 
 /** The lease is 60 s (functions/src/runtime.ts): stop trusting failed beats well before it. */
@@ -9,8 +9,20 @@ export interface SupervisorOptions {
   heartbeatMs?: number;
   /** How long beats may keep failing before the run gives up; a lost lease ends it at once. */
   heartbeatToleranceMs?: number;
+  /**
+   * Calls `onChange` whenever the question's message changes (its answer arrives), so a hold
+   * beats at once instead of at the next timer beat. Returns the unsubscribe. Absent: the
+   * hold only finds the answer on its regular beats.
+   */
+  watchAnswer?: (messageId: string, onChange: () => void) => () => void;
+  /** Aborted: a hold in progress ends now and the run parks (the Mac has other work queued). */
+  holdRelease?: AbortSignal;
   log?: (message: string, data?: Record<string, unknown>) => void;
 }
+
+/** After the answer's message changed: beat this often until the heartbeat hands it over. */
+const ANSWER_RECHECK_MS = 250;
+const ANSWER_RECHECKS = 8;
 
 /** An answer the heartbeat delivered while the run held a question open. */
 export type HeldAnswer = NonNullable<RunInput['answer']> & { messageId: string };
@@ -122,18 +134,66 @@ export class RunSupervisor {
   ): Promise<HeldAnswer | undefined> {
     const posted = await this.control.requestInput(req);
     const messageId = posted && 'messageId' in posted ? posted.messageId : undefined;
+    // The Mac daemon reads this line: it brings the browser window forward and knows the run
+    // can be released for other work.
+    this.log(HOLDING_LOG, { messageId, holdMs });
     const until = Date.now() + holdMs;
     const every = this.opts.heartbeatMs || 1000;
-    while (Date.now() < until) {
-      await new Promise((r) => setTimeout(r, Math.min(every, Math.max(0, until - Date.now()))));
-      await this.beat();
-      if (this.stopReason()) return undefined;
-      const a = this.heldAnswer;
-      if (a && (!messageId || a.messageId === messageId)) {
-        this.heldAnswer = undefined;
-        return a;
+    const release = this.opts.holdRelease;
+    // The answer's message changed: beat now, and keep beating briefly until it is handed over.
+    let changed = false;
+    let wake: (() => void) | undefined;
+    const notify = () => {
+      changed = true;
+      wake?.();
+    };
+    let unwatch: (() => void) | undefined;
+    if (messageId && this.opts.watchAnswer) {
+      try {
+        unwatch = this.opts.watchAnswer(messageId, notify);
+      } catch (err) {
+        this.log('answer watch failed; beats only', { err: String(err) });
       }
     }
-    return undefined;
+    release?.addEventListener('abort', notify);
+    let rechecks = 0;
+    try {
+      while (Date.now() < until) {
+        if (release?.aborted) return undefined;
+        const wait = changed ? ANSWER_RECHECK_MS : Math.min(every, Math.max(0, until - Date.now()));
+        if (changed && ++rechecks > ANSWER_RECHECKS) {
+          // Changed but no answer (an edit, or the snapshot's own first delivery): back to beats.
+          changed = false;
+          rechecks = 0;
+          continue;
+        }
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, wait);
+          wake = () => {
+            clearTimeout(t);
+            resolve();
+          };
+        });
+        wake = undefined;
+        if (release?.aborted) return undefined;
+        await this.beat();
+        if (this.stopReason()) return undefined;
+        const a = this.heldAnswer;
+        if (a && (!messageId || a.messageId === messageId)) {
+          this.heldAnswer = undefined;
+          return a;
+        }
+        // A reply in the thread instead of on the card: park now; the control plane starts
+        // the next run with that comment, as it did before runs held.
+        if ((this.flags?.pendingMessages ?? []).some((m) => !this.seen.has(m.id))) {
+          this.log('a comment came in while holding; parking the run for it');
+          return undefined;
+        }
+      }
+      return undefined;
+    } finally {
+      release?.removeEventListener('abort', notify);
+      unwatch?.();
+    }
   }
 }

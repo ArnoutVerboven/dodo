@@ -61,8 +61,15 @@ import { type HeadlessBrowser, startHeadlessBrowser } from './headless.js';
 import { firestoreLiveStore, LiveRelay } from './live.js';
 
 const HEARTBEAT_MS = 15_000;
-/** How long a remote run with a browser holds its page open for an answer (MFA, a code). */
-export const REMOTE_BROWSER_HOLD_MS = 10 * 60_000;
+/**
+ * How long a run waits for the answer to a question or approval before it parks. Within it the
+ * answer continues the same run at once (a remote browser keeps its page and logins); after
+ * it, the answer starts a new run as before. On a Mac the daemon can release a hold early when
+ * other work is queued.
+ */
+export const INPUT_HOLD_MS = 10 * 60_000;
+/** @deprecated The hold now covers every run; kept for old imports. */
+export const REMOTE_BROWSER_HOLD_MS = INPUT_HOLD_MS;
 const execFileP = promisify(execFile);
 
 /**
@@ -111,6 +118,10 @@ async function checkout(
 export async function executeRun(
   env: WorkerEnv,
   clock: StartupClock = new StartupClock(),
+  opts: {
+    /** Aborted: a hold for an answer ends now and the run parks (the daemon has other work). */
+    holdRelease?: AbortSignal;
+  } = {},
 ): Promise<string> {
   // Marks the Mac daemon took before it spawned this worker (claim, browser, sandbox).
   clock.add(env.timings);
@@ -354,8 +365,11 @@ export async function executeRun(
       screenshot: browser ? (target) => takeScreenshot(browser, target) : undefined,
       browserKind: headless ? 'headless' : 'window',
       browserRestored: headless ? restored : undefined,
-      // A headless page is lost with the run: hold it for the answer when the agent asks.
-      inputHoldMs: browser && headless ? REMOTE_BROWSER_HOLD_MS : undefined,
+      // Every run waits a while for the answer to a question or approval: an answer within it
+      // costs nothing but the next model call (and a headless page survives it).
+      inputHoldMs: INPUT_HOLD_MS,
+      watchAnswer: (messageId, onChange) => store.watchMessage(messageId, onChange),
+      holdRelease: opts.holdRelease,
       browserLive: !!live,
       deadline: env.deadline,
       heartbeatMs: HEARTBEAT_MS,

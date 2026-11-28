@@ -117,42 +117,6 @@ async function profileNew(scenario, ai, description = 'Summarise: the meeting ag
   }
 }
 
-/** ask_user → answer → the resumed run's first model reply. */
-async function profileResume(scenario, ai) {
-  for (let i = 0; i < REPEATS; i++) {
-    const task = await newTask({
-      title: `${scenario} ${i}`,
-      description: 'Please ask me a question before you start.',
-      ai: { enabled: true, ...ai },
-    });
-    const pending = await until('input request', async () => {
-      const m = await db
-        .collection(`tasks/${task.id}/messages`)
-        .where('author', '==', 'agent')
-        .get();
-      return m.docs.find((d) => d.get('input'));
-    });
-    const first = (await task.get()).get('activeRunId');
-    if (first) await ended(first);
-    await until('first run released', async () => !(await task.get()).get('activeRunId'));
-    const answered = Date.now();
-    await pending.ref.update({ 'input.answer': { value: 'B', answeredAt: answered } });
-    const runId = await until(
-      'resume run',
-      async () => {
-        const id = (await task.get()).get('activeRunId');
-        return id && id !== first ? id : undefined;
-      },
-      90_000,
-      20,
-    );
-    const startup = await startupOf(runId);
-    record(scenario, i, { answered }, startup);
-    await ended(runId);
-    await until('task idle', async () => !(await task.get()).get('activeRunId'));
-  }
-}
-
 /**
  * A remote browser run holds its worker for the answer (10 min): the heartbeat delivers it.
  * Measures answer → the same run's next model call.
@@ -213,7 +177,7 @@ worker.stderr.on('data', (c) => (workerLog += c));
 
 await profileNew('remote new (dodo loop)', { harness: 'dodo-loop', browser: 'none' });
 await profileNew('remote new (pi)', { browser: 'none' });
-await profileResume('remote resume after answer (dodo loop)', {
+await profileHold('remote answer during hold (dodo loop)', {
   harness: 'dodo-loop',
   browser: 'none',
 });
@@ -238,7 +202,7 @@ if (process.env.PROFILE_BROWSERS) {
   bworker.stdout.on('data', (c) => (workerLog += c));
   bworker.stderr.on('data', (c) => (workerLog += c));
   await profileNew('remote new with browser (pi)', { browser: 'chrome' });
-  await profileHold('remote answer during browser hold (dodo loop)', {
+  await profileHold('remote answer during hold, with browser (dodo loop)', {
     harness: 'dodo-loop',
     browser: 'chrome',
   });
@@ -352,7 +316,7 @@ await profileNew('mac new (dodo loop)', {
   browser: 'none',
 });
 await profileNew('mac new (pi)', { device: mac, folder: macFolder, browser: 'none' });
-await profileResume('mac resume after answer (dodo loop)', {
+await profileHold('mac answer during hold (dodo loop)', {
   device: mac,
   folder: macFolder,
   harness: 'dodo-loop',
@@ -364,12 +328,38 @@ await profileNew('mac new (local model)', {
   model: 'local',
   browser: 'none',
 });
-await profileResume('mac resume after answer (local model)', {
+await profileHold('mac answer during hold (local model)', {
   device: mac,
   folder: macFolder,
   model: 'local',
   browser: 'none',
 });
+
+// The Mac is one pair of hands: a run holding a question is released when other work queues.
+{
+  const holder = await newTask({
+    title: 'mac release: holder',
+    description: 'Please ask me a question before you start.',
+    ai: { enabled: true, device: mac, folder: macFolder, harness: 'dodo-loop', browser: 'none' },
+  });
+  const holdRun = await until('holder run', async () => (await holder.get()).get('activeRunId'));
+  await until('holder holding', async () =>
+    (await db.doc(`runs/${holdRun}`).get()).get('awaiting'),
+  );
+  const queuedAt = Date.now();
+  const other = await newTask({
+    title: 'mac release: other',
+    description: 'Summarise: the other task.',
+    ai: { enabled: true, device: mac, folder: macFolder, harness: 'dodo-loop', browser: 'none' },
+  });
+  const parked = await ended(holdRun);
+  if (parked.state !== 'waiting_input') fail(`holder ended ${parked.state}`);
+  const otherRun = await until('other run', async () => (await other.get()).get('activeRunId'));
+  await ended(otherRun);
+  console.log(
+    JSON.stringify({ scenario: 'mac hold released by queued work', ms: Date.now() - queuedAt }),
+  );
+}
 daemon.kill();
 stub.close();
 
